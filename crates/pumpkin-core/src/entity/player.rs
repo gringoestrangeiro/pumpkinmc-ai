@@ -236,7 +236,9 @@ impl BedrockPlayer<'_> {
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::block_properties::HorizontalFacing;
 use pumpkin_data::damage::DamageType;
-use pumpkin_data::data_component_impl::{AttributeModifiersImpl, EnchantmentsImpl, Operation};
+use pumpkin_data::data_component_impl::{
+    AttackRangeImpl, AttributeModifiersImpl, EnchantmentsImpl, Operation,
+};
 use pumpkin_data::data_component_impl::{EquipmentSlot, EquippableImpl, ToolImpl, WeaponImpl};
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
@@ -1315,6 +1317,20 @@ impl Player {
         if let Ok(mut sender) = self.chunk_sender.lock() {
             sender.reset();
         }
+    }
+
+    /// Vanilla `Player.isWithinAttackRange`.
+    pub fn is_within_attack_range(&self, target_bounds: &BoundingBox, buffer: f64) -> bool {
+        let attack_range = self
+            .living_entity
+            .get_attack_range_with(&self.inventory().held_item());
+        attack_range_is_in_range(
+            &attack_range,
+            self.eye_position(),
+            target_bounds,
+            self.is_creative(),
+            buffer,
+        )
     }
 
     #[expect(clippy::too_many_lines)]
@@ -6651,6 +6667,30 @@ impl Player {
     }
 }
 
+/// Vanilla `AttackRange.isInRange` for a player attacker, using the effective
+/// min/max reach of the attacker's game mode.
+fn attack_range_is_in_range(
+    attack_range: &AttackRangeImpl,
+    attacker_eye: Vector3<f64>,
+    target_bounds: &BoundingBox,
+    creative: bool,
+    extra_buffer: f64,
+) -> bool {
+    let (min_reach, max_reach) = if creative {
+        (
+            attack_range.min_creative_reach,
+            attack_range.max_creative_reach,
+        )
+    } else {
+        (attack_range.min_reach, attack_range.max_reach)
+    };
+    let hitbox_margin = f64::from(attack_range.hitbox_margin);
+    let min_reach = f64::from(min_reach) - hitbox_margin - extra_buffer;
+    let max_reach = f64::from(max_reach) + hitbox_margin + extra_buffer;
+    let distance = target_bounds.squared_magnitude(attacker_eye).sqrt();
+    distance >= min_reach && distance <= max_reach
+}
+
 impl PartialEq for Player {
     fn eq(&self, other: &Self) -> bool {
         self.gameprofile.id == other.gameprofile.id
@@ -8091,9 +8131,70 @@ impl InventoryPlayer for Player {
 
 #[cfg(test)]
 mod tests {
-    use super::{bedrock_inventory_slot, read_root_vehicle, write_root_vehicle};
+    use super::{
+        attack_range_is_in_range, bedrock_inventory_slot, read_root_vehicle, write_root_vehicle,
+    };
+    use pumpkin_data::data_component_impl::AttackRangeImpl;
     use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
+    use pumpkin_util::math::boundingbox::BoundingBox;
+    use pumpkin_util::math::vector3::Vector3;
     use uuid::Uuid;
+
+    #[test]
+    fn attack_range_check_uses_vanilla_reaches_and_buffer() {
+        // `minecraft:attack_range` of the spears in 26.3.
+        let spear = AttackRangeImpl {
+            min_reach: 2.0,
+            max_reach: 4.5,
+            min_creative_reach: 2.0,
+            max_creative_reach: 6.5,
+            hitbox_margin: 0.125,
+            mob_factor: 0.5,
+        };
+        let eye = Vector3::new(0.0, 0.0, 0.0);
+        let box_starting_at = |x: f64| BoundingBox {
+            min: Vector3::new(x, 0.0, 0.0),
+            max: Vector3::new(x + 0.6, 1.8, 0.6),
+        };
+
+        // Survival reach: 4.5 + 0.125 hitbox margin + 3.0 buffer = 7.625.
+        assert!(attack_range_is_in_range(
+            &spear,
+            eye,
+            &box_starting_at(7.0),
+            false,
+            3.0
+        ));
+        assert!(attack_range_is_in_range(
+            &spear,
+            eye,
+            &box_starting_at(7.625),
+            false,
+            3.0
+        ));
+        assert!(!attack_range_is_in_range(
+            &spear,
+            eye,
+            &box_starting_at(7.7),
+            false,
+            3.0
+        ));
+        // Creative reach: 6.5 + 0.125 + 3.0 = 9.625.
+        assert!(attack_range_is_in_range(
+            &spear,
+            eye,
+            &box_starting_at(9.5),
+            true,
+            3.0
+        ));
+        assert!(!attack_range_is_in_range(
+            &spear,
+            eye,
+            &box_starting_at(9.7),
+            true,
+            3.0
+        ));
+    }
 
     #[test]
     fn player_screen_slots_map_to_bedrock_inventory() {

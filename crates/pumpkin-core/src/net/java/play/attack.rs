@@ -38,6 +38,10 @@ impl JavaClient {
             ));
             return;
         };
+        // Vanilla `handleAttack` buffers the attack range check by 3.0 blocks.
+        if !player.is_within_attack_range(&target.get_entity().bounding_box.load(), 3.0) {
+            return;
+        }
         if let Some(player_victim) = &player_target {
             if player_victim.living_entity.health.load() <= 0.0 {
                 return;

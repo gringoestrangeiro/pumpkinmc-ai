@@ -41,8 +41,8 @@ use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component_impl::Operation;
 use pumpkin_data::data_component_impl::food::{ConsumableImpl, ConsumeEffect};
 use pumpkin_data::data_component_impl::{
-    AttributeModifiersImpl, BlocksAttacksImpl, DeathProtectionImpl, EnchantmentsImpl,
-    EquipmentSlot, EquippableImpl, FoodImpl,
+    AttackRangeImpl, AttributeModifiersImpl, BlocksAttacksImpl, DeathProtectionImpl,
+    EnchantmentsImpl, EquipmentSlot, EquippableImpl, FoodImpl,
 };
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
@@ -893,6 +893,25 @@ impl LivingEntity {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.get(&attribute.id)
             .map_or(attribute.default_value, AttributeInstance::value)
+    }
+
+    /// Vanilla `LivingEntity.getAttackRangeWith`.
+    pub fn get_attack_range_with(&self, weapon: &ItemStack) -> AttackRangeImpl {
+        weapon
+            .get_data_component::<AttackRangeImpl>()
+            .cloned()
+            .unwrap_or_else(|| {
+                let interaction_range =
+                    self.get_attribute_value(&Attributes::ENTITY_INTERACTION_RANGE) as f32;
+                AttackRangeImpl {
+                    min_reach: 0.0,
+                    max_reach: interaction_range,
+                    min_creative_reach: 0.0,
+                    max_creative_reach: interaction_range,
+                    hitbox_margin: 0.0,
+                    mob_factor: 1.0,
+                }
+            })
     }
 
     /// Returns the base attribute value for `attribute` for this entity's type.
