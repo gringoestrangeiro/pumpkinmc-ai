@@ -648,6 +648,10 @@ impl Mob for WanderingTraderEntity {
         &self.mob_entity
     }
 
+    fn get_despawn_delay(&self) -> Option<i32> {
+        Some(self.despawn_delay.load(Ordering::Relaxed))
+    }
+
     fn clear_trading_player(&self) {
         *self
             .trading_player

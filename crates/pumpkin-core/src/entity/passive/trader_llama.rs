@@ -75,6 +75,9 @@ impl TraderLlamaVariant {
     }
 }
 
+/// Vanilla `TraderLlama.DEFAULT_DESPAWN_DELAY`.
+const DEFAULT_DESPAWN_DELAY: i32 = 47999;
+
 pub struct TraderLlamaEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
@@ -85,6 +88,7 @@ pub struct TraderLlamaEntity {
     pub has_chest: AtomicBool,
     pub temper: AtomicI32,
     pub owner: AtomicCell<Option<Uuid>>,
+    pub despawn_delay: AtomicI32,
 }
 
 impl TraderLlamaEntity {
@@ -104,6 +108,7 @@ impl TraderLlamaEntity {
             has_chest: AtomicBool::new(false),
             temper: AtomicI32::new(0),
             owner: AtomicCell::new(None),
+            despawn_delay: AtomicI32::new(DEFAULT_DESPAWN_DELAY),
         };
         let mob_arc = Arc::new(llama);
         let mob_weak: Weak<dyn Mob> = {
@@ -244,6 +249,60 @@ impl TraderLlamaEntity {
         let spit_arc: Arc<dyn EntityBase> = Arc::new(spit);
         world.spawn_entity(spit_arc);
     }
+    fn maybe_despawn(&self) {
+        if !self.can_despawn() {
+            return;
+        }
+
+        let entity = self.get_entity();
+        let trader_delay = entity
+            .leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|holder| holder.get_mob())
+            .and_then(Mob::get_despawn_delay);
+        let delay = trader_delay.map_or_else(
+            || self.despawn_delay.load(Ordering::Relaxed) - 1,
+            |trader_delay| trader_delay - 1,
+        );
+        self.despawn_delay.store(delay, Ordering::Relaxed);
+        if delay <= 0 {
+            entity.unleash();
+            entity.remove();
+        }
+    }
+
+    /// Vanilla `TraderLlama.canDespawn`.
+    fn can_despawn(&self) -> bool {
+        !self.is_tame()
+            && !self.is_leashed_to_something_other_than_the_wandering_trader()
+            && !self.has_exactly_one_player_passenger()
+            && !self.is_age_locked()
+            && !self.mob_entity.persistence_required.load(Ordering::Relaxed)
+    }
+
+    /// Vanilla `TraderLlama.isLeashedToSomethingOtherThanTheWanderingTrader`.
+    fn is_leashed_to_something_other_than_the_wandering_trader(&self) -> bool {
+        self.get_entity()
+            .leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|holder| {
+                holder.get_entity().entity_type.id != EntityType::WANDERING_TRADER.id
+            })
+    }
+
+    /// Vanilla `TraderLlama.hasExactlyOnePlayerPassenger`.
+    fn has_exactly_one_player_passenger(&self) -> bool {
+        let passengers = self
+            .get_entity()
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        passengers.len() == 1 && passengers[0].get_player().is_some()
+    }
 }
 
 impl AgeableMob for TraderLlamaEntity {
@@ -263,6 +322,7 @@ impl Animal for TraderLlamaEntity {
     }
 }
 
+/// Vanilla `TraderLlama.maybeDespawn`.
 impl Mob for TraderLlamaEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
@@ -279,6 +339,7 @@ impl Mob for TraderLlamaEntity {
         nbt.put_bool("ChestedHorse", self.has_chest());
         nbt.put_bool("Tame", self.is_tame());
         nbt.put_int("Temper", self.temper.load(Ordering::Relaxed));
+        nbt.put_int("DespawnDelay", self.despawn_delay.load(Ordering::Relaxed));
         if let Some(owner) = self.owner.load() {
             nbt.put_uuid("Owner", owner);
         }
@@ -301,6 +362,10 @@ impl Mob for TraderLlamaEntity {
         if let Some(temper) = nbt.get_int("Temper") {
             self.temper.store(temper, Ordering::Relaxed);
         }
+        self.despawn_delay.store(
+            nbt.get_int("DespawnDelay").unwrap_or(DEFAULT_DESPAWN_DELAY),
+            Ordering::Relaxed,
+        );
         if let Some(owner) = nbt.get_uuid("Owner") {
             self.owner.store(Some(owner));
         }
@@ -312,6 +377,7 @@ impl Mob for TraderLlamaEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.ageable_ai_step();
+        self.maybe_despawn();
     }
 
     fn mob_init_data_tracker(&self) {

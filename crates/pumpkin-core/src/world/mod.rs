@@ -174,6 +174,7 @@ pub mod entity_tracker;
 pub mod environment;
 pub mod natural_spawner;
 pub mod scoreboard;
+pub mod wandering_trader_spawner;
 pub mod weather;
 
 pub use environment::EnvironmentAttributes;
@@ -285,6 +286,9 @@ pub struct World {
     pub raids: std::sync::Mutex<raid::Raids>,
     /// End Dragon fight manager (only present in `THE_END` dimension).
     pub dragon_fight: Option<std::sync::Mutex<dragon_fight::DragonFight>>,
+    /// Wandering trader spawn timer, like vanilla's overworld-only custom spawner.
+    pub wandering_trader_spawner:
+        Option<std::sync::Mutex<wandering_trader_spawner::WanderingTraderSpawner>>,
     pub spawn_state: ArcSwap<SpawnState>,
     pub active_chunks: RwLock<FxHashSet<Vector2<i32>>>,
     active_chunk_tracker: std::sync::Mutex<ActiveChunkTracker>,
@@ -406,6 +410,14 @@ impl World {
             NbtCompound::new()
         };
 
+        // Vanilla registers the wandering trader spawner on the overworld only.
+        let wandering_trader_spawner =
+            (dimension.minecraft_name == Dimension::OVERWORLD.minecraft_name).then(|| {
+                std::sync::Mutex::new(wandering_trader_spawner::WanderingTraderSpawner::new(
+                    wandering_trader_spawner::stored_data(&custom_data),
+                ))
+            });
+
         Self {
             uuid: Uuid::new_v4(),
             level,
@@ -433,6 +445,7 @@ impl World {
             villager_poi: std::sync::Mutex::new(villager_poi::VillagerPoiStorage::default()),
             raids: std::sync::Mutex::new(raid::Raids::default()),
             dragon_fight,
+            wandering_trader_spawner,
             spawn_state: ArcSwap::new(Arc::new(SpawnState::empty())),
             active_chunks: RwLock::new(FxHashSet::default()),
             active_chunk_tracker: std::sync::Mutex::new(ActiveChunkTracker::default()),
@@ -1559,6 +1572,13 @@ impl World {
             raids.next_id = raids.next_id.max(guard.next_id);
             *guard = raids;
         };
+
+        if let Some(spawner) = &self.wandering_trader_spawner {
+            spawner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .tick(self);
+        }
 
         let t_chunks = std::time::Instant::now();
         self.tick_chunks(server);
@@ -6883,6 +6903,23 @@ impl World {
 
         if let Ok(mut portal_poi) = self.portal_poi.try_lock() {
             let _ = portal_poi.save_all();
+        }
+
+        if let Some(spawner) = &self.wandering_trader_spawner {
+            let data = spawner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .data();
+            self.set_custom_data(
+                wandering_trader_spawner::SAVED_DATA_NAMESPACE,
+                wandering_trader_spawner::SPAWN_DELAY_KEY,
+                pumpkin_nbt::tag::NbtTag::Int(data.spawn_delay),
+            );
+            self.set_custom_data(
+                wandering_trader_spawner::SAVED_DATA_NAMESPACE,
+                wandering_trader_spawner::SPAWN_CHANCE_KEY,
+                pumpkin_nbt::tag::NbtTag::Int(data.spawn_chance),
+            );
         }
 
         {

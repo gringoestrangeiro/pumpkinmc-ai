@@ -190,6 +190,12 @@ impl MobEntity {
         self.position_target_range.load(Relaxed) != -1
     }
 
+    /// Vanilla `Mob.setHomeTo`.
+    pub fn set_home_to(&self, new_center: BlockPos, radius: i32) {
+        self.position_target.store(new_center);
+        self.position_target_range.store(radius, Relaxed);
+    }
+
     pub fn is_in_position_target_range(&self) -> bool {
         self.is_in_position_target_range_pos(&self.living_entity.entity.block_pos.load())
     }
@@ -444,6 +450,14 @@ impl MobEntity {
         if self.persistence_required.load(Relaxed) {
             nbt.put_bool("PersistenceRequired", true);
         }
+        if self.has_position_target() {
+            nbt.put_int("home_radius", self.position_target_range.load(Relaxed));
+            let home = self.position_target.load();
+            nbt.put(
+                "home_pos",
+                pumpkin_nbt::tag::NbtTag::IntArray(vec![home.0.x, home.0.y, home.0.z]),
+            );
+        }
     }
 
     pub fn read_mob_nbt(&self, nbt: &NbtCompound) {
@@ -459,6 +473,15 @@ impl MobEntity {
         if let Some(persistence_required) = nbt.get_bool("PersistenceRequired") {
             self.persistence_required
                 .store(persistence_required, Relaxed);
+        }
+        self.position_target_range
+            .store(nbt.get_int("home_radius").unwrap_or(-1), Relaxed);
+        if self.position_target_range.load(Relaxed) >= 0
+            && let Some(home) = nbt.get_int_array("home_pos")
+            && home.len() >= 3
+        {
+            self.position_target
+                .store(BlockPos::new(home[0], home[1], home[2]));
         }
     }
 
@@ -888,6 +911,11 @@ pub trait Mob: EntityBase + Send + Sync {
     fn clear_trading_player(&self) {}
 
     fn get_home(&self) -> Option<BlockPos> {
+        None
+    }
+
+    /// Vanilla `WanderingTrader.getDespawnDelay`, read by leashed trader llamas.
+    fn get_despawn_delay(&self) -> Option<i32> {
         None
     }
 
