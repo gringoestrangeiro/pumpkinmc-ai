@@ -580,10 +580,12 @@ impl MobEntity {
             return false;
         }
 
+        // Vanilla `Monster.isDarkEnoughToSpawn` reads the darkened sky light,
+        // so night and thunderstorms lower the brightness this check sees.
         let current_brightness = if is_thundering {
-            (sky_light - 10).max(block_light)
+            world.get_raw_brightness(pos, 10)
         } else {
-            sky_light.max(block_light)
+            world.get_max_local_raw_brightness(pos)
         };
 
         // TODO
