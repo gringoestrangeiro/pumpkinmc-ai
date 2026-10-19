@@ -8,6 +8,11 @@
 
 </div>
 
+> [!IMPORTANT]
+> **PumpkinMC-AI is an unofficial fork of [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) and is not affiliated with or endorsed by the PumpkinMC organization.**
+> It keeps the original licenses (GPL-3.0 for the server, MIT OR Apache-2.0 for the plugin API crates), preserves the full git history, and credits the Pumpkin contributors in [NOTICE](NOTICE).
+> This fork accepts AI-written code and pull requests under the rules in [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md#ai-assisted-contributions).
+
 [Pumpkin](https://pumpkinmc.org/) is a Minecraft server built entirely in Rust, offering a fast, efficient,
 and customizable experience. It prioritizes performance and player enjoyment while adhering to the core mechanics of the game.
 <div align="center">

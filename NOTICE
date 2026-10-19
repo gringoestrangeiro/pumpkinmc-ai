@@ -1,0 +1,29 @@
+# NOTICE
+
+PumpkinMC-AI is an unofficial fork of [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin),
+maintained at <https://github.com/gringoestrangeiro/pumpkinmc-ai>.
+
+The original code, assets and documentation are the work of the PumpkinMC project and
+its contributors (<https://github.com/Pumpkin-MC/Pumpkin/graphs/contributors>). This
+fork preserves the full git history, so every original commit keeps its author, and it
+keeps the original license files.
+
+## Licenses
+
+- The server crates (for example `pumpkin`, `pumpkin-core`, `pumpkin-world`,
+  `pumpkin-protocol`, `pumpkin-data`, `pumpkin-config`) are licensed under the
+  GNU General Public License v3.0. See [LICENSE](LICENSE).
+- `pumpkin-plugin-api`, `pumpkin-plugin-utils` and `pumpkin-plugin-wit` are licensed
+  under MIT OR Apache-2.0. See `LICENSE-MIT` and `LICENSE-APACHE` in those crates.
+- The Minecraft data under `assets/` comes from the Pumpkin Extractor
+  (<https://github.com/Pumpkin-MC/Extractor>) and is used as in the upstream project.
+
+Changes made in this fork are documented in the git history. If you redistribute the
+fork, keep this notice, the license files and the history, and mark your changes.
+
+## Not affiliated
+
+This fork is not affiliated with, endorsed by, or supported by the PumpkinMC
+organization. "Pumpkin", "PumpkinMC" and related names belong to their respective
+owners. Bug reports for this fork belong in this repository, not in the upstream issue
+tracker.
