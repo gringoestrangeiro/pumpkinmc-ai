@@ -417,6 +417,12 @@ impl Mob for EndermanEntity {
         &self.mob_entity
     }
 
+    fn requires_custom_persistence(&self) -> bool {
+        // Vanilla `Enderman.requiresCustomPersistence`.
+        super::base_requires_custom_persistence(self.get_entity())
+            || self.get_carried_block().is_some()
+    }
+
     fn set_mob_target(&self, target: Option<Arc<dyn EntityBase>>) {
         self.set_target(self.as_valid_target(target));
     }

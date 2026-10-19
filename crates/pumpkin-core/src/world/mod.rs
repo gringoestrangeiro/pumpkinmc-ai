@@ -291,6 +291,10 @@ pub struct World {
         Option<std::sync::Mutex<wandering_trader_spawner::WanderingTraderSpawner>>,
     pub spawn_state: ArcSwap<SpawnState>,
     pub active_chunks: RwLock<FxHashSet<Vector2<i32>>>,
+    /// Chunks within the natural spawning footprint of a player, vanilla's
+    /// `DistanceManager` natural spawn chunk counter. Fixed size per player and
+    /// rebuilt every tick in [`World::update_active_chunks`].
+    pub natural_spawn_chunks: RwLock<FxHashSet<Vector2<i32>>>,
     active_chunk_tracker: std::sync::Mutex<ActiveChunkTracker>,
     pub forced_chunks: std::sync::Mutex<FxHashSet<Vector2<i32>>>,
     /// Block entities indexed by chunk, so ticking only visits the currently
@@ -448,6 +452,7 @@ impl World {
             wandering_trader_spawner,
             spawn_state: ArcSwap::new(Arc::new(SpawnState::empty())),
             active_chunks: RwLock::new(FxHashSet::default()),
+            natural_spawn_chunks: RwLock::new(FxHashSet::default()),
             active_chunk_tracker: std::sync::Mutex::new(ActiveChunkTracker::default()),
             forced_chunks: std::sync::Mutex::new(FxHashSet::default()),
             server,
@@ -482,6 +487,8 @@ impl World {
 
         let spectators_generate_chunks =
             self.level_info.load().game_rules.spectators_generate_chunks;
+        let natural_spawn_chunks =
+            natural_spawner::natural_spawn_chunks(&players, spectators_generate_chunks);
 
         for player in players.iter() {
             if player.is_spectator() && !spectators_generate_chunks {
@@ -541,9 +548,14 @@ impl World {
                 self.migrate_pending_block_entities(pos);
             }
         }
-        let spawnable_chunks = tracker.loaded_active_chunks.len() as i32;
+        let spawnable_chunks = natural_spawn_chunks.len() as i32;
         drop(active_chunks);
         drop(tracker);
+
+        *self
+            .natural_spawn_chunks
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = natural_spawn_chunks;
 
         self.spawn_state.store(Arc::new(SpawnState::new(
             spawnable_chunks,
@@ -1572,7 +1584,6 @@ impl World {
             raids.next_id = raids.next_id.max(guard.next_id);
             *guard = raids;
         };
-
         if let Some(spawner) = &self.wandering_trader_spawner {
             spawner
                 .lock()
@@ -2041,7 +2052,7 @@ impl World {
 
         // 3. Parallel Random Ticks via Rayon
         let world = self.clone();
-        let random_handle = handle.clone();
+        let random_handle = handle;
         tick_data
             .random_ticks
             .par_chunks(BATCH_SIZE)
@@ -2091,7 +2102,9 @@ impl World {
                 lock.difficulty == Difficulty::Peaceful,
             )
         };
-        let spawn_passives = self.get_time_of_day() % 400 == 0;
+        // Vanilla `ServerChunkCache.tickChunks` reads the world age for the
+        // persistent-category cadence, so `/time set` cannot shift it.
+        let spawn_passives = self.get_world_age() % 400 == 0;
         let spawn_enemies = !peaceful && spawn_monsters && spawn_mobs;
         let spawn_passives = spawn_passives && spawn_mobs;
 
@@ -2102,28 +2115,31 @@ impl World {
             spawn_passives,
         ));
 
-        // 5. Parallel Chunk Spawners via Rayon
+        // 5. Spawning chunks, in vanilla's shuffled sequential order so the mob
+        // caps see the mobs the chunks before them spawned.
         if !spawn_list.is_empty() {
             let mut spawning_chunks = Vec::new();
-            for pos in active_chunks.iter() {
-                if let Some(chunk) = self.level.read_chunk_sync(pos, std::clone::Clone::clone) {
-                    spawning_chunks.push((*pos, chunk));
+            {
+                let positions = self
+                    .natural_spawn_chunks
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let players = self.players.load();
+                for pos in positions.iter() {
+                    if !natural_spawner::any_player_close_enough_for_spawning(&players, *pos) {
+                        continue;
+                    }
+                    if let Some(chunk) = self.level.read_chunk_sync(pos, std::clone::Clone::clone) {
+                        spawning_chunks.push((*pos, chunk));
+                    }
                 }
             }
 
             spawning_chunks.shuffle(&mut rng());
 
-            let world = self.clone();
-            let spawn_handle = handle;
-            spawning_chunks.par_chunks(8).for_each(|batch| {
-                let _guard = spawn_handle.enter();
-                let world = world.clone();
-                let s_list = spawn_list.clone();
-                let s_state = spawn_state.clone();
-                for (pos, chunk) in batch {
-                    world.tick_spawning_chunk(*pos, chunk, &s_list, &s_state);
-                }
-            });
+            for (pos, chunk) in spawning_chunks {
+                self.tick_spawning_chunk(pos, &chunk, &spawn_list, &spawn_state);
+            }
         }
 
         // Batch these cheap lookups and atomic increments to avoid waking Rayon
@@ -2447,6 +2463,33 @@ impl World {
         }
     }
 
+    /// Vanilla `DistanceManager.inEntityTickingRange`.
+    #[must_use]
+    fn in_entity_ticking_range(&self, chunk_pos: Vector2<i32>) -> bool {
+        self.active_chunks
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&chunk_pos)
+    }
+
+    /// Vanilla `ServerLevel.canSpawnEntitiesInChunk`: the chunk has to tick
+    /// entities and lie inside the world border.
+    #[must_use]
+    fn can_spawn_entities_in_chunk(&self, chunk_pos: Vector2<i32>) -> bool {
+        if !self.in_entity_ticking_range(chunk_pos) {
+            return false;
+        }
+        let border = self
+            .worldborder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // `WorldBorder.isWithinBounds(ChunkPos)` tests the corner points, not
+        // the whole corner blocks.
+        let min_x = f64::from(chunk_pos.x << 4);
+        let min_z = f64::from(chunk_pos.y << 4);
+        border.contains(min_x, min_z) && border.contains(min_x + 15.0, min_z + 15.0)
+    }
+
     pub fn tick_spawning_chunk(
         self: &Arc<Self>,
         chunk_pos: Vector2<i32>,
@@ -2454,8 +2497,10 @@ impl World {
         spawn_list: &Vec<&'static MobCategory>,
         spawn_state: &Arc<SpawnState>,
     ) {
-        // this.level.tickThunder(chunk);
-        //TODO check in simulation distance
+        // Vanilla `ServerLevel.tickThunder` runs only in entity ticking chunks.
+        if !self.in_entity_ticking_range(chunk_pos) {
+            return;
+        }
         let (is_raining, is_thundering) = (self.is_raining(), self.is_thundering());
 
         if is_raining && is_thundering && rng().random_range(0..100_000) == 0 {
@@ -2506,7 +2551,9 @@ impl World {
         if spawn_list.is_empty() {
             return;
         }
-        // TODO this.level.canSpawnEntitiesInChunk(chunkPos)
+        if !self.can_spawn_entities_in_chunk(chunk_pos) {
+            return;
+        }
         let entities = spawn_for_chunk(
             self,
             chunk_pos,

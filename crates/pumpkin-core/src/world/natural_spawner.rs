@@ -1,10 +1,10 @@
 use crate::block::PathComputationType;
 use crate::entity::EntityBase;
 use crate::entity::mob::spawn::finalize_spawn;
+use crate::entity::player::Player;
 use crate::entity::r#type::{check_spawn_rules, from_type};
 use crate::world::World;
 use arc_swap::ArcSwap;
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use pumpkin_data::biome::Spawner;
 use pumpkin_data::chunk::Biome;
@@ -26,12 +26,47 @@ use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, rng};
+use rustc_hash::FxHashSet;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering::Relaxed};
 use uuid::Uuid;
 
 const MAGIC_NUMBER: i32 = 17 * 17;
+
+/// Chunk distance of the natural spawning footprint around a player, vanilla
+/// `DistanceManager`'s `FixedPlayerDistanceChunkTracker(8)`. The footprint is
+/// fixed and does not scale with the simulation distance.
+const NATURAL_SPAWN_CHUNK_DISTANCE: i32 = 8;
+
+/// Vanilla `DistanceManager.getNaturalSpawnChunkCount`: every chunk within
+/// [`NATURAL_SPAWN_CHUNK_DISTANCE`] of a spawning player, loaded or not.
+///
+/// Vanilla tracks a player's chunks for this counter only if `skipPlayer` lets
+/// them through, which drops spectators unless `spectatorsGenerateChunks` is
+/// on.
+#[must_use]
+pub fn natural_spawn_chunks(
+    players: &[Arc<Player>],
+    spectators_generate_chunks: bool,
+) -> FxHashSet<Vector2<i32>> {
+    let mut chunks = FxHashSet::default();
+    for player in players {
+        if player.is_spectator() && !spectators_generate_chunks {
+            continue;
+        }
+        add_natural_spawn_chunks(&mut chunks, player.get_entity().chunk_pos.load());
+    }
+    chunks
+}
+
+fn add_natural_spawn_chunks(chunks: &mut FxHashSet<Vector2<i32>>, center: Vector2<i32>) {
+    for dx in -NATURAL_SPAWN_CHUNK_DISTANCE..=NATURAL_SPAWN_CHUNK_DISTANCE {
+        for dz in -NATURAL_SPAWN_CHUNK_DISTANCE..=NATURAL_SPAWN_CHUNK_DISTANCE {
+            chunks.insert(center.add_raw(dx, dz));
+        }
+    }
+}
 
 pub struct MobCounts([AtomicI32; 8]);
 
@@ -113,13 +148,34 @@ impl fmt::Debug for LocalMobCapCalculator {
     }
 }
 
-impl LocalMobCapCalculator {
-    const fn calc_distance(chunk_pos: Vector2<i32>, player_pos: &Vector3<f64>) -> f64 {
-        let dx = ((chunk_pos.x << 4) + 8) as f64 - player_pos.x;
-        let dy = ((chunk_pos.y << 4) + 8) as f64 - player_pos.z;
-        dx * dx + dy * dy
-    }
+/// Vanilla `ChunkMap.euclideanDistanceSquared`: horizontal distance from the
+/// chunk middle to a position.
+const fn chunk_distance_sq(chunk_pos: Vector2<i32>, pos: &Vector3<f64>) -> f64 {
+    let dx = ((chunk_pos.x << 4) + 8) as f64 - pos.x;
+    let dz = ((chunk_pos.y << 4) + 8) as f64 - pos.z;
+    dx * dx + dz * dz
+}
 
+/// Vanilla `ChunkMap.playerIsCloseEnoughForSpawning`: a spectator never keeps
+/// a chunk eligible, and the player has to be within 128 blocks of the chunk
+/// middle.
+fn player_is_close_enough_for_spawning(player: &Player, chunk_pos: Vector2<i32>) -> bool {
+    !player.is_spectator() && chunk_distance_sq(chunk_pos, &player.position()) < 16384.0
+}
+
+/// Vanilla `ChunkMap.anyPlayerCloseEnoughForSpawningInternal`: whether any
+/// player keeps this chunk eligible for natural spawning.
+#[must_use]
+pub fn any_player_close_enough_for_spawning(
+    players: &[Arc<Player>],
+    chunk_pos: Vector2<i32>,
+) -> bool {
+    players
+        .iter()
+        .any(|player| player_is_close_enough_for_spawning(player, chunk_pos))
+}
+
+impl LocalMobCapCalculator {
     fn get_players_near(&self, world: &World, chunk_pos: Vector2<i32>) -> Arc<[i32]> {
         if let Some(players) = self.players_near_chunk.get(&chunk_pos) {
             return players.value().clone();
@@ -127,10 +183,7 @@ impl LocalMobCapCalculator {
 
         let mut players = Vec::new();
         for player in world.players.load().iter() {
-            if player.gamemode.load() == GameMode::Spectator {
-                continue;
-            }
-            if Self::calc_distance(chunk_pos, &player.position()) < 16384.0 {
+            if player_is_close_enough_for_spawning(player, chunk_pos) {
                 players.push(player.entity_id());
             }
         }
@@ -257,7 +310,6 @@ pub struct SpawnState {
     pub mob_category_counts: MobCounts,
     spawn_potential: PotentialCalculator,
     local_mob_cap_calculator: LocalMobCapCalculator,
-    last_checked: AtomicCell<Option<(BlockPos, &'static EntityType, f64)>>,
 }
 
 impl Clone for SpawnState {
@@ -267,7 +319,6 @@ impl Clone for SpawnState {
             mob_category_counts: self.mob_category_counts.clone(),
             spawn_potential: self.spawn_potential.clone(),
             local_mob_cap_calculator: self.local_mob_cap_calculator.clone(),
-            last_checked: AtomicCell::new(self.last_checked.load()),
         }
     }
 }
@@ -279,7 +330,6 @@ impl fmt::Debug for SpawnState {
             .field("mob_category_counts", &self.mob_category_counts)
             .field("spawn_potential", &self.spawn_potential)
             .field("local_mob_cap_calculator", &self.local_mob_cap_calculator)
-            .field("last_checked", &self.last_checked)
             .finish()
     }
 }
@@ -292,7 +342,6 @@ impl SpawnState {
             mob_category_counts: MobCounts::default(),
             spawn_potential: PotentialCalculator::default(),
             local_mob_cap_calculator: LocalMobCapCalculator::default(),
-            last_checked: AtomicCell::new(None),
         }
     }
 
@@ -362,10 +411,6 @@ impl SpawnState {
         let potential = PotentialCalculator::default();
         let local_mob_cap = LocalMobCapCalculator::default();
         let counter = MobCounts::default();
-        let active_chunks = world
-            .active_chunks
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for entity in entities.load().iter() {
             if let Some(mob) = entity.get_mob()
                 && (mob.get_mob_entity().persistence_required.load(Relaxed)
@@ -379,7 +424,9 @@ impl SpawnState {
                 continue;
             }
             let chunk_pos = base_entity.chunk_pos.load();
-            if !active_chunks.contains(&chunk_pos) {
+            // Vanilla `NaturalSpawner.createState` counts each mob whose chunk
+            // is loaded, not only the ones in ticking chunks.
+            if !world.level.is_chunk_loaded(&chunk_pos) {
                 continue;
             }
             let entity_pos = base_entity.block_pos.load();
@@ -397,7 +444,6 @@ impl SpawnState {
             mob_category_counts: counter,
             spawn_potential: potential,
             local_mob_cap_calculator: local_mob_cap,
-            last_checked: AtomicCell::new(None),
         }
     }
 
@@ -427,51 +473,11 @@ impl SpawnState {
         biome
             .spawn_costs
             .get(entity_type.resource_name)
-            .map_or_else(
-                || {
-                    self.last_checked.store(Some((*pos, entity_type, 0.0)));
-                    true
-                },
-                |cost| {
-                    self.last_checked
-                        .store(Some((*pos, entity_type, cost.charge)));
-                    self.spawn_potential
-                        .get_potential_energy_change(pos, cost.charge)
-                        <= cost.energy_budget
-                },
-            )
-    }
-
-    pub fn after_spawn(
-        &self,
-        entity_type: &'static EntityType,
-        pos: &BlockPos,
-        world: &Arc<World>,
-    ) {
-        let charge = if let Some((l_pos, l_type, l_charge)) = self.last_checked.load()
-            && l_pos.eq(pos)
-            && l_type == entity_type
-        {
-            Some(l_charge)
-        } else {
-            None
-        };
-
-        let charge = charge.unwrap_or_else(|| {
-            let biome = world.level.get_rough_biome(pos);
-            biome
-                .spawn_costs
-                .get(entity_type.resource_name)
-                .map_or(0.0, |cost| cost.charge)
-        });
-
-        self.spawn_potential.add_charge(pos, charge);
-        self.mob_category_counts.add(entity_type.category);
-        self.local_mob_cap_calculator.add_mob(
-            Vector2::<i32>::new(get_section_cord(pos.0.x), get_section_cord(pos.0.z)),
-            world,
-            entity_type.category,
-        );
+            .is_none_or(|cost| {
+                self.spawn_potential
+                    .get_potential_energy_change(pos, cost.charge)
+                    <= cost.energy_budget
+            })
     }
 }
 
@@ -826,7 +832,6 @@ pub fn spawn_category_for_position(
                         cluster_size += 1;
                         group_size += 1;
                         batch_buffer.push(entity);
-                        spawn_state.after_spawn(entity_type, &check_pos, world);
                         if cluster_size >= entity_type.limit_per_chunk {
                             return batch_buffer;
                         }
@@ -1136,6 +1141,19 @@ fn is_burning_block(block: &Block) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn natural_spawn_footprint_is_fixed_at_seventeen_by_seventeen() {
+        let mut chunks = FxHashSet::default();
+        add_natural_spawn_chunks(&mut chunks, Vector2::new(0, 0));
+        assert_eq!(chunks.len(), 17 * 17);
+        assert!(chunks.contains(&Vector2::new(-8, 8)));
+        assert!(!chunks.contains(&Vector2::new(9, 0)));
+
+        // Two players in adjacent chunks overlap on a single column.
+        add_natural_spawn_chunks(&mut chunks, Vector2::new(1, 0));
+        assert_eq!(chunks.len(), 18 * 17);
+    }
 
     #[test]
     fn vanilla_spawn_floor_predicates_are_preserved() {

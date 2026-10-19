@@ -808,6 +808,13 @@ impl MobEntity {
     }
 }
 
+/// Base `Mob.requiresCustomPersistence` rule: mounted and leashed mobs keep
+/// their persistence and neither despawn on their own nor count towards the mob
+/// caps. Vanilla subclasses extend it through `super.requiresCustomPersistence()`.
+fn base_requires_custom_persistence(entity: &crate::entity::Entity) -> bool {
+    entity.get_vehicle().is_some() || entity.is_leashed()
+}
+
 pub trait Mob: EntityBase + Send + Sync {
     fn get_random(&self) -> rand::rngs::ThreadRng {
         rand::rng()
@@ -845,7 +852,7 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn requires_custom_persistence(&self) -> bool {
-        false
+        base_requires_custom_persistence(self.get_entity())
     }
 
     /// Whether daylight burns this mob. Default: entity tag `burn_in_daylight`.
