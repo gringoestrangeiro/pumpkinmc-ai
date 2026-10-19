@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use pumpkin_data::{
     Block, BlockState, BlockStateId,
+    attributes::Attributes,
     damage::DamageType,
     entity::EntityType,
     fluid::Fluid,
@@ -423,7 +424,19 @@ impl Explosion {
             };
             let direction = (dir_pos - self.pos).normalize();
 
-            let knockback_power = (1.0 - distance) * exposure * knockback_multiplier;
+            let knockback_resistance = entity_base.get_living_entity().map_or(0.0, |living| {
+                // Vanilla clamps `explosion_knockback_resistance` to [0.0, 1.0] through its
+                // RangedAttribute range; Blast Protection feeds this attribute.
+                living
+                    .get_attribute_value(&Attributes::EXPLOSION_KNOCKBACK_RESISTANCE)
+                    .clamp(0.0, 1.0)
+            });
+            let knockback_power = explosion_knockback_power(
+                distance,
+                exposure,
+                knockback_multiplier,
+                knockback_resistance,
+            );
             let knockback = direction * knockback_power;
             // Vanilla `ServerExplosion.hurtEntities`: creative flyers get no knockback.
             if entity_base
@@ -578,9 +591,19 @@ impl Explosion {
     }
 }
 
+/// Vanilla `ServerExplosion.hurtEntities` knockback impulse scale.
+fn explosion_knockback_power(
+    distance: f64,
+    exposure: f64,
+    knockback_multiplier: f64,
+    knockback_resistance: f64,
+) -> f64 {
+    (1.0 - distance) * exposure * knockback_multiplier * (1.0 - knockback_resistance)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Explosion;
+    use super::{Explosion, explosion_knockback_power};
     use pumpkin_data::Block;
 
     #[test]
@@ -594,5 +617,17 @@ mod tests {
             assert!(Explosion::is_rail(rail));
         }
         assert!(!Explosion::is_rail(&Block::STONE));
+    }
+
+    #[test]
+    fn explosion_knockback_is_scaled_by_resistance() {
+        // 1.0 - 0.5 distance, fully exposed, no resistance.
+        assert!((explosion_knockback_power(0.5, 1.0, 1.0, 0.0) - 0.5).abs() < f64::EPSILON);
+        // Full resistance (e.g. an iron golem) cancels the knockback.
+        assert!(explosion_knockback_power(0.5, 1.0, 1.0, 1.0).abs() < f64::EPSILON);
+        // Blast Protection IV adds 0.15 per level to the resistance attribute.
+        assert!((explosion_knockback_power(0.5, 1.0, 1.0, 0.6) - 0.2).abs() < 1.0e-9);
+        // A wind charge's knockback multiplier scales the impulse before resistance.
+        assert!((explosion_knockback_power(0.5, 1.0, 0.5, 0.0) - 0.25).abs() < f64::EPSILON);
     }
 }
