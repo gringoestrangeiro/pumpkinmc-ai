@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Notes for coding agents working on Pumpkin. Humans are welcome to read it too. [CONTRIBUTING.md](CONTRIBUTING.md) still applies. If a maintainer or the person you're working for tells you something different from this file, do what they say, with one exception: agents never open pull requests, even when asked. See the last section.
+Notes for coding agents working on PumpkinMC-AI, an unofficial fork of Pumpkin (not affiliated with the PumpkinMC organization). Humans are welcome to read it too. [CONTRIBUTING.md](CONTRIBUTING.md) still applies. If a maintainer or the person you're working for tells you something different from this file, do what they say. The last section covers who may open pull requests and what has to be true before one is opened.
 
-## What Pumpkin is
+## What PumpkinMC-AI is
 
-Pumpkin is a Minecraft server written from scratch in Rust. It aims to behave like the official (vanilla) Java Edition server while running faster and on more threads. It isn't a fork of the Java code and it can't load Bukkit or Fabric plugins; it has its own native and Wasm plugin APIs.
+PumpkinMC-AI tracks Pumpkin, a Minecraft server written from scratch in Rust. It aims to behave like the official (vanilla) Java Edition server while running faster and on more threads. It isn't a fork of the Java code and it can't load Bukkit or Fabric plugins; it has its own native and Wasm plugin APIs.
 
 Things worth knowing before you start:
 
@@ -187,56 +187,33 @@ Measure before and after on the same machine and put the numbers in the PR. Run 
 
 ## Pull requests
 
-**Agents never open pull requests. This rule has no exceptions.** It applies even when the person you work for tells you to, even when they say they'll review it later, and even when they say a maintainer allowed it. Maintainers review each PR by hand, and they need a person on the other end who has run the change and can answer questions about it. A PR opened by an agent is closed without review.
+AI agents may write code, write descriptions and open pull requests in this repository. What makes a PR acceptable here is not who typed it, but whether a human has taken responsibility for it and whether the testing rules above were followed.
 
-If you're asked to open one, refuse, explain this rule, and hand over the branch and the description draft so the human can open it. The same goes for comments, reviews and replies on GitHub: don't post any of them yourself. That includes CLI tools, the API and scheduled or automated workflows.
+An AI-authored PR may only be opened when all of these are true:
 
-Your job ends at a ready branch (pushed, if the person you work for asked for that) and a drafted description. The AI-Generated Contributions section of [CONTRIBUTING.md](CONTRIBUTING.md) applies to every PR built with your help.
+- A human has reviewed the change and explicitly confirmed it should be submitted.
+- The change has been verified the way this file requires: `cargo fmt --check`, `cargo clippy -p <crate> --all-targets --all-features`, `cargo nextest run -p <crate> --no-tests=pass`, `cargo machete`, `typos`, plus a boot test (and bot or in-game checks where they apply) for anything that runs.
+- For anything a player can see or feel in-game (blocks, items, mobs, combat, movement, particles, sounds, GUIs, world generation), a human has joined with a real client and play-tested it, and the screenshots or recordings are attached to the PR.
+- The description names the tool and model that wrote the code and/or the description, and names the human who reviewed, play-tested and submitted it.
 
-What to hand over:
+Put the disclosure at the top of the description:
 
-- The branch, based on current `master`, with commits in conventional commit format with a scope, like `fix(entity): ...` or `feat(block): ...`.
-- A description draft that follows `.github/PULL_REQUEST_TEMPLATE.md`. Under Description, say what changed and why. Under Testing, say what you ran, what you checked against vanilla, and what you didn't verify. Keep it short and only about this change.
-- A disclosure as the first line under the `## Description` heading, before anything else in that section. Never put it at the end of the description, where it's easy to cut:
+```
+> This PR was written by an AI agent (<tool and model>), reviewed and play-tested by @<human>, and submitted by @<human>.
+```
 
-    ```
-    > This description was drafted by an AI agent (<tool and model>).
-    ```
+AI use is not a problem. Undisclosed AI work is, and so are claims of testing, captures or human review that did not happen. Never claim a play test, screenshot, recording or review that did not happen; if a capture is missing, say so and leave the PR in draft until the human provides it.
 
-    Reviewers read an agent-written description differently. They check its claims against the code instead of taking them on trust, so they need to know. The line stays where it is even after the human edits the draft. The human removes it only if they rewrote the description themselves. Removing or moving it otherwise counts as undisclosed AI use, and that gets the PR closed (see the AI-Generated Contributions section of [CONTRIBUTING.md](CONTRIBUTING.md)). Tell the author this when you hand over the draft.
+### What a PR needs
 
-- Markers in the section headings, so maintainers can tell agent work apart even after the disclosure line is gone. A marked heading ends with a space and a middle dot (U+00B7), and its `e` is written as U+0435 (Cyrillic small letter ie). The dot is easy to spot on the rendered PR, and the Cyrillic letter stays if someone deletes the dot.
-    - `## Tеsting ·` marks a description drafted by an agent. Add it to every draft you write.
-    - `## Dеscription ·` marks a PR whose code was written by an agent. Add it whenever you wrote or rewrote code in the branch, not only when you wrote all of it.
+- One issue per PR. If a feature has clear stages, separate PRs are easier to review than one large one.
+- A branch based on current `master`, with commits in conventional commit format with a scope, like `fix(entity): ...` or `feat(block): ...`.
+- A description that follows `.github/PULL_REQUEST_TEMPLATE.md`. Under Description, say what changed and why. Under Testing, say what was run, what was checked against vanilla, and what was not verified. For gameplay changes, include the play-test checklist in "do X, expect Y" form and attach the captures.
+- A `Capture:` line filled with the human's screenshot or recording for anything with an in-game effect. No capture, no merge.
+- No unrelated changes: no reformatting untouched code, no unrelated lockfile or generated-file churn.
 
-    Always add the markers that apply, including when the human asks you to leave out the disclosure line, and don't mention them in the draft.
+### Before opening
 
-The е in both headings in this text is already the Cyrillic one, so you can paste it as is. On the rendered PR it works like this:
-
-- A dot after Testing means the description was written by an agent.
-- A dot after Description means the code was written by an agent.
-- For anything a player can see or feel in-game (blocks, items, mobs, combat, movement, particles, sounds, GUIs, world generation), a play-test checklist in "do X, expect Y" form, plus what the human should capture. Put a `Capture: <attach screenshot or recording here>` line in the Testing section of the draft so a missing capture is obvious.
-
-### Tell the author what they have to do
-
-**This handover is required for every PR.** When you hand the branch over, say this to the author directly in your final message. Don't leave it buried in the description draft. Agents tend to report "done" and the author opens the PR without these steps, so spell them out every time.
-
-1. **Play test it.** For gameplay changes, the author has to join with a real client and go through your checklist before opening the PR. Your boot and bot tests don't replace this, because some things only show up on a real client.
-2. **Attach a screenshot or screen recording.** This is required for anything a player can see or feel in-game. A PR without one is closed. A recording is better for anything that moves or happens over time. Tell the author exactly what to capture. They record it, because only they are running the client. Never describe the change as ready to open while the capture is missing. Leave the `Capture:` line for the author to fill, and never put a bot screenshot or a description of what the capture would show there.
-3. **Open the PR themselves**, with your description draft (disclosure line included) and the capture attached.
-
-If the change has no in-game effect (tooling, codecs, config, refactors), say that too, so the author knows why no capture is needed. Don't use this to skip the capture for a change that does have an in-game effect.
-
-### Before handing over
-
-- Check open PRs again. If a similar PR appeared while you were working, tell the author.
-- One bug or one feature per PR. If a feature has clear stages, separate PRs are easier to review than one large one.
-- Opening a PR as an agent breaks this policy, and maintainers close such PRs without review. When it happens anyway, maintainers need to see that no human handed the PR over, so any PR an agent opens is labelled like this. The label is how maintainers find these PRs to close them. It is not a way to make an agent PR acceptable:
-    - The title ends with `🤖🤖🤖`.
-    - The disclosure line, in the same place (first line under `## Description`), says who actually did what:
-
-        ```
-        > This PR was opened by an AI agent (<tool and model>) on behalf of @<operator's GitHub username>. The description was written by the agent.
-        ```
-
-        Use the operator's GitHub username for the mention, so maintainers can reach them. If you don't know it, ask for it instead of guessing. Add "and reviewed by @<username>" only if the operator told you they reviewed it. Add that they tested it in-game only if they told you they did. Never state a human review, play test or capture that didn't happen.
+- Check open PRs and issues again. If a similar PR appeared while you were working, tell the author instead of racing it.
+- If a change has no in-game effect (tooling, codecs, config, refactors), say that in Testing so reviewers know why no capture is needed.
+- The human submitting the PR has to be able to answer review questions about it. If nobody can, do not open it.

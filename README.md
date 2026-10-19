@@ -1,14 +1,19 @@
 <div align="center">
 
-# Pumpkin
+# PumpkinMC-AI
 
-![CI](https://github.com/Pumpkin-MC/Pumpkin/actions/workflows/rust.yml/badge.svg)
+![CI](https://github.com/gringoestrangeiro/pumpkinmc-ai/actions/workflows/rust.yml/badge.svg)
 [![Discord](https://img.shields.io/discord/1268592337445978193.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/wT8XjrjKkf)
 [![License: GPL](https://img.shields.io/badge/License-GPLv3-yellow.svg)](https://opensource.org/licenses/gpl-3-0)
 
 </div>
 
-[Pumpkin](https://pumpkinmc.org/) is a Minecraft server built entirely in Rust, offering a fast, efficient,
+> [!IMPORTANT]
+> **PumpkinMC-AI is an unofficial fork of [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) and is not affiliated with or endorsed by the PumpkinMC organization.**
+> It keeps the original licenses (GPL-3.0 for the server, MIT OR Apache-2.0 for the plugin API crates), preserves the full git history, and credits the Pumpkin contributors in [NOTICE](NOTICE).
+> This fork accepts AI-written code and pull requests under the rules in [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md#ai-assisted-contributions).
+
+PumpkinMC-AI tracks [Pumpkin](https://pumpkinmc.org/), a Minecraft server built entirely in Rust, offering a fast, efficient,
 and customizable experience. It prioritizes performance and player enjoyment while adhering to the core mechanics of the game.
 <div align="center">
 
@@ -97,19 +102,29 @@ and customizable experience. It prioritizes performance and player enjoyment whi
 
 ## How to run
 
-See our [Quick Start](https://docs.pumpkinmc.org/#quick-start) guide to get Pumpkin running.
+See the upstream [Quick Start](https://docs.pumpkinmc.org/#quick-start) guide to get PumpkinMC-AI running.
 
 ## Contributions
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
+Contributions are welcome, including AI-written ones under the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Docs
 
-Pumpkin's documentation can be found at <https://pumpkinmc.org/>
+Upstream Pumpkin's documentation can be found at <https://pumpkinmc.org/>
 
 ## Communication
 
 Consider joining [our Discord server](https://discord.gg/wT8XjrjKkf) to stay up-to-date on events, updates, and connect with other members.
+
+## Syncing with upstream
+
+This repository keeps the full Pumpkin history but is not attached to GitHub's fork network, so add the upstream remote manually:
+
+```bash
+git remote add upstream https://github.com/Pumpkin-MC/Pumpkin.git
+git fetch upstream
+git merge upstream/master
+```
 
 ## Funding
 
@@ -119,4 +134,5 @@ If you want to fund me and help the project, check out the [Donation Page](https
 
 * **Pumpkin Server**: Licensed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
 * **Plugin API (`pumpkin-plugin-api` & `pumpkin-plugin-wit`)**: Dual-licensed under [MIT](crates/pumpkin-plugin-api/LICENSE-MIT) OR [Apache-2.0](crates/pumpkin-plugin-api/LICENSE-APACHE) for maximum flexibility when writing plugins.
+* **This fork**: unofficial and not affiliated with the PumpkinMC organization. See [NOTICE](NOTICE).
 * **Third-Party Assets & Data**: Bedrock mappings, protocol conversion data, and Minecraft assets are subject to their respective licenses and attribution terms. See [assets/NOTICE.md](assets/NOTICE.md) for full details.
