@@ -167,14 +167,27 @@ impl DataComponentImpl for BlockStateImpl {
     default_impl!(BlockState);
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct BeesImpl;
+#[derive(Clone, Debug, PartialEq)]
+pub struct BeesImpl {
+    /// The hive's occupants, in the vanilla `bees` NBT form
+    /// (`entity_data`, `ticks_in_hive`, `min_ticks_in_hive`).
+    pub bees: Vec<NbtTag>,
+}
 impl BeesImpl {
-    pub const fn read_data(_data: &NbtTag) -> Option<Self> {
-        Some(Self)
+    pub const EMPTY: Self = Self { bees: Vec::new() };
+
+    #[must_use]
+    pub fn read_data(data: &NbtTag) -> Option<Self> {
+        match data {
+            NbtTag::List(bees) => Some(Self { bees: bees.clone() }),
+            _ => None,
+        }
     }
 }
 impl DataComponentImpl for BeesImpl {
+    fn write_data(&self) -> NbtTag {
+        NbtTag::List(self.bees.clone())
+    }
     default_impl!(Bees);
 }
 

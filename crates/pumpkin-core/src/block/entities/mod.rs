@@ -1,13 +1,19 @@
 use std::{any::Any, sync::Arc};
 
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{CustomNameImpl, DataComponentImpl};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::{Block, block_properties::BLOCK_ENTITY_TYPES};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
+use pumpkin_util::text::TextComponent;
 
 use crate::world::World;
 use pumpkin_data::BlockStateId;
 use pumpkin_inventory::Inventory;
+
+/// The components a block entity contributes to its own drops.
+pub type BlockEntityComponents = Vec<(DataComponent, Box<dyn DataComponentImpl>)>;
 
 pub mod barrel;
 pub mod beacon;
@@ -126,8 +132,11 @@ pub trait BlockEntity: Any + Send + Sync {
         None
     }
 
-    /// Copies the block entity's state on the item stack dropped for it.
-    fn collect_item_components(&self, _stack: &mut ItemStack) {}
+    /// The block entity's own components, as `minecraft:copy_components` copies them
+    /// onto the block's drops (`BlockEntity.collectComponents`).
+    fn collect_components(&self) -> BlockEntityComponents {
+        Vec::new()
+    }
 
     /// Restores the state from the item stack the block was placed from.
     fn apply_item_components(&self, _stack: &ItemStack) {}
@@ -165,6 +174,24 @@ pub trait BlockEntity: Any + Send + Sync {
     fn to_experience_container(self: Arc<Self>) -> Option<Arc<dyn ExperienceContainer>> {
         None
     }
+}
+
+/// Reads the `minecraft:custom_name` component of a stack a block was placed from
+/// as the plain string block entity NBT keeps.
+pub(crate) fn custom_name_from_stack(stack: &ItemStack) -> Option<String> {
+    stack
+        .get_data_component::<CustomNameImpl>()
+        .map(|name| name.name.clone().get_text())
+}
+
+/// Builds the `minecraft:custom_name` component for a block entity's plain string name.
+pub(crate) fn custom_name_component(name: &str) -> (DataComponent, Box<dyn DataComponentImpl>) {
+    (
+        DataComponent::CustomName,
+        Box::new(CustomNameImpl {
+            name: TextComponent::text(name.to_string()),
+        }),
+    )
 }
 
 #[must_use]

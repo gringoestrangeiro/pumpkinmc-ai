@@ -7,7 +7,7 @@ use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::random::xoroshiro128::Xoroshiro;
 use pumpkin_util::random::{RandomImpl, get_seed};
 use std::any::Any;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::{
     array::from_fn,
     sync::{
@@ -21,12 +21,16 @@ use crate::world::{BlockFlags, World};
 use pumpkin_inventory::{Clearable, Inventory, sync_write_items_to_nbt};
 
 use super::BlockEntity;
+use super::{custom_name_component, custom_name_from_stack};
 
 pub struct BarrelBlockEntity {
     pub position: BlockPos,
     pub items: RwLock<[ItemStack; Self::INVENTORY_SIZE]>,
     pub dirty: AtomicBool,
     pub comparator_dirty: AtomicBool,
+
+    // Vanilla Parity Fields
+    pub custom_name: Mutex<Option<String>>,
 
     // Viewer
     viewers: ViewerCountTracker,
@@ -50,6 +54,7 @@ impl BlockEntity for BarrelBlockEntity {
             items: RwLock::new(from_fn(|_| ItemStack::EMPTY.clone())),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            custom_name: Mutex::new(nbt.get_string("CustomName").map(ToString::to_string)),
             viewers: ViewerCountTracker::new(),
         };
 
@@ -66,6 +71,31 @@ impl BlockEntity for BarrelBlockEntity {
 
     fn write_nbt(&self, nbt: &mut NbtCompound) {
         self.write_inventory_nbt(nbt, true);
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            nbt.put_string("CustomName", name.clone());
+        }
+    }
+
+    fn collect_components(&self) -> super::BlockEntityComponents {
+        let mut components = Vec::new();
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(custom_name_component(name));
+        }
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(name) = custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+            self.mark_dirty();
+        }
     }
 
     fn tick(&self, world: &Arc<World>) {
@@ -129,6 +159,7 @@ impl BarrelBlockEntity {
             items: RwLock::new(from_fn(|_| ItemStack::EMPTY.clone())),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            custom_name: Mutex::new(None),
             viewers: ViewerCountTracker::new(),
         }
     }

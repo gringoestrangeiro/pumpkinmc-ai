@@ -559,6 +559,7 @@ impl Explosion {
                         let is_thundering = world.is_thundering();
                         let params = LootContextParameters {
                             block_state: Some(state),
+                            block_entity: world.get_block_entity(pos),
                             explosion_radius,
                             position: Some(pumpkin_util::math::vector3::Vector3::new(
                                 pos.0.x as f64,

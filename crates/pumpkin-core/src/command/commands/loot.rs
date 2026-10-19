@@ -476,6 +476,7 @@ impl CommandExecutor for LootExecutor {
 
                 let params = LootContextParameters {
                     block_state: Some(block_state),
+                    block_entity: world.get_block_entity(&pos),
                     tool: tool_stack,
                     position: Some(Vector3::new(
                         f64::from(pos.0.x) + 0.5,

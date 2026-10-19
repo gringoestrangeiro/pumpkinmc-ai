@@ -523,14 +523,39 @@ impl DataComponentImpl for BannerPatternsImpl {
     default_impl!(BannerPatterns);
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct PotDecorationsImpl;
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Default)]
+pub struct PotDecorationsImpl {
+    /// Item ids of the four pot faces, in vanilla `pot_decorations` order.
+    pub decorations: Vec<String>,
+}
 impl PotDecorationsImpl {
-    pub const fn read_data(_data: &NbtTag) -> Option<Self> {
-        Some(Self)
+    pub const EMPTY: Self = Self {
+        decorations: Vec::new(),
+    };
+
+    #[must_use]
+    pub fn read_data(data: &NbtTag) -> Option<Self> {
+        match data {
+            NbtTag::List(decorations) => Some(Self {
+                decorations: decorations
+                    .iter()
+                    .filter_map(NbtTag::extract_string)
+                    .map(ToString::to_string)
+                    .collect(),
+            }),
+            _ => None,
+        }
     }
 }
 impl DataComponentImpl for PotDecorationsImpl {
+    fn write_data(&self) -> NbtTag {
+        NbtTag::List(
+            self.decorations
+                .iter()
+                .map(|id| NbtTag::String(id.clone().into()))
+                .collect(),
+        )
+    }
     default_impl!(PotDecorations);
 }
 

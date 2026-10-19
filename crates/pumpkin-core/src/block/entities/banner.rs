@@ -1,4 +1,8 @@
 use super::BlockEntity;
+use super::{BlockEntityComponents, custom_name_component, custom_name_from_stack};
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{BannerPatternsImpl, DataComponentImpl};
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
@@ -58,6 +62,46 @@ impl BlockEntity for BannerBlockEntity {
             nbt.put_list("patterns", pats.clone());
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+
+        if let Ok(patterns) = self.patterns.lock()
+            && let Some(patterns) = patterns.as_ref()
+            && let Some(patterns) = BannerPatternsImpl::read_data(&NbtTag::List(patterns.clone()))
+        {
+            components.push((
+                DataComponent::BannerPatterns,
+                Box::new(patterns) as Box<dyn DataComponentImpl>,
+            ));
+        }
+
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(custom_name_component(name));
+        }
+
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(patterns) = stack.get_data_component::<BannerPatternsImpl>()
+            && let NbtTag::List(patterns) = patterns.write_data()
+        {
+            *self
+                .patterns
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(patterns);
+        }
+
+        if let Some(name) = custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

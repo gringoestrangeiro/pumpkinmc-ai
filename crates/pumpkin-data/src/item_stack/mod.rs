@@ -253,6 +253,22 @@ impl ItemStack {
         }
     }
 
+    /// Applies a set of components, overwriting existing values
+    /// (vanilla `ItemStack.applyComponents`).
+    pub fn apply_components(
+        &mut self,
+        components: Vec<(DataComponent, Box<dyn DataComponentImpl>)>,
+    ) {
+        for (to_set_id, component) in components {
+            let boxed = Some(component);
+            if let Some((_, c)) = self.patch.iter_mut().find(|(id, _)| *id == to_set_id) {
+                *c = boxed;
+            } else {
+                self.patch.push((to_set_id, boxed));
+            }
+        }
+    }
+
     pub fn add_lore(&mut self, line: pumpkin_util::text::TextComponent) {
         let mut lines = self
             .get_data_component::<crate::data_component_impl::LoreImpl>()

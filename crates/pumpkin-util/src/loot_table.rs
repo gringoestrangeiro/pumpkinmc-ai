@@ -35,6 +35,56 @@ pub enum LootBonusFormula {
     BinomialWithBonusCount { extra: i32, probability: f32 },
 }
 
+/// Source `minecraft:copy_components` copies components from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyComponentsSource {
+    BlockEntity,
+}
+
+/// `minecraft:copy_components`: copies components from a loot context source onto the dropped item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CopyComponentsFunction {
+    pub source: CopyComponentsSource,
+    /// Component ids to copy; when empty, every component except the excluded ones is copied.
+    pub include: &'static [&'static str],
+    pub exclude: &'static [&'static str],
+}
+
+/// Function applied to an entry's stack after it has been built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LootFunction {
+    CopyComponents(CopyComponentsFunction),
+}
+
+/// `minecraft:copy_components` with owned component id lists, used by loot tables
+/// loaded from datapacks at runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DynamicCopyComponentsFunction {
+    pub source: CopyComponentsSource,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+/// Function of a loot table loaded from a datapack at runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DynamicLootFunction {
+    CopyComponents(DynamicCopyComponentsFunction),
+}
+
+impl From<LootFunction> for DynamicLootFunction {
+    fn from(function: LootFunction) -> Self {
+        match function {
+            LootFunction::CopyComponents(copy) => {
+                Self::CopyComponents(DynamicCopyComponentsFunction {
+                    source: copy.source,
+                    include: copy.include.iter().map(ToString::to_string).collect(),
+                    exclude: copy.exclude.iter().map(ToString::to_string).collect(),
+                })
+            }
+        }
+    }
+}
+
 /// A single item entry inside a loot pool.
 #[derive(Clone, Copy, Debug)]
 pub struct LootEntry {
@@ -51,6 +101,8 @@ pub struct LootEntry {
     /// Bonus formula to apply with fortune / looting (if any).
     pub bonus_formula: Option<LootBonusFormula>,
     pub furnace_smelt: Option<LootCondition>,
+    /// Item functions applied to the generated stack (e.g. `minecraft:copy_components`).
+    pub functions: &'static [LootFunction],
 }
 
 /// One roll pool inside a loot table.
@@ -167,6 +219,8 @@ pub struct DynamicLootEntry {
     pub condition: DynamicLootCondition,
     /// Bonus formula to apply with fortune / looting (if any).
     pub bonus_formula: Option<LootBonusFormula>,
+    /// Item functions applied to the generated stack (e.g. `minecraft:copy_components`).
+    pub functions: Vec<DynamicLootFunction>,
 }
 
 impl From<LootEntry> for DynamicLootEntry {
@@ -178,6 +232,7 @@ impl From<LootEntry> for DynamicLootEntry {
             max_count: e.max_count,
             condition: DynamicLootCondition::from(e.condition),
             bonus_formula: e.bonus_formula,
+            functions: e.functions.iter().copied().map(Into::into).collect(),
         }
     }
 }

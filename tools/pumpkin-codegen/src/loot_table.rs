@@ -342,6 +342,13 @@ struct EntryFunctionStruct {
     count: Option<CountStruct>,
     #[serde(default)]
     condition: Option<ConditionValue>,
+    /// `minecraft:copy_components` source, e.g. `"block_entity"`.
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    include: Vec<String>,
+    #[serde(default)]
+    exclude: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -411,6 +418,13 @@ struct ParsedEntry {
     condition: LootCondition,
     bonus_formula: Option<LootBonusFormula>,
     furnace_smelt: Option<LootCondition>,
+    functions: Vec<ParsedCopyComponents>,
+}
+
+/// `minecraft:copy_components` modifier parsed from an entry.
+struct ParsedCopyComponents {
+    include: Vec<String>,
+    exclude: Vec<String>,
 }
 
 fn extract_entries(
@@ -496,6 +510,25 @@ fn extract_entries_with_depth(
                     }
                 });
 
+                let functions: Vec<ParsedCopyComponents> = entry
+                    .functions
+                    .iter()
+                    .filter_map(|f| {
+                        if f.function != "minecraft:copy_components" {
+                            return None;
+                        }
+                        match f.source.as_deref() {
+                            Some("block_entity") => Some(ParsedCopyComponents {
+                                include: f.include.clone(),
+                                exclude: f.exclude.clone(),
+                            }),
+                            source => panic!(
+                                "unsupported minecraft:copy_components source {source:?} in a loot table"
+                            ),
+                        }
+                    })
+                    .collect();
+
                 out.push(ParsedEntry {
                     item: name.clone(),
                     weight: entry.weight,
@@ -504,6 +537,7 @@ fn extract_entries_with_depth(
                     condition: entry_cond,
                     bonus_formula,
                     furnace_smelt,
+                    functions,
                 });
             }
         }
@@ -536,6 +570,7 @@ fn extract_entries_with_depth(
                                 condition: entry_cond,
                                 bonus_formula: None,
                                 furnace_smelt,
+                                functions: Vec::new(),
                             });
                         }
                     }
@@ -775,6 +810,27 @@ fn emit_table(
                         quote! { Some(#cond) }
                     },
                 );
+                let function_tokens: Vec<TokenStream> = e
+                    .functions
+                    .iter()
+                    .map(|f| {
+                        let include = f
+                            .include
+                            .iter()
+                            .map(|id| LitStr::new(id, Span::call_site()));
+                        let exclude = f
+                            .exclude
+                            .iter()
+                            .map(|id| LitStr::new(id, Span::call_site()));
+                        quote! {
+                            LootFunction::CopyComponents(CopyComponentsFunction {
+                                source: CopyComponentsSource::BlockEntity,
+                                include: &[#(#include),*],
+                                exclude: &[#(#exclude),*],
+                            })
+                        }
+                    })
+                    .collect();
 
                 quote! {
                     LootEntry {
@@ -785,6 +841,7 @@ fn emit_table(
                         condition: #cond_tokens,
                         bonus_formula: #bonus_tokens,
                         furnace_smelt: #smelt_tokens,
+                        functions: &[#(#function_tokens),*],
                     }
                 }
             })

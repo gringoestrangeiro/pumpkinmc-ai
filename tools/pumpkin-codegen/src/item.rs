@@ -758,7 +758,7 @@ impl ToTokens for ItemComponents {
             tokens.extend(quote! { (BannerPatterns, &BannerPatternsImpl::EMPTY), });
         }
         if self.bees.is_some() {
-            tokens.extend(quote! { (Bees, &BeesImpl), });
+            tokens.extend(quote! { (Bees, &BeesImpl::EMPTY), });
         }
         if let Some(block_state) = &self.block_state {
             let mut entries = TokenStream::new();
@@ -983,7 +983,7 @@ impl ToTokens for ItemComponents {
             });
         }
         if self.pot_decorations.is_some() {
-            tokens.extend(quote! { (PotDecorations, &PotDecorationsImpl), });
+            tokens.extend(quote! { (PotDecorations, &PotDecorationsImpl::EMPTY), });
         }
         if self.potion_contents.is_some() {
             tokens.extend(quote! {

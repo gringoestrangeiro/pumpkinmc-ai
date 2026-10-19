@@ -1,4 +1,8 @@
 use super::BlockEntity;
+use super::BlockEntityComponents;
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{BeesImpl, DataComponentImpl};
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
@@ -80,6 +84,30 @@ impl BlockEntity for BeehiveBlockEntity {
             );
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+
+        if let Ok(bees) = self.bees.lock()
+            && let Some(bees) = bees.as_ref()
+        {
+            components.push((
+                DataComponent::Bees,
+                Box::new(BeesImpl { bees: bees.clone() }) as Box<dyn DataComponentImpl>,
+            ));
+        }
+
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(bees) = stack.get_data_component::<BeesImpl>() {
+            *self
+                .bees
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(bees.bees.clone());
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

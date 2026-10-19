@@ -1,4 +1,7 @@
 use super::BlockEntity;
+use super::BlockEntityComponents;
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{DataComponentImpl, PotDecorationsImpl};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
@@ -65,6 +68,37 @@ impl BlockEntity for DecoratedPotBlockEntity {
             nbt.put_compound("item", it_nbt);
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+
+        if let Ok(sherds) = self.sherds.lock()
+            && let Some(sherds) = sherds.as_ref()
+            && let Some(decorations) = PotDecorationsImpl::read_data(&NbtTag::List(sherds.clone()))
+        {
+            components.push((
+                DataComponent::PotDecorations,
+                Box::new(decorations) as Box<dyn DataComponentImpl>,
+            ));
+        }
+
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(decorations) = stack.get_data_component::<PotDecorationsImpl>() {
+            *self
+                .sherds
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
+                decorations
+                    .decorations
+                    .iter()
+                    .map(|id| NbtTag::String(id.clone().into()))
+                    .collect(),
+            );
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

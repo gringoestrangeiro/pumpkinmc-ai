@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pumpkin_data::BlockState;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::EnchantmentsImpl;
@@ -7,8 +9,8 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::recipes::{CookingRecipeKind, get_cooking_recipe_with_ingredient};
 use pumpkin_data::tag::Taggable;
 pub use pumpkin_util::loot_table::{
-    DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable, LootBonusFormula,
-    LootCondition, LootEntry, LootPool, LootTable,
+    DynamicLootCondition, DynamicLootEntry, DynamicLootFunction, DynamicLootPool, DynamicLootTable,
+    LootBonusFormula, LootCondition, LootEntry, LootFunction, LootPool, LootTable,
 };
 use pumpkin_util::random::{RandomImpl, xoroshiro128::Xoroshiro};
 
@@ -16,6 +18,7 @@ use pumpkin_util::random::{RandomImpl, xoroshiro128::Xoroshiro};
 pub struct LootContextParameters {
     pub explosion_radius: Option<f32>,
     pub block_state: Option<&'static BlockState>,
+    pub block_entity: Option<Arc<dyn crate::block::entities::BlockEntity>>,
     pub killed_by_player: Option<bool>,
     pub luck: f32,
     pub this_entity: Option<&'static EntityType>,
@@ -352,7 +355,9 @@ pub fn generate_loot_with_context(
                                     &mut rng,
                                 )
                             });
-                            items_to_place.push(if smelts { smelt(stack) } else { stack });
+                            let mut stack = if smelts { smelt(stack) } else { stack };
+                            apply_functions(&mut stack, entry.functions, params);
+                            items_to_place.push(stack);
                         }
                     }
                     break;
@@ -446,6 +451,7 @@ pub fn generate_dynamic_loot_with_context(
             pool.empty_weight,
             &eligible_entries,
             fortune_level,
+            params,
             &mut rng,
             &mut items_to_place,
         );
@@ -454,11 +460,66 @@ pub fn generate_dynamic_loot_with_context(
     items_to_place
 }
 
+/// Applies an entry's functions to the stack it generated.
+fn apply_functions(
+    stack: &mut ItemStack,
+    functions: &[LootFunction],
+    params: &LootContextParameters,
+) {
+    for function in functions {
+        match function {
+            LootFunction::CopyComponents(copy) => {
+                copy_components_from_block_entity(stack, params, copy.include, copy.exclude);
+            }
+        }
+    }
+}
+
+/// Applies a runtime datapack entry's functions to the stack it generated.
+fn apply_dynamic_functions(
+    stack: &mut ItemStack,
+    functions: &[DynamicLootFunction],
+    params: &LootContextParameters,
+) {
+    for function in functions {
+        match function {
+            DynamicLootFunction::CopyComponents(copy) => {
+                let include: Vec<&str> = copy.include.iter().map(String::as_str).collect();
+                let exclude: Vec<&str> = copy.exclude.iter().map(String::as_str).collect();
+                copy_components_from_block_entity(stack, params, &include, &exclude);
+            }
+        }
+    }
+}
+
+/// Copies the block entity's components not filtered out by the include/exclude
+/// lists onto the dropped stack (`CopyComponentsFunction.run`).
+fn copy_components_from_block_entity(
+    stack: &mut ItemStack,
+    params: &LootContextParameters,
+    include: &[&str],
+    exclude: &[&str],
+) {
+    let Some(block_entity) = &params.block_entity else {
+        return;
+    };
+    let components = block_entity
+        .collect_components()
+        .into_iter()
+        .filter(|(component, _)| {
+            let name = component.to_name();
+            (include.is_empty() || include.contains(&name)) && !exclude.contains(&name)
+        })
+        .collect();
+    stack.apply_components(components);
+}
+
 fn roll_dynamic_entries(
     rolls: i32,
     empty_weight: i32,
     eligible_entries: &[&DynamicLootEntry],
     fortune_level: i32,
+    params: &LootContextParameters,
     rng: &mut Xoroshiro,
     items_to_place: &mut Vec<ItemStack>,
 ) {
@@ -494,7 +555,9 @@ fn roll_dynamic_entries(
                 if final_count > 0 {
                     let item_key = entry.item.strip_prefix("minecraft:").unwrap_or(&entry.item);
                     if let Some(item) = Item::from_registry_key(item_key) {
-                        items_to_place.push(ItemStack::new(final_count as u8, item));
+                        let mut stack = ItemStack::new(final_count as u8, item);
+                        apply_dynamic_functions(&mut stack, &entry.functions, params);
+                        items_to_place.push(stack);
                     }
                 }
                 break;
@@ -657,5 +720,90 @@ fn shuffle_and_split_items(
     for i in (1..n).rev() {
         let j = rng.next_bounded_i32((i + 1) as i32) as usize;
         result.swap(i, j);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use pumpkin_data::data_component_impl::{BeesImpl, CustomNameImpl, EnchantmentsImpl};
+    use pumpkin_data::item::Item;
+    use pumpkin_data::item_stack::ItemStack;
+    use pumpkin_data::loot_table::{BLOCKS_BARREL, BLOCKS_BEEHIVE};
+    use pumpkin_nbt::compound::NbtCompound;
+    use pumpkin_nbt::tag::NbtTag;
+    use pumpkin_util::math::position::BlockPos;
+    use pumpkin_util::text::TextComponent;
+
+    use super::{LootContextParameters, generate_loot_with_context};
+    use crate::block::entities::BlockEntity;
+    use crate::block::entities::barrel::BarrelBlockEntity;
+    use crate::block::entities::beehive::BeehiveBlockEntity;
+
+    #[test]
+    fn copy_components_copies_a_named_barrel() {
+        let barrel = BarrelBlockEntity::new(BlockPos::new(0, 0, 0));
+        let mut placed = ItemStack::new(1, &Item::BARREL);
+        placed.set_data_component(CustomNameImpl {
+            name: TextComponent::text("Storage"),
+        });
+        barrel.apply_item_components(&placed);
+
+        let params = LootContextParameters {
+            block_entity: Some(Arc::new(barrel)),
+            ..Default::default()
+        };
+
+        let items = generate_loot_with_context(&BLOCKS_BARREL, 1, &params);
+        let dropped = items.first().expect("barrel drops its item");
+        assert_eq!(
+            dropped
+                .get_data_component::<CustomNameImpl>()
+                .map(|name| name.name.clone().get_text()),
+            Some("Storage".to_string())
+        );
+    }
+
+    #[test]
+    fn copy_components_only_copies_the_components_the_table_lists() {
+        let mut bee_entry = NbtCompound::new();
+        bee_entry.put_string("id", "minecraft:bee".to_string());
+        let hive = BeehiveBlockEntity::new(BlockPos::new(0, 0, 0));
+        let mut placed = ItemStack::new(1, &Item::BEEHIVE);
+        placed.set_data_component(BeesImpl {
+            bees: vec![NbtTag::Compound(bee_entry)],
+        });
+        placed.set_data_component(CustomNameImpl {
+            name: TextComponent::text("Apiary"),
+        });
+        hive.apply_item_components(&placed);
+
+        // The hive only gives up its bees to a silk touch tool.
+        let silk_touch =
+            pumpkin_data::Enchantment::from_name("silk_touch").expect("silk touch exists");
+        let mut tool = ItemStack::new(1, &Item::SHEARS);
+        tool.set_data_component(EnchantmentsImpl {
+            enchantment: std::borrow::Cow::Owned(vec![(silk_touch, 1)]),
+        });
+
+        let params = LootContextParameters {
+            block_entity: Some(Arc::new(hive)),
+            tool: Some(tool),
+            ..Default::default()
+        };
+
+        let items = generate_loot_with_context(&BLOCKS_BEEHIVE, 1, &params);
+        let dropped = items.first().expect("beehive drops its item");
+        assert_eq!(
+            dropped
+                .get_data_component::<BeesImpl>()
+                .map(|bees| bees.bees.len()),
+            Some(1)
+        );
+        assert!(
+            dropped.get_data_component::<CustomNameImpl>().is_none(),
+            "the beehive table only lists the bees component"
+        );
     }
 }

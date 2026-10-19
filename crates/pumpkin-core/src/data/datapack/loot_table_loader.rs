@@ -4,7 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pumpkin_util::loot_table::{
-    DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable, LootBonusFormula,
+    CopyComponentsSource, DynamicCopyComponentsFunction, DynamicLootCondition, DynamicLootEntry,
+    DynamicLootFunction, DynamicLootPool, DynamicLootTable, LootBonusFormula,
 };
 use serde_json::Value;
 
@@ -92,8 +93,9 @@ fn parse_entry(val: &Value, pool_entries: &mut Vec<DynamicLootEntry>, empty_weig
         }
         "item" | "tag" => {
             if let Some(name) = val.get("name").and_then(Value::as_str) {
-                let (min_count, max_count, bonus_formula) =
-                    val.get("functions").map_or((1, 1, None), parse_functions);
+                let (min_count, max_count, bonus_formula, functions) = val
+                    .get("functions")
+                    .map_or((1, 1, None, Vec::new()), parse_functions);
                 let conditions = val.get("conditions").map_or(Vec::new(), parse_conditions);
                 let condition = combine_conditions(conditions);
 
@@ -104,6 +106,7 @@ fn parse_entry(val: &Value, pool_entries: &mut Vec<DynamicLootEntry>, empty_weig
                     max_count,
                     condition,
                     bonus_formula,
+                    functions,
                 });
             }
         }
@@ -118,13 +121,14 @@ fn parse_entry(val: &Value, pool_entries: &mut Vec<DynamicLootEntry>, empty_weig
     }
 }
 
-fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
+fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>, Vec<DynamicLootFunction>) {
     let mut min_count = 1;
     let mut max_count = 1;
     let mut bonus_formula = None;
+    let mut loot_functions = Vec::new();
 
     let Some(functions) = val.as_array() else {
-        return (min_count, max_count, bonus_formula);
+        return (min_count, max_count, bonus_formula, loot_functions);
     };
 
     for func in functions {
@@ -177,6 +181,17 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
                     }
                 }
             }
+            "copy_components" => {
+                if func.get("source").and_then(Value::as_str) == Some("block_entity") {
+                    loot_functions.push(DynamicLootFunction::CopyComponents(
+                        DynamicCopyComponentsFunction {
+                            source: CopyComponentsSource::BlockEntity,
+                            include: string_list(func.get("include")),
+                            exclude: string_list(func.get("exclude")),
+                        },
+                    ));
+                }
+            }
             "looting_enchant" => {
                 let max_bonus = func.get("count").map_or(1, |c| {
                     c.get("max")
@@ -190,7 +205,16 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
         }
     }
 
-    (min_count, max_count, bonus_formula)
+    (min_count, max_count, bonus_formula, loot_functions)
+}
+
+fn string_list(val: Option<&Value>) -> Vec<String> {
+    val.and_then(Value::as_array).map_or_else(Vec::new, |list| {
+        list.iter()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect()
+    })
 }
 
 fn parse_conditions(val: &Value) -> Vec<DynamicLootCondition> {

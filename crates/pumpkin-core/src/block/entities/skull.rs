@@ -1,5 +1,10 @@
 use super::BlockEntity;
+use super::{BlockEntityComponents, custom_name_component, custom_name_from_stack};
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{DataComponentImpl, NoteBlockSoundImpl, ProfileImpl};
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
 use std::sync::Mutex;
 
@@ -73,6 +78,64 @@ impl BlockEntity for SkullBlockEntity {
             nbt.put_string("custom_name", name.clone());
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+
+        if let Ok(sound) = self.note_block_sound.lock()
+            && let Some(sound) = sound.as_ref()
+        {
+            components.push((
+                DataComponent::NoteBlockSound,
+                Box::new(NoteBlockSoundImpl {
+                    sound: sound.clone(),
+                }) as Box<dyn DataComponentImpl>,
+            ));
+        }
+
+        if let Ok(profile) = self.profile.lock()
+            && let Some(profile) = profile.as_ref()
+            && let Some(profile) = ProfileImpl::read_data(&NbtTag::Compound(profile.clone()))
+        {
+            components.push((
+                DataComponent::Profile,
+                Box::new(profile) as Box<dyn DataComponentImpl>,
+            ));
+        }
+
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(custom_name_component(name));
+        }
+
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(sound) = stack.get_data_component::<NoteBlockSoundImpl>() {
+            *self
+                .note_block_sound
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sound.sound.clone());
+        }
+
+        if let Some(profile) = stack.get_data_component::<ProfileImpl>()
+            && let NbtTag::Compound(profile) = profile.write_data()
+        {
+            *self
+                .profile
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(profile);
+        }
+
+        if let Some(name) = custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -10,7 +10,7 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 
-use crate::block::entities::BlockEntity;
+use crate::block::entities::{BlockEntity, BlockEntityComponents};
 use crate::world::World;
 use pumpkin_inventory::{Clearable, Inventory};
 
@@ -353,6 +353,25 @@ impl BlockEntity for BeaconBlockEntity {
             nbt.put_string("Lock", lock.clone());
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(super::custom_name_component(name));
+        }
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(name) = super::custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

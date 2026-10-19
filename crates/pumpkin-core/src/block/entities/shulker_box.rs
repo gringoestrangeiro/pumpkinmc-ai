@@ -1,14 +1,16 @@
-use pumpkin_data::data_component_impl::ContainerImpl;
+use pumpkin_data::data_component::DataComponent;
+use pumpkin_data::data_component_impl::{ContainerImpl, DataComponentImpl};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use std::any::Any;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, RwLock};
 use std::{array::from_fn, sync::Arc};
 
-use crate::block::entities::BlockEntity;
+use crate::block::entities::{BlockEntity, BlockEntityComponents};
+use crate::block::entities::{custom_name_component, custom_name_from_stack};
 use crate::block::viewer::{ViewerCountListener, ViewerCountTracker, ViewerCountTrackerExt};
 use crate::world::World;
 use pumpkin_inventory::{Clearable, Inventory, sync_write_items_to_nbt};
@@ -18,6 +20,7 @@ pub struct ShulkerBoxBlockEntity {
     pub items: RwLock<[ItemStack; Self::INVENTORY_SIZE]>,
     pub dirty: AtomicBool,
     pub comparator_dirty: AtomicBool,
+    pub custom_name: Mutex<Option<String>>,
 
     // Viewer
     pub viewers: ViewerCountTracker,
@@ -41,6 +44,7 @@ impl BlockEntity for ShulkerBoxBlockEntity {
             items: RwLock::new(from_fn(|_| ItemStack::EMPTY.clone())),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            custom_name: Mutex::new(nbt.get_string("CustomName").map(ToString::to_string)),
             viewers: ViewerCountTracker::new(),
         };
 
@@ -57,6 +61,11 @@ impl BlockEntity for ShulkerBoxBlockEntity {
 
     fn write_nbt(&self, nbt: &mut NbtCompound) {
         self.write_inventory_nbt(nbt, true);
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            nbt.put_string("CustomName", name.clone());
+        }
     }
 
     fn tick(&self, world: &Arc<World>) {
@@ -72,7 +81,9 @@ impl BlockEntity for ShulkerBoxBlockEntity {
         Some(self)
     }
 
-    fn collect_item_components(&self, stack: &mut ItemStack) {
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+
         let items = self
             .items
             .read()
@@ -85,11 +96,30 @@ impl BlockEntity for ShulkerBoxBlockEntity {
             .collect();
 
         if !contents.is_empty() {
-            stack.set_data_component(ContainerImpl { items: contents });
+            components.push((
+                DataComponent::Container,
+                Box::new(ContainerImpl { items: contents }) as Box<dyn DataComponentImpl>,
+            ));
         }
+
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(custom_name_component(name));
+        }
+
+        components
     }
 
     fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(name) = custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+            self.mark_dirty();
+        }
+
         let Some(container) = stack.get_data_component::<ContainerImpl>() else {
             return;
         };
@@ -169,6 +199,7 @@ impl ShulkerBoxBlockEntity {
             items: RwLock::new(from_fn(|_| ItemStack::EMPTY.clone())),
             dirty: AtomicBool::new(false),
             comparator_dirty: AtomicBool::new(false),
+            custom_name: Mutex::new(None),
             viewers: ViewerCountTracker::new(),
         }
     }

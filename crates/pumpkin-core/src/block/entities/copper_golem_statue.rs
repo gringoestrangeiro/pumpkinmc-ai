@@ -1,8 +1,10 @@
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use std::sync::Mutex;
 
 use super::BlockEntity;
+use super::{BlockEntityComponents, custom_name_component, custom_name_from_stack};
 
 pub struct CopperGolemStatueBlockEntity {
     pub position: BlockPos,
@@ -48,6 +50,25 @@ impl BlockEntity for CopperGolemStatueBlockEntity {
             nbt.put_string("custom_name", name.clone());
         }
         Some(nbt)
+    }
+
+    fn collect_components(&self) -> BlockEntityComponents {
+        let mut components = Vec::new();
+        if let Ok(name) = self.custom_name.lock()
+            && let Some(name) = name.as_ref()
+        {
+            components.push(custom_name_component(name));
+        }
+        components
+    }
+
+    fn apply_item_components(&self, stack: &ItemStack) {
+        if let Some(name) = custom_name_from_stack(stack) {
+            *self
+                .custom_name
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(name);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

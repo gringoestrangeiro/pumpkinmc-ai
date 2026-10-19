@@ -2706,7 +2706,9 @@ impl DataComponentCodec<Self> for PotDecorationsImpl {
         for _ in 0..len {
             let _ = seq.get_var_int()?;
         }
-        Ok(Self)
+        Ok(Self {
+            decorations: Vec::new(),
+        })
     }
 }
 
@@ -2770,7 +2772,7 @@ impl DataComponentCodec<Self> for BeesImpl {
             let _ticks = seq.get_var_int()?;
             let _min_ticks = seq.get_var_int()?;
         }
-        Ok(Self)
+        Ok(Self { bees: Vec::new() })
     }
 }
 
