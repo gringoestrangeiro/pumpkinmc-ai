@@ -4,17 +4,24 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use crate::entity::experience_orb::ExperienceOrbEntity;
 use crate::entity::item::ItemEntity;
 use crate::entity::projectile::{ProjectileHit, is_projectile};
-use crate::world::loot::{LootContextParameters, LootTableHandle, generate_loot_from_handle};
+use crate::world::World;
+use crate::world::loot::{
+    DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable,
+    LootContextParameters, LootTableHandle, generate_dynamic_loot_with_context,
+};
 use crate::{
     entity::{Entity, EntityBase, living::LivingEntity, player::Player},
     server::Server,
 };
+use pumpkin_data::Block;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::{EntityStatus, EntityType};
+use pumpkin_data::fluid::Fluid;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::Taggable;
 use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
@@ -88,19 +95,29 @@ impl FishingBobberEntity {
                 tool: Some(rod.clone()),
                 this_entity: Some(&EntityType::FISHING_BOBBER),
                 luck,
+                fishing_hook_open_water: Some(self.is_open_water()),
                 ..Default::default()
             };
-            let handle = world
-                .server
-                .upgrade()
-                .and_then(|s| {
-                    s.datapack_manager
-                        .get_loot_table("minecraft:gameplay/fishing")
-                })
-                .unwrap_or(LootTableHandle::Static(
-                    &pumpkin_data::loot_table::GAMEPLAY_FISHING,
-                ));
-            let items = generate_loot_from_handle(&handle, 0, &params);
+            let server = world.server.upgrade();
+            let items = match server.as_ref() {
+                Some(server) => match server
+                    .datapack_manager
+                    .get_loot_table("minecraft:gameplay/fishing")
+                {
+                    Some(LootTableHandle::Dynamic(table)) => {
+                        generate_dynamic_loot_with_context(&table, 0, &params)
+                    }
+                    // The generated static table inlines the three nested
+                    // tables and loses their weights and quality, so rebuild
+                    // the vanilla distribution from the sub-tables instead.
+                    _ => generate_dynamic_loot_with_context(
+                        &fishing_loot_table(Some(server.as_ref())),
+                        0,
+                        &params,
+                    ),
+                },
+                None => generate_dynamic_loot_with_context(&fishing_loot_table(None), 0, &params),
+            };
             let delta = player_pos - bobber_pos;
             let vy = delta.y * 0.1 + delta.length().sqrt() * 0.08;
 
@@ -265,6 +282,125 @@ impl FishingBobberEntity {
                 return;
             }
         }
+    }
+
+    /// Vanilla `FishingHook.calculateOpenWater`: the 5x4x5 area around the
+    /// bobber must be open water with air above it.
+    fn is_open_water(&self) -> bool {
+        let world = self.entity.world.load();
+        let origin = BlockPos::floored_v(self.entity.pos.load());
+        let mut previous = OpenWaterType::Invalid;
+
+        for y in -1..=2 {
+            let layer =
+                get_open_water_type_for_area(&world, origin.add(-2, y, -2), origin.add(2, y, 2));
+            match layer {
+                OpenWaterType::AboveWater if previous == OpenWaterType::Invalid => return false,
+                OpenWaterType::InsideWater if previous == OpenWaterType::AboveWater => {
+                    return false;
+                }
+                OpenWaterType::Invalid => return false,
+                _ => {}
+            }
+            previous = layer;
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpenWaterType {
+    AboveWater,
+    InsideWater,
+    Invalid,
+}
+
+fn get_open_water_type_for_area(world: &World, from: BlockPos, to: BlockPos) -> OpenWaterType {
+    let mut result = None;
+    for x in from.0.x..=to.0.x {
+        for y in from.0.y..=to.0.y {
+            for z in from.0.z..=to.0.z {
+                let layer = get_open_water_type_for_block(world, BlockPos::new(x, y, z));
+                match result {
+                    None => result = Some(layer),
+                    Some(current) if current == layer => {}
+                    Some(_) => return OpenWaterType::Invalid,
+                }
+            }
+        }
+    }
+    result.unwrap_or(OpenWaterType::Invalid)
+}
+
+fn get_open_water_type_for_block(world: &World, pos: BlockPos) -> OpenWaterType {
+    let state = world.get_block_state(&pos);
+    if state.is_air() || state.id.to_block().id == Block::LILY_PAD.id {
+        return OpenWaterType::AboveWater;
+    }
+    let (fluid, fluid_state) = pumpkin_world::world::fluid_state_from_block_state(state.id);
+    if fluid.id == Fluid::WATER.id
+        && fluid_state.is_source
+        && state.get_block_collision_shapes().next().is_none()
+    {
+        return OpenWaterType::InsideWater;
+    }
+    OpenWaterType::Invalid
+}
+
+/// The vanilla `gameplay/fishing` shape: one roll over three nested tables
+/// with per-entry quality. References resolve against loaded datapacks first.
+fn fishing_loot_table(server: Option<&Server>) -> DynamicLootTable {
+    DynamicLootTable {
+        pools: vec![DynamicLootPool {
+            entries: vec![
+                nested_fishing_entry(server, "minecraft:gameplay/fishing/junk", 10, -2),
+                nested_fishing_entry(server, "minecraft:gameplay/fishing/treasure", 5, 2),
+                nested_fishing_entry(server, "minecraft:gameplay/fishing/fish", 85, -1),
+            ],
+            min_rolls: 1,
+            max_rolls: 1,
+            empty_weight: 0,
+            condition: DynamicLootCondition::None,
+        }],
+    }
+}
+
+fn nested_fishing_entry(
+    server: Option<&Server>,
+    id: &str,
+    weight: i32,
+    quality: i32,
+) -> DynamicLootEntry {
+    let table = server
+        .and_then(|server| server.datapack_manager.get_loot_table(id))
+        .map_or_else(
+            || {
+                pumpkin_data::loot_table::get_loot_table(id)
+                    .map_or_else(DynamicLootTable::default, DynamicLootTable::from)
+            },
+            |handle| match handle {
+                LootTableHandle::Static(table) => DynamicLootTable::from(table),
+                LootTableHandle::Dynamic(table) => (*table).clone(),
+            },
+        );
+    let condition = if id.ends_with("/treasure") {
+        DynamicLootCondition::FishingHookInOpenWater
+    } else {
+        DynamicLootCondition::None
+    };
+
+    DynamicLootEntry {
+        item: String::new(),
+        weight,
+        quality,
+        min_count: 1,
+        max_count: 1,
+        condition,
+        bonus_formula: None,
+        damage: None,
+        potion: None,
+        table_id: None,
+        table: Some(Box::new(table)),
     }
 }
 

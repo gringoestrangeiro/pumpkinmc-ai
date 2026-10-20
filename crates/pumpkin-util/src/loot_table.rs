@@ -112,6 +112,9 @@ pub enum DynamicLootCondition {
         raining: Option<bool>,
         thundering: Option<bool>,
     },
+    /// Vanilla's `type_specific/fishing_hook` predicate with
+    /// `in_open_water: true`.
+    FishingHookInOpenWater,
 }
 
 impl From<LootCondition> for DynamicLootCondition {
@@ -152,13 +155,21 @@ impl From<LootCondition> for DynamicLootCondition {
     }
 }
 
-/// A single item entry inside a dynamic loot pool.
+/// Guards against a datapack whose loot tables reference each other in a
+/// cycle. Vanilla resolves references lazily at roll time and has no explicit
+/// cap, so this only needs to be deep enough for real tables.
+pub const MAX_NESTED_LOOT_TABLE_DEPTH: usize = 10;
+
+/// A single entry inside a dynamic loot pool.
 #[derive(Clone, Debug)]
 pub struct DynamicLootEntry {
-    /// Registry name of the item (e.g. `"minecraft:diamond"`).
+    /// Registry name of the item (e.g. `"minecraft:diamond"`). Empty for
+    /// `minecraft:loot_table` entries.
     pub item: String,
     /// Relative probability weight; higher values are more likely.
     pub weight: i32,
+    /// Quality shifts [`Self::weight`] by `quality * luck` when rolling.
+    pub quality: i32,
     /// Minimum stack size (inclusive).
     pub min_count: i32,
     /// Maximum stack size (inclusive).
@@ -167,6 +178,26 @@ pub struct DynamicLootEntry {
     pub condition: DynamicLootCondition,
     /// Bonus formula to apply with fortune / looting (if any).
     pub bonus_formula: Option<LootBonusFormula>,
+    /// `minecraft:set_damage` uniform range, as a fraction of max durability.
+    pub damage: Option<(f32, f32)>,
+    /// `minecraft:set_potion` potion id.
+    pub potion: Option<String>,
+    /// Referenced table id for `minecraft:loot_table` entries, before the
+    /// loader resolves it.
+    pub table_id: Option<String>,
+    /// Referenced table for `minecraft:loot_table` entries.
+    pub table: Option<Box<DynamicLootTable>>,
+}
+
+impl DynamicLootEntry {
+    /// Weight used when selecting this entry, mirroring vanilla's
+    /// `LootPoolEntryContainer.getWeight(luck)`.
+    #[must_use]
+    pub fn effective_weight(&self, luck: f32) -> i32 {
+        (self.weight as f32 + self.quality as f32 * luck)
+            .floor()
+            .max(0.0) as i32
+    }
 }
 
 impl From<LootEntry> for DynamicLootEntry {
@@ -174,10 +205,15 @@ impl From<LootEntry> for DynamicLootEntry {
         Self {
             item: e.item.to_string(),
             weight: e.weight,
+            quality: 0,
             min_count: e.min_count,
             max_count: e.max_count,
             condition: DynamicLootCondition::from(e.condition),
             bonus_formula: e.bonus_formula,
+            damage: None,
+            potion: None,
+            table_id: None,
+            table: None,
         }
     }
 }
@@ -226,5 +262,35 @@ impl From<&LootTable> for DynamicLootTable {
         Self {
             pools: t.pools.iter().copied().map(DynamicLootPool::from).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DynamicLootEntry;
+
+    fn entry(weight: i32, quality: i32) -> DynamicLootEntry {
+        DynamicLootEntry {
+            item: "minecraft:cod".to_string(),
+            weight,
+            quality,
+            min_count: 1,
+            max_count: 1,
+            condition: Default::default(),
+            bonus_formula: None,
+            damage: None,
+            potion: None,
+            table_id: None,
+            table: None,
+        }
+    }
+
+    #[test]
+    fn quality_scales_weight_with_luck() {
+        // `LootPoolEntryContainer.getWeight`: max(floor(weight + quality * luck), 0).
+        assert_eq!(entry(10, -2).effective_weight(0.0), 10);
+        assert_eq!(entry(10, -2).effective_weight(3.0), 4);
+        assert_eq!(entry(5, 2).effective_weight(3.0), 11);
+        assert_eq!(entry(1, -2).effective_weight(3.0), 0);
     }
 }

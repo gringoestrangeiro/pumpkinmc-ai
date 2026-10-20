@@ -92,6 +92,7 @@ mod title;
 mod tps;
 mod transfer;
 mod trigger;
+mod version;
 mod waypoint;
 mod weather;
 mod whitelist;
@@ -160,6 +161,7 @@ pub fn default_dispatcher(
     fill::register(&mut dispatcher, registry);
     clear::register(&mut dispatcher, registry);
     pumpkin::register(&mut dispatcher, registry);
+    version::register(&mut dispatcher, registry);
     me::register(&mut dispatcher, registry);
     msg::register(&mut dispatcher, registry);
     tps::register(&mut dispatcher, registry);
@@ -465,12 +467,13 @@ mod override_tests {
     }
 
     #[test]
-    fn version_is_an_alias_of_pumpkin() {
+    fn version_is_its_own_command() {
         let manager = PermissionManager::new();
         let dispatcher = default_dispatcher(&manager, &CommandsConfig::default());
 
         assert!(dispatcher.has_command("version"));
-        assert_eq!(dispatcher.primary_command_name("version"), "pumpkin");
+        assert_eq!(dispatcher.primary_command_name("version"), "version");
+        assert!(dispatcher.has_command("pumpkin"));
         assert!(!dispatcher.has_command("ver"));
     }
 }

@@ -8,7 +8,7 @@ use pumpkin_data::recipes::{CookingRecipeKind, get_cooking_recipe_with_ingredien
 use pumpkin_data::tag::Taggable;
 pub use pumpkin_util::loot_table::{
     DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable, LootBonusFormula,
-    LootCondition, LootEntry, LootPool, LootTable,
+    LootCondition, LootEntry, LootPool, LootTable, MAX_NESTED_LOOT_TABLE_DEPTH,
 };
 use pumpkin_util::random::{RandomImpl, xoroshiro128::Xoroshiro};
 
@@ -31,6 +31,8 @@ pub struct LootContextParameters {
     /// Computed from `Entity.fire_ticks > 0`.
     pub is_on_fire: Option<bool>,
     pub direct_attacker_weapon: Option<ItemStack>,
+    /// Whether the fishing hook that produced this loot is in open water.
+    pub fishing_hook_open_water: Option<bool>,
 }
 
 fn direct_attacker_weapon_has_enchantment(params: &LootContextParameters, tag: &str) -> bool {
@@ -137,6 +139,9 @@ fn check_dynamic_condition(
                 return false;
             }
             true
+        }
+        DynamicLootCondition::FishingHookInOpenWater => {
+            params.fishing_hook_open_water.unwrap_or(false)
         }
     }
 }
@@ -379,6 +384,23 @@ pub fn generate_dynamic_loot_with_context(
 ) -> Vec<ItemStack> {
     let mut rng = Xoroshiro::from_seed(seed as u64);
     let mut items_to_place: Vec<ItemStack> = Vec::new();
+    roll_dynamic_table(table, params, &mut rng, &mut items_to_place, 0);
+    items_to_place
+}
+
+fn roll_dynamic_table(
+    table: &DynamicLootTable,
+    params: &LootContextParameters,
+    rng: &mut Xoroshiro,
+    items_to_place: &mut Vec<ItemStack>,
+    depth: usize,
+) {
+    if depth > MAX_NESTED_LOOT_TABLE_DEPTH {
+        tracing::warn!(
+            "Loot table nesting exceeded {MAX_NESTED_LOOT_TABLE_DEPTH} levels; stopping"
+        );
+        return;
+    }
 
     let has_silk_touch = params.tool.as_ref().is_some_and(|tool| {
         pumpkin_data::Enchantment::from_name("silk_touch")
@@ -409,7 +431,7 @@ pub fn generate_dynamic_loot_with_context(
             has_shears,
             fortune_level,
             params,
-            &mut rng,
+            rng,
         ) {
             continue;
         }
@@ -424,7 +446,7 @@ pub fn generate_dynamic_loot_with_context(
                     has_shears,
                     fortune_level,
                     params,
-                    &mut rng,
+                    rng,
                 )
             })
             .collect();
@@ -446,24 +468,30 @@ pub fn generate_dynamic_loot_with_context(
             pool.empty_weight,
             &eligible_entries,
             fortune_level,
-            &mut rng,
-            &mut items_to_place,
+            params,
+            rng,
+            items_to_place,
+            depth,
         );
     }
-
-    items_to_place
 }
 
+#[expect(clippy::too_many_arguments)]
 fn roll_dynamic_entries(
     rolls: i32,
     empty_weight: i32,
     eligible_entries: &[&DynamicLootEntry],
     fortune_level: i32,
+    params: &LootContextParameters,
     rng: &mut Xoroshiro,
     items_to_place: &mut Vec<ItemStack>,
+    depth: usize,
 ) {
     for _ in 0..rolls {
-        let entry_weight: i32 = eligible_entries.iter().map(|e| e.weight).sum();
+        let entry_weight: i32 = eligible_entries
+            .iter()
+            .map(|e| e.effective_weight(params.luck))
+            .sum();
         let total_weight = entry_weight + empty_weight;
         if total_weight == 0 {
             continue;
@@ -476,8 +504,13 @@ fn roll_dynamic_entries(
         }
 
         for entry in eligible_entries {
-            pick -= entry.weight;
+            pick -= entry.effective_weight(params.luck);
             if pick < 0 {
+                if let Some(nested) = &entry.table {
+                    roll_dynamic_table(nested, params, rng, items_to_place, depth + 1);
+                    break;
+                }
+
                 let count_range = entry.max_count - entry.min_count;
                 let base_count = entry.min_count
                     + if count_range > 0 {
@@ -494,12 +527,30 @@ fn roll_dynamic_entries(
                 if final_count > 0 {
                     let item_key = entry.item.strip_prefix("minecraft:").unwrap_or(&entry.item);
                     if let Some(item) = Item::from_registry_key(item_key) {
-                        items_to_place.push(ItemStack::new(final_count as u8, item));
+                        let mut stack = ItemStack::new(final_count as u8, item);
+                        apply_dynamic_modifiers(entry, &mut stack, rng);
+                        items_to_place.push(stack);
                     }
                 }
                 break;
             }
         }
+    }
+}
+
+/// Applies the item modifiers the loader understands. Modifiers that change
+/// components Pumpkin has no runtime model for are skipped.
+fn apply_dynamic_modifiers(entry: &DynamicLootEntry, stack: &mut ItemStack, rng: &mut Xoroshiro) {
+    if let Some((min, max)) = entry.damage {
+        let max_damage = stack.get_max_damage().unwrap_or(0);
+        if max_damage > 0 {
+            let fraction = min + rng.next_f32() * (max - min);
+            stack.set_damage(((1.0 - fraction) * max_damage as f32).floor() as i32);
+        }
+    }
+
+    if let Some(potion) = &entry.potion {
+        crate::entity::passive::villager::apply_potion(stack, potion);
     }
 }
 

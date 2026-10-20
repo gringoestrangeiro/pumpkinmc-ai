@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use pumpkin_util::loot_table::{
     DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable, LootBonusFormula,
+    MAX_NESTED_LOOT_TABLE_DEPTH,
 };
 use serde_json::Value;
 
@@ -31,8 +32,7 @@ fn parse_pool(val: &Value) -> DynamicLootPool {
         }
     }
 
-    let pool_conditions = val.get("conditions").map_or(Vec::new(), parse_conditions);
-    let condition = combine_conditions(pool_conditions);
+    let condition = parse_condition_field(val.get("condition").or_else(|| val.get("conditions")));
 
     DynamicLootPool {
         entries,
@@ -92,18 +92,47 @@ fn parse_entry(val: &Value, pool_entries: &mut Vec<DynamicLootEntry>, empty_weig
         }
         "item" | "tag" => {
             if let Some(name) = val.get("name").and_then(Value::as_str) {
-                let (min_count, max_count, bonus_formula) =
-                    val.get("functions").map_or((1, 1, None), parse_functions);
-                let conditions = val.get("conditions").map_or(Vec::new(), parse_conditions);
-                let condition = combine_conditions(conditions);
+                let modifiers = modifier_values(val);
+                let parsed = parse_modifiers(&modifiers);
+                let condition =
+                    parse_condition_field(val.get("condition").or_else(|| val.get("conditions")));
 
                 pool_entries.push(DynamicLootEntry {
                     item: name.to_string(),
                     weight,
-                    min_count,
-                    max_count,
+                    quality: parse_quality(val),
+                    min_count: parsed.min_count,
+                    max_count: parsed.max_count,
                     condition,
-                    bonus_formula,
+                    bonus_formula: parsed.bonus_formula,
+                    damage: parsed.damage,
+                    potion: parsed.potion,
+                    table_id: None,
+                    table: None,
+                });
+            }
+        }
+        "loot_table" | "dynamic" => {
+            let table_id = val
+                .get("value")
+                .or_else(|| val.get("name"))
+                .and_then(Value::as_str)
+                .map(normalize_id);
+            if let Some(table_id) = table_id {
+                let condition =
+                    parse_condition_field(val.get("condition").or_else(|| val.get("conditions")));
+                pool_entries.push(DynamicLootEntry {
+                    item: String::new(),
+                    weight,
+                    quality: parse_quality(val),
+                    min_count: 1,
+                    max_count: 1,
+                    condition,
+                    bonus_formula: None,
+                    damage: None,
+                    potion: None,
+                    table_id: Some(table_id),
+                    table: None,
                 });
             }
         }
@@ -118,18 +147,50 @@ fn parse_entry(val: &Value, pool_entries: &mut Vec<DynamicLootEntry>, empty_weig
     }
 }
 
-fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
-    let mut min_count = 1;
-    let mut max_count = 1;
-    let mut bonus_formula = None;
+fn parse_quality(val: &Value) -> i32 {
+    val.get("quality").and_then(Value::as_i64).unwrap_or(0) as i32
+}
 
-    let Some(functions) = val.as_array() else {
-        return (min_count, max_count, bonus_formula);
+fn normalize_id(id: &str) -> String {
+    if id.contains(':') {
+        id.to_string()
+    } else {
+        format!("minecraft:{id}")
+    }
+}
+
+/// The 26.3 format renamed `functions` to `modifier` and allows either one
+/// object or a list.
+fn modifier_values(val: &Value) -> Vec<&Value> {
+    let Some(modifiers) = val.get("modifier").or_else(|| val.get("functions")) else {
+        return Vec::new();
+    };
+    match modifiers {
+        Value::Array(list) => list.iter().collect(),
+        single => vec![single],
+    }
+}
+
+#[derive(Default)]
+struct ParsedModifiers {
+    min_count: i32,
+    max_count: i32,
+    bonus_formula: Option<LootBonusFormula>,
+    damage: Option<(f32, f32)>,
+    potion: Option<String>,
+}
+
+fn parse_modifiers(functions: &[&Value]) -> ParsedModifiers {
+    let mut parsed = ParsedModifiers {
+        min_count: 1,
+        max_count: 1,
+        ..Default::default()
     };
 
     for func in functions {
         let func_type = func
             .get("function")
+            .or_else(|| func.get("type"))
             .and_then(Value::as_str)
             .unwrap_or_default();
         let func_type = func_type.strip_prefix("minecraft:").unwrap_or(func_type);
@@ -138,8 +199,18 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
             "set_count" => {
                 if let Some(count) = func.get("count") {
                     let (min_c, max_c) = parse_rolls(count);
-                    min_count = min_c;
-                    max_count = max_c;
+                    parsed.min_count = min_c;
+                    parsed.max_count = max_c;
+                }
+            }
+            "set_damage" => {
+                if let Some(damage) = func.get("damage") {
+                    parsed.damage = parse_float_range(damage);
+                }
+            }
+            "set_potion" => {
+                if let Some(id) = func.get("id").and_then(Value::as_str) {
+                    parsed.potion = Some(id.to_string());
                 }
             }
             "apply_bonus" => {
@@ -147,7 +218,7 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
                     let formula_clean = formula.strip_prefix("minecraft:").unwrap_or(formula);
                     match formula_clean {
                         "ore_drops" => {
-                            bonus_formula = Some(LootBonusFormula::OreDrops);
+                            parsed.bonus_formula = Some(LootBonusFormula::OreDrops);
                         }
                         "uniform_bonus_count" => {
                             let multiplier = func
@@ -155,7 +226,8 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
                                 .and_then(|p| p.get("bonusMultiplier"))
                                 .and_then(Value::as_i64)
                                 .unwrap_or(1) as i32;
-                            bonus_formula = Some(LootBonusFormula::UniformBonusCount(multiplier));
+                            parsed.bonus_formula =
+                                Some(LootBonusFormula::UniformBonusCount(multiplier));
                         }
                         "binomial_with_bonus_count" => {
                             let extra = func
@@ -168,7 +240,7 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
                                     .and_then(|p| p.get("probability"))
                                     .and_then(Value::as_f64)
                                     .unwrap_or(0.0) as f32;
-                            bonus_formula = Some(LootBonusFormula::BinomialWithBonusCount {
+                            parsed.bonus_formula = Some(LootBonusFormula::BinomialWithBonusCount {
                                 extra,
                                 probability,
                             });
@@ -184,25 +256,47 @@ fn parse_functions(val: &Value) -> (i32, i32, Option<LootBonusFormula>) {
                         .or_else(|| c.as_i64())
                         .unwrap_or(1) as i32
                 });
-                bonus_formula = Some(LootBonusFormula::UniformBonusCount(max_bonus.max(1)));
+                parsed.bonus_formula = Some(LootBonusFormula::UniformBonusCount(max_bonus.max(1)));
             }
             _ => {}
         }
     }
 
-    (min_count, max_count, bonus_formula)
+    parsed
 }
 
-fn parse_conditions(val: &Value) -> Vec<DynamicLootCondition> {
-    let Some(arr) = val.as_array() else {
-        return Vec::new();
-    };
-    arr.iter().map(parse_condition).collect()
+fn parse_float_range(val: &Value) -> Option<(f32, f32)> {
+    if let Some(value) = val.as_f64() {
+        let value = value as f32;
+        return Some((value, value));
+    }
+    let obj = val.as_object()?;
+    if let Some(value) = obj.get("value").and_then(Value::as_f64) {
+        let value = value as f32;
+        return Some((value, value));
+    }
+    let min = obj.get("min").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+    let max = obj
+        .get("max")
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::from(min)) as f32;
+    Some((min, max))
+}
+
+fn parse_condition_field(val: Option<&Value>) -> DynamicLootCondition {
+    match val {
+        Some(Value::Array(conditions)) => {
+            combine_conditions(conditions.iter().map(parse_condition).collect())
+        }
+        Some(condition) => parse_condition(condition),
+        None => DynamicLootCondition::None,
+    }
 }
 
 fn parse_condition(val: &Value) -> DynamicLootCondition {
     let cond_type = val
         .get("condition")
+        .or_else(|| val.get("type"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let cond_type = cond_type.strip_prefix("minecraft:").unwrap_or(cond_type);
@@ -280,9 +374,26 @@ fn parse_condition(val: &Value) -> DynamicLootCondition {
             }
         }
         "entity_properties" => {
-            let on_fire = val
-                .get("predicate")
-                .and_then(|p| p.get("flags"))
+            let Some(predicate) = val.get("predicate") else {
+                return DynamicLootCondition::None;
+            };
+            let fishing_hook = predicate
+                .get("minecraft:type_specific/fishing_hook")
+                .or_else(|| predicate.get("type_specific/fishing_hook"));
+            if let Some(in_open_water) = fishing_hook
+                .and_then(|hook| hook.get("in_open_water"))
+                .and_then(Value::as_bool)
+            {
+                return if in_open_water {
+                    DynamicLootCondition::FishingHookInOpenWater
+                } else {
+                    DynamicLootCondition::Inverted(Box::new(
+                        DynamicLootCondition::FishingHookInOpenWater,
+                    ))
+                };
+            }
+            let on_fire = predicate
+                .get("flags")
                 .and_then(|f| f.get("is_on_fire"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
@@ -312,6 +423,49 @@ fn combine_conditions(conditions: Vec<DynamicLootCondition>) -> DynamicLootCondi
     } else {
         DynamicLootCondition::AllOf(conditions)
     }
+}
+
+/// Resolves `minecraft:loot_table` entries against the loaded datapacks first
+/// and the generated vanilla tables second, then stores the resolved tables
+/// back into `registry`. References are resolved eagerly, like the rest of the
+/// loader; nested tables are cloned so a table can be rolled without the
+/// registry lock.
+pub fn resolve_loot_table_references<S: std::hash::BuildHasher>(
+    registry: &mut HashMap<String, Arc<DynamicLootTable>, S>,
+) {
+    let snapshot: Vec<(String, Arc<DynamicLootTable>)> = registry
+        .iter()
+        .map(|(key, table)| (key.clone(), Arc::clone(table)))
+        .collect();
+    for (key, table) in snapshot {
+        let resolved = resolve_table(&table, registry, 0);
+        registry.insert(key, Arc::new(resolved));
+    }
+}
+
+fn resolve_table<S: std::hash::BuildHasher>(
+    table: &DynamicLootTable,
+    registry: &HashMap<String, Arc<DynamicLootTable>, S>,
+    depth: usize,
+) -> DynamicLootTable {
+    let mut resolved = table.clone();
+    if depth >= MAX_NESTED_LOOT_TABLE_DEPTH {
+        return resolved;
+    }
+    for pool in &mut resolved.pools {
+        for entry in &mut pool.entries {
+            let Some(table_id) = entry.table_id.clone() else {
+                continue;
+            };
+            if let Some(nested) = registry.get(&table_id) {
+                entry.table = Some(Box::new(resolve_table(nested, registry, depth + 1)));
+            } else if let Some(nested) = pumpkin_data::loot_table::get_loot_table(&table_id) {
+                // Generated tables are flat, so a single conversion is enough.
+                entry.table = Some(Box::new(DynamicLootTable::from(nested)));
+            }
+        }
+    }
+    resolved
 }
 
 /// Loads all loot table JSON files from a directory recursively into `registry`.
@@ -499,5 +653,140 @@ mod tests {
         let count = load_loot_tables_from_dir("custom", root, &mut registry);
         assert_eq!(count, 1);
         assert!(registry.contains_key("custom:blocks/dirt"));
+    }
+
+    #[test]
+    fn parse_fishing_table_with_nested_tables_and_quality() {
+        // Shape of `gameplay/fishing.json` in 26.3.
+        let json = r#"{
+            "type": "minecraft:fishing",
+            "pools": [
+                {
+                    "entries": [
+                        {
+                            "type": "minecraft:loot_table",
+                            "quality": -2,
+                            "value": "minecraft:gameplay/fishing/junk",
+                            "weight": 10
+                        },
+                        {
+                            "type": "minecraft:loot_table",
+                            "condition": {
+                                "type": "minecraft:entity_properties",
+                                "entity": "this",
+                                "predicate": {
+                                    "minecraft:type_specific/fishing_hook": {
+                                        "in_open_water": true
+                                    }
+                                }
+                            },
+                            "quality": 2,
+                            "value": "minecraft:gameplay/fishing/treasure",
+                            "weight": 5
+                        },
+                        {
+                            "type": "minecraft:loot_table",
+                            "quality": -1,
+                            "value": "minecraft:gameplay/fishing/fish",
+                            "weight": 85
+                        }
+                    ],
+                    "rolls": 1
+                }
+            ]
+        }"#;
+
+        let table = parse_loot_table(json).expect("valid fishing table");
+        let entries = &table.pools[0].entries;
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].weight, 10);
+        assert_eq!(entries[0].quality, -2);
+        assert_eq!(
+            entries[0].table_id.as_deref(),
+            Some("minecraft:gameplay/fishing/junk")
+        );
+        assert_eq!(
+            entries[1].condition,
+            DynamicLootCondition::FishingHookInOpenWater
+        );
+        assert_eq!(entries[1].weight, 5);
+        assert_eq!(entries[1].quality, 2);
+        assert_eq!(entries[2].weight, 85);
+        assert_eq!(entries[2].quality, -1);
+    }
+
+    #[test]
+    fn resolve_nested_loot_tables_from_the_registry() {
+        let inner = parse_loot_table(
+            r#"{
+                "pools": [{
+                    "rolls": 1,
+                    "entries": [
+                        {"type": "minecraft:item", "name": "minecraft:emerald"}
+                    ]
+                }]
+            }"#,
+        )
+        .expect("valid inner table");
+        let outer = parse_loot_table(
+            r#"{
+                "pools": [{
+                    "rolls": 1,
+                    "entries": [
+                        {
+                            "type": "minecraft:loot_table",
+                            "value": "test:inner",
+                            "weight": 7,
+                            "quality": 3
+                        }
+                    ]
+                }]
+            }"#,
+        )
+        .expect("valid outer table");
+
+        let mut registry = HashMap::new();
+        registry.insert("test:inner".to_string(), Arc::new(inner));
+        registry.insert("test:outer".to_string(), Arc::new(outer));
+        resolve_loot_table_references(&mut registry);
+
+        let entry = &registry["test:outer"].pools[0].entries[0];
+        assert_eq!(entry.weight, 7);
+        assert_eq!(entry.quality, 3);
+        let nested = entry.table.as_ref().expect("nested table resolved");
+        assert_eq!(nested.pools[0].entries[0].item, "minecraft:emerald");
+    }
+
+    #[test]
+    fn parse_26_3_modifier_set_count_and_damage() {
+        let json = r#"{
+            "pools": [{
+                "rolls": 1,
+                "entries": [
+                    {
+                        "type": "minecraft:item",
+                        "name": "minecraft:ink_sac",
+                        "modifier": {
+                            "type": "minecraft:set_count",
+                            "count": 10
+                        }
+                    },
+                    {
+                        "type": "minecraft:item",
+                        "name": "minecraft:leather_boots",
+                        "modifier": {
+                            "type": "minecraft:set_damage",
+                            "damage": {"type": "minecraft:uniform", "min": 0.0, "max": 0.9}
+                        }
+                    }
+                ]
+            }]
+        }"#;
+
+        let table = parse_loot_table(json).expect("valid modifier table");
+        let entries = &table.pools[0].entries;
+        assert_eq!(entries[0].min_count, 10);
+        assert_eq!(entries[0].max_count, 10);
+        assert_eq!(entries[1].damage, Some((0.0, 0.9)));
     }
 }

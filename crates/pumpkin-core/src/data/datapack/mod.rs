@@ -2,6 +2,7 @@ pub mod context_provider_loader;
 pub mod damage_type_loader;
 pub mod dynamic_registry_loader;
 pub mod function_loader;
+pub mod function_trace;
 pub mod loot_table_loader;
 pub mod recipe_loader;
 pub mod structure_loader;
@@ -30,6 +31,7 @@ use crate::world::loot::LootTableHandle;
 
 use self::context_provider_loader::ContextProviderRegistry;
 use self::damage_type_loader::{DamageTypeDefinition, DamageTypeEntry, DamageTypeRegistry};
+use self::function_trace::FunctionTrace;
 use self::test_loader::{
     TestInstance, TestInstanceRegistry, load_test_instances_from_dir, to_registry_entry,
 };
@@ -94,8 +96,13 @@ impl std::error::Error for FunctionCallError {}
 #[derive(Clone)]
 enum FunctionWork<S> {
     /// A function call: costs one quota like vanilla's `CallFunction`, then
-    /// continues as a `Body` cursor.
-    Call { lines: Arc<[String]>, source: S },
+    /// continues as a `Body` cursor. `depth` is the call depth reported by
+    /// `/debug function`; the body's lines run one level deeper.
+    Call {
+        lines: Arc<[String]>,
+        source: S,
+        depth: usize,
+    },
     /// A cursor over a function body: each executed line costs one quota. The
     /// body stays shared behind the `Arc` instead of being materialized into
     /// per-line queue entries; vanilla's `ContinuationTask` keeps the same
@@ -104,6 +111,7 @@ enum FunctionWork<S> {
         lines: Arc<[String]>,
         next: usize,
         source: S,
+        depth: usize,
     },
 }
 
@@ -116,7 +124,11 @@ enum FunctionStep<S> {
     /// on the quota finishes without a stop message.
     LimitHit,
     /// Run one command line with the source recorded for it.
-    RunLine { line: String, source: S },
+    RunLine {
+        line: String,
+        source: S,
+        depth: usize,
+    },
 }
 
 /// Why [`drive_function_execution`] stopped.
@@ -200,7 +212,11 @@ impl<S: Clone> FunctionExecution<S> {
                 return FunctionStep::LimitHit;
             }
             match work {
-                FunctionWork::Call { lines, source } => {
+                FunctionWork::Call {
+                    lines,
+                    source,
+                    depth,
+                } => {
                     self.remaining -= 1;
                     // Depth-cap accounting: this `push_front` and the Body
                     // continuation below bypass `queue_next`'s check
@@ -214,6 +230,7 @@ impl<S: Clone> FunctionExecution<S> {
                             lines,
                             next: 0,
                             source,
+                            depth: depth + 1,
                         });
                     }
                 }
@@ -221,6 +238,7 @@ impl<S: Clone> FunctionExecution<S> {
                     lines,
                     next,
                     source,
+                    depth,
                 } => {
                     if next >= lines.len() {
                         continue;
@@ -237,9 +255,14 @@ impl<S: Clone> FunctionExecution<S> {
                             lines: Arc::clone(&lines),
                             next: next + 1,
                             source: source.clone(),
+                            depth,
                         });
                     }
-                    return FunctionStep::RunLine { line, source };
+                    return FunctionStep::RunLine {
+                        line,
+                        source,
+                        depth,
+                    };
                 }
             }
         }
@@ -253,6 +276,9 @@ impl<S: Clone> FunctionExecution<S> {
 struct ActiveFunctionExecution {
     execution: FunctionExecution<CommandSource>,
     server: Option<Arc<Server>>,
+    /// Depth of the command line currently running, used as the call depth of
+    /// any nested function it queues.
+    current_depth: usize,
 }
 
 thread_local! {
@@ -266,6 +292,25 @@ thread_local! {
     /// thread would break this, but no command handler does that.
     static FUNCTION_EXECUTION: RefCell<Option<ActiveFunctionExecution>> =
         const { RefCell::new(None) };
+
+    /// The `/debug function` writer active on this thread, if any.
+    static FUNCTION_TRACE: RefCell<Option<FunctionTrace>> = const { RefCell::new(None) };
+}
+
+fn trace_call(depth: usize, function: &str, size: usize) {
+    FUNCTION_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.on_call(depth, function, size);
+        }
+    });
+}
+
+fn trace_command(depth: usize, command: &str) {
+    FUNCTION_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.on_command(depth, command);
+        }
+    });
 }
 
 /// Clears [`FUNCTION_EXECUTION`] when the top-level call returns or unwinds,
@@ -298,7 +343,17 @@ fn drive_function_execution(
             None => break FunctionExecutionOutcome::MissingState,
             Some(FunctionStep::Done) => break FunctionExecutionOutcome::Completed,
             Some(FunctionStep::LimitHit) => break FunctionExecutionOutcome::LimitHit,
-            Some(FunctionStep::RunLine { line, source }) => {
+            Some(FunctionStep::RunLine {
+                line,
+                source,
+                depth,
+            }) => {
+                FUNCTION_EXECUTION.with(|exec| {
+                    if let Some(active) = exec.borrow_mut().as_mut() {
+                        active.current_depth = depth;
+                    }
+                });
+                trace_command(depth, &line);
                 run(&source, &line);
                 executed = executed.saturating_add(1);
                 let overflowed = FUNCTION_EXECUTION.with(|exec| {
@@ -460,6 +515,8 @@ impl DatapackManager {
         if generated_structures > 0 {
             info!("Loaded {generated_structures} generated structure template(s)");
         }
+
+        loot_table_loader::resolve_loot_table_references(&mut all_loot_tables);
 
         let damage_type_registry = build_damage_type_registry(all_damage_type_defs);
 
@@ -1026,6 +1083,43 @@ impl DatapackManager {
         FUNCTION_EXECUTION.with(|exec| exec.borrow().is_some())
     }
 
+    /// Starts a `/debug function` trace on this thread. Returns `false` when a
+    /// trace is already active, matching vanilla's `noRecursion` rejection.
+    #[must_use]
+    pub fn start_function_trace(file: fs::File) -> bool {
+        FUNCTION_TRACE.with(|trace| {
+            let mut trace = trace.borrow_mut();
+            if trace.is_some() {
+                return false;
+            }
+            *trace = Some(FunctionTrace::new(file));
+            true
+        })
+    }
+
+    /// Stops and flushes the trace started by [`Self::start_function_trace`].
+    pub fn finish_function_trace() {
+        FUNCTION_TRACE.with(|trace| {
+            trace.borrow_mut().take();
+        });
+    }
+
+    #[must_use]
+    pub fn is_function_trace_active() -> bool {
+        FUNCTION_TRACE.with(|trace| trace.borrow().is_some())
+    }
+
+    /// Number of top-level functions recorded by the active trace.
+    #[must_use]
+    pub fn traced_function_count() -> usize {
+        FUNCTION_TRACE.with(|trace| {
+            trace
+                .borrow()
+                .as_ref()
+                .map_or(0, FunctionTrace::traced_functions)
+        })
+    }
+
     pub fn execute_function(
         &self,
         server: &Arc<Server>,
@@ -1077,10 +1171,11 @@ impl DatapackManager {
         }));
 
         let mut execution = FunctionExecution::new(limit);
-        self.stream_function_lines(name, &mut |lines| {
+        self.stream_function_lines(name, 0, &mut |lines| {
             execution.queue_next(FunctionWork::Call {
                 lines: Arc::clone(lines),
                 source: source.clone(),
+                depth: 0,
             });
             !execution.overflow
         })?;
@@ -1088,6 +1183,7 @@ impl DatapackManager {
             *exec.borrow_mut() = Some(ActiveFunctionExecution {
                 execution,
                 server: server.cloned(),
+                current_depth: 0,
             });
         });
         let _guard = FunctionExecutionGuard;
@@ -1141,7 +1237,8 @@ impl DatapackManager {
                     "Function {name} called from a different server while a function execution is active"
                 )));
             }
-            self.stream_function_lines(name, &mut |lines| {
+            let depth = active.current_depth;
+            self.stream_function_lines(name, depth, &mut |lines| {
                 if active.execution.overflow {
                     return false;
                 }
@@ -1149,6 +1246,7 @@ impl DatapackManager {
                 active.execution.queue_next(FunctionWork::Call {
                     lines: Arc::clone(lines),
                     source: source.clone(),
+                    depth,
                 });
                 !active.execution.overflow
             })?;
@@ -1166,6 +1264,7 @@ impl DatapackManager {
     fn stream_function_lines(
         &self,
         name: &str,
+        depth: usize,
         queue: &mut impl FnMut(&Arc<[String]>) -> bool,
     ) -> Result<(), FunctionCallError> {
         if let Some(tag_name) = name.strip_prefix('#') {
@@ -1218,6 +1317,7 @@ impl DatapackManager {
                 let Some(lines) = all_fns.get(fn_id) else {
                     continue;
                 };
+                trace_call(depth, fn_id, lines.len());
                 if !queue(lines) {
                     break;
                 }
@@ -1232,6 +1332,7 @@ impl DatapackManager {
                     "Unknown function: {name}"
                 )));
             };
+            trace_call(depth, name, lines.len());
             let _ = queue(lines);
         }
         Ok(())
@@ -1240,7 +1341,7 @@ impl DatapackManager {
     #[cfg(test)]
     fn resolve_function_lines(&self, name: &str) -> Result<Vec<Arc<[String]>>, String> {
         let mut resolved = Vec::new();
-        self.stream_function_lines(name, &mut |lines| {
+        self.stream_function_lines(name, 0, &mut |lines| {
             resolved.push(Arc::clone(lines));
             true
         })
@@ -2220,6 +2321,7 @@ mod tests {
             *exec.borrow_mut() = Some(ActiveFunctionExecution {
                 execution,
                 server: None,
+                current_depth: 0,
             });
         });
     }
@@ -2229,9 +2331,12 @@ mod tests {
     fn queue_test_call(lines: Arc<[String]>, source: CommandSource) {
         super::FUNCTION_EXECUTION.with(|exec| {
             if let Some(active) = exec.borrow_mut().as_mut() {
-                active
-                    .execution
-                    .queue_next(FunctionWork::Call { lines, source });
+                let depth = active.current_depth;
+                active.execution.queue_next(FunctionWork::Call {
+                    lines,
+                    source,
+                    depth,
+                });
             }
         });
     }
@@ -2252,6 +2357,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("function test:loop"),
             source: 0u32,
+            depth: 0,
         });
 
         let mut ran = 0;
@@ -2263,6 +2369,7 @@ mod tests {
                     execution.queue_next(FunctionWork::Call {
                         lines: function_lines("function test:loop"),
                         source: 0,
+                        depth: 0,
                     });
                 }
                 FunctionStep::LimitHit => break,
@@ -2281,6 +2388,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("function test:b"),
             source: 0u32,
+            depth: 0,
         });
 
         let mut a_lines = 0;
@@ -2292,6 +2400,7 @@ mod tests {
                     execution.queue_next(FunctionWork::Call {
                         lines: function_lines("function test:a"),
                         source: 0,
+                        depth: 0,
                     });
                 }
                 FunctionStep::RunLine { .. } => {
@@ -2299,6 +2408,7 @@ mod tests {
                     execution.queue_next(FunctionWork::Call {
                         lines: function_lines("function test:b"),
                         source: 0,
+                        depth: 0,
                     });
                 }
                 FunctionStep::LimitHit => break,
@@ -2318,6 +2428,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: Arc::from(vec!["say a".to_string(), "say b".to_string()]),
             source: 0,
+            depth: 0,
         });
 
         let mut ran = Vec::new();
@@ -2338,6 +2449,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: Arc::from(vec!["say a".to_string(), "say b".to_string()]),
             source: 0,
+            depth: 0,
         });
 
         let mut ran = 0;
@@ -2362,17 +2474,19 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: Arc::from(vec!["call b".to_string(), "say a2".to_string()]),
             source: 1,
+            depth: 0,
         });
 
         let mut observed = Vec::new();
         loop {
             match execution.step() {
-                FunctionStep::RunLine { line, source } => {
+                FunctionStep::RunLine { line, source, .. } => {
                     observed.push((line.clone(), source));
                     if line == "call b" {
                         execution.queue_next(FunctionWork::Call {
                             lines: function_lines("say b"),
                             source: 2,
+                            depth: 1,
                         });
                     }
                 }
@@ -2400,6 +2514,7 @@ mod tests {
                 "say c".to_string(),
             ]),
             source: 0u32,
+            depth: 0,
         });
 
         match execution.step() {
@@ -2412,6 +2527,7 @@ mod tests {
             execution.queue_next(FunctionWork::Call {
                 lines: function_lines("say x"),
                 source: 0,
+                depth: 0,
             });
         }
         assert!(execution.overflow);
@@ -2427,6 +2543,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("call y"),
             source: CommandSource::dummy(),
+            depth: 0,
         });
         install_test_execution(execution);
         let _guard = FunctionExecutionGuard;
@@ -2446,6 +2563,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("say hi"),
             source: 0,
+            depth: 0,
         });
         assert!(matches!(execution.step(), FunctionStep::LimitHit));
     }
@@ -2456,6 +2574,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("boom"),
             source: CommandSource::dummy(),
+            depth: 0,
         });
         install_test_execution(execution);
 
@@ -2468,12 +2587,40 @@ mod tests {
     }
 
     #[test]
+    fn debug_trace_records_functions_and_commands() {
+        let manager = DatapackManager::new();
+        manager
+            .functions
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("test:outer".to_string(), vec!["say hi".to_string()].into());
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("debug-trace.txt");
+        let file = std::fs::File::create(&path).expect("create trace file");
+        assert!(DatapackManager::start_function_trace(file));
+
+        let source = CommandSource::dummy();
+        let executed = manager
+            .execute_function_with(&source, "test:outer", None, &mut |_, _| {})
+            .expect("function runs");
+        assert_eq!(executed, 1);
+        assert_eq!(DatapackManager::traced_function_count(), 1);
+        DatapackManager::finish_function_trace();
+
+        let content = std::fs::read_to_string(&path).expect("read trace file");
+        assert!(content.contains("[F] test:outer size=1"));
+        assert!(content.contains("[C] say hi"));
+    }
+
+    #[test]
     fn sequential_executions_on_one_thread_do_not_share_state() {
         // First execution runs to completion and clears the thread state.
         let mut first = FunctionExecution::new(5);
         first.queue_next(FunctionWork::Call {
             lines: function_lines("say first"),
             source: CommandSource::dummy(),
+            depth: 0,
         });
         install_test_execution(first);
         {
@@ -2492,6 +2639,7 @@ mod tests {
         second.queue_next(FunctionWork::Call {
             lines: function_lines("say second"),
             source: CommandSource::dummy(),
+            depth: 0,
         });
         install_test_execution(second);
         let _guard = FunctionExecutionGuard;
@@ -2539,6 +2687,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: Arc::from(Vec::<String>::new()),
             source: 0,
+            depth: 0,
         });
         assert!(matches!(execution.step(), FunctionStep::Done));
 
@@ -2547,6 +2696,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: Arc::from(Vec::<String>::new()),
             source: 0,
+            depth: 0,
         });
         assert!(matches!(execution.step(), FunctionStep::Done));
     }
@@ -2650,6 +2800,7 @@ mod tests {
                 "say 5".to_string(),
             ]),
             source: 0,
+            depth: 0,
         });
 
         let mut ran = Vec::new();
@@ -2829,6 +2980,7 @@ mod tests {
         execution.queue_next(FunctionWork::Call {
             lines: function_lines("say a"),
             source: CommandSource::dummy(),
+            depth: 0,
         });
         install_test_execution(execution);
         let _guard = FunctionExecutionGuard;

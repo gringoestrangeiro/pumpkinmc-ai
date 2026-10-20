@@ -16,7 +16,7 @@ use crate::data::datapack::{DatapackManager, FunctionCallError};
 const DESCRIPTION: &str = "Runs commands found in the corresponding function files.";
 const PERMISSION: &str = "minecraft:command.function";
 
-static ERROR_UNKNOWN_FUNCTION: CommandErrorType<1> = CommandErrorType::new(
+pub(super) static ERROR_UNKNOWN_FUNCTION: CommandErrorType<1> = CommandErrorType::new(
     translation::java::ARGUMENTS_FUNCTION_UNKNOWN,
     translation::java::ARGUMENTS_FUNCTION_UNKNOWN,
 );
@@ -24,10 +24,10 @@ static ERROR_UNKNOWN_FUNCTION: CommandErrorType<1> = CommandErrorType::new(
 /// Internal queue/execution failures are not user input errors; they are
 /// logged with detail and surfaced as a generic internal error instead of the
 /// "unknown function" message.
-static ERROR_FUNCTION_INTERNAL: LiteralCommandErrorType =
+pub(super) static ERROR_FUNCTION_INTERNAL: LiteralCommandErrorType =
     LiteralCommandErrorType::new("Internal error while running function");
 
-struct FunctionSuggestionProvider;
+pub(super) struct FunctionSuggestionProvider;
 
 impl SuggestionProvider for FunctionSuggestionProvider {
     fn suggest(

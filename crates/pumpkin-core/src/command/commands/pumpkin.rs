@@ -419,11 +419,10 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
         PermissionDefault::Op(PermissionLvl::Zero),
     ));
 
-    dispatcher.register_with_aliases(
+    dispatcher.register(
         command("pumpkin", DESCRIPTION)
             .requires(PERMISSION)
             .executes(Executor),
-        &["version"],
     );
 }
 
