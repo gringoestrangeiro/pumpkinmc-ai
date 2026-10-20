@@ -1,6 +1,7 @@
 use std::io::{Cursor, Write};
 
 use pumpkin_data::{
+    data_component_impl::ProfileImpl,
     meta_data_type::MetaDataType,
     packet::clientbound::play::SET_ENTITY_DATA,
     tracked_data::{TrackedData, TrackedId},
@@ -510,6 +511,21 @@ impl MetadataSerializer for Option<uuid::Uuid> {
         } else {
             writer.write_bool(false)?;
         }
+        Ok(())
+    }
+}
+
+impl MetadataSerializer for ProfileImpl {
+    fn write_metadata(
+        &self,
+        writer: &mut impl std::io::Write,
+        _version: &JavaMinecraftVersion,
+    ) -> Result<(), WritingError> {
+        let mut bytes = Vec::new();
+        <ProfileImpl as crate::codec::data_component::DataComponentCodec<ProfileImpl>>::serialize(
+            self, &mut bytes,
+        )?;
+        writer.write_slice(&bytes)?;
         Ok(())
     }
 }
