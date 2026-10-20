@@ -8,16 +8,16 @@
 
 The public PumpkinMC tracker had **564 entries: 402 done, 155 partial, 7 planned**. Two of those planned rows are `/publish` and `/unpublish`, which vanilla registers only for the integrated server. They are excluded from the dedicated-server target, so the in-scope baseline is **562 entries: 402 done, 155 partial, 5 planned**, or **71.5%**.
 
-This fork now has **486 done, 74 partial, 2 planned** in the **theoretical code-complete** count, or **86.5%**. That count includes Wave 1 and Wave 2 code that is implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
+This fork now has **487 done, 73 partial, 2 planned** in the **theoretical code-complete** count, or **86.7%**. That count includes Wave 1 and Wave 2 code that is implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
 
 | Metric | Upstream | This fork (theoretical) | Delta |
 | :--- | ---: | ---: | ---: |
 | In-scope tracker entries | 562 | 562 | 0 |
-| Done | 402 | 486 | +84 |
-| Partial | 155 | 74 | -81 |
+| Done | 402 | 487 | +85 |
+| Partial | 155 | 73 | -82 |
 | Planned | 5 | 2 | -3 |
-| Strict completion, done only | 71.5% | 86.5% | +15.0 pp |
-| Weighted completion, partial = 0.5 | 85.3% | 93.1% | +7.8 pp |
+| Strict completion, done only | 71.5% | 86.7% | +15.2 pp |
+| Weighted completion, partial = 0.5 | 85.3% | 93.2% | +7.9 pp |
 
 ## What the percentage means
 
@@ -33,22 +33,22 @@ The tracker's green entries still mean only "an implementation source exists". T
 
 Commit `798734a3a` repairs both paths. They stay counted as done, but they now have code, game rules, and dispatch tests behind them.
 
-**76 tracker rows are still open** (74 partial and 2 planned). The theoretical percentage is not a claim that those rows or the 486 done rows behave correctly in-game.
+**75 tracker rows are still open** (73 partial and 2 planned). The theoretical percentage is not a claim that those rows or the 487 done rows behave correctly in-game.
 
 ## Per-category status
 
 | Category | Entries | Done | Partial | Planned | Done % |
 | :--- | ---: | ---: | ---: | ---: | ---: |
 | Blocks | 196 | 183 | 13 | 0 | 93.4% |
-| Entities | 160 | 105 | 55 | 0 | 65.6% |
+| Entities | 160 | 106 | 54 | 0 | 66.3% |
 | Commands | 94 | 92 | 1 | 1 | 97.9% |
 | Items | 55 | 53 | 2 | 0 | 96.4% |
 | Redstone | 27 | 26 | 1 | 0 | 96.3% |
 | World | 16 | 14 | 2 | 0 | 87.5% |
 | Combat | 14 | 13 | 0 | 1 | 92.9% |
-| **Total** | **562** | **486** | **74** | **2** | **86.5%** |
+| **Total** | **562** | **487** | **73** | **2** | **86.7%** |
 
-Entities are still the dominant gap. They are 55 of the 76 open rows, which is why mob AI work moves the tracker percentage much more than block edge cases do.
+Entities are still the dominant gap. They are 54 of the 75 open rows, which is why mob AI work moves the tracker percentage much more than block edge cases do.
 
 ## Rows closed or repaired by this fork
 
@@ -117,7 +117,7 @@ Wave 2 closes 22 more rows in the theoretical count and leaves the live checks b
 | Fishing Rod | 1 | Nested loot tables, parent weights/quality, open-water condition, `set_damage`/`set_potion`; bobber uses the real distribution. | Fish in open water and a cramped pond, with and without Luck of the Sea. |
 | Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland, Daylight Detector (blocks + redstone) | 10 | Long hatch delays; compass inventory tick; tripwire events/shears/filtering; bed wake; shulker `canOpen`/piglin anger; entity push on path/farmland; player-source daylight event. | Hatch tadpoles; bind/break lodestone; tripwire/shears; sleep/wake; shulker lid; path/farmland lift; sculk hears daylight detector. |
 
-The 22 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball remains deferred.
+The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity Fishing Bobber (the same fishing-loot fix as Fishing Rod), 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball remains deferred.
 
 ## Command parity audit
 
@@ -150,7 +150,7 @@ Pumpkin extras that are not parity gaps: `/pumpkin`, `/plugin`, `/plugins`, `/tp
 
 ### Effect on the tracker
 
-The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. Porting `/perf` moves one planned command row to done. The theoretical total is **486/562 = 86.5%**; the verified baseline is **415/562 = 73.8%**. Verifying `/locate` would make the verified total **416/562 = 74.0%**, and treating `/jfr` as a non-goal would give **416/561 = 74.2%**.
+The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. Porting `/perf` moves one planned command row to done. The theoretical total is **487/562 = 86.7%**; the verified baseline is **415/562 = 73.8%**. Verifying `/locate` would make the verified total **416/562 = 74.0%**, and treating `/jfr` as a non-goal would give **416/561 = 74.2%**.
 
 ## How to update this file
 
@@ -162,9 +162,9 @@ The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562
 
 ## Open gaps by workstream
 
-The 74 partial and 2 planned rows are mapped to roadmap tasks in Appendix B. The largest clusters are:
+The 73 partial and 2 planned rows are mapped to roadmap tasks in Appendix B. The largest clusters are:
 
-- **Entities:** 55 partial rows, mostly mob AI, pathfinding, and missing interactions.
+- **Entities:** 54 partial rows, mostly mob AI, pathfinding, and missing interactions.
 - **Blocks:** 13 partial rows, mostly block-specific edge cases and world interaction.
 - **Redstone:** 1 partial row (pistons).
 - **World:** 2 partial rows (world saving and moved-block persistence).
@@ -172,4 +172,4 @@ The 74 partial and 2 planned rows are mapped to roadmap tasks in Appendix B. The
 - **Commands:** 1 partial (`/locate`) and 1 planned (`/jfr`) row. `/jfr` is a recommended non-goal, so `/locate` is the only remaining command verification.
 - **Combat:** 1 planned row (1.8 combat mode).
 
-Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 9.8 pp (55 / 562).
+Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 9.6 pp (54 / 562).

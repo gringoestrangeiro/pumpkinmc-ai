@@ -2727,7 +2727,7 @@ Owner roles here match the workstream that owns the file. "Code" means read agai
 
 #### Wave 2 close-out (2026-10-20)
 
-Wave 2 merged at `2140492cb` and closes 22 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod (1); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total: **486 / 74 / 2 = 86.5%**; verified total remains **415 / 143 / 4** until live checks run.
+Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod and Fishing Bobber (2); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total: **487 / 73 / 2 = 86.7%**; verified total remains **415 / 143 / 4** until live checks run.
 
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
@@ -3220,7 +3220,7 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 71 more rows, so the current open list is **74 partial + 2 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 71 more rows, so the current open list is **73 partial + 2 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |
