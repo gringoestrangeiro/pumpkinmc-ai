@@ -107,13 +107,13 @@ Tracker-derived completion against Java Edition 26.3. This is a coverage score, 
 | Category | Done | Total | Parity |
 | :--- | ---: | ---: | ---: |
 | Blocks | 163 | 196 | 83.2% |
-| Entities | 50 | 160 | 31.2% |
+| Entities | 59 | 160 | 36.9% |
 | Commands | 92 | 94 | 97.9% |
 | Items | 51 | 55 | 92.7% |
 | Redstone | 24 | 27 | 88.9% |
 | World | 13 | 16 | 81.2% |
 | Combat | 13 | 14 | 92.9% |
-| **Total** | **406** | **562** | **72.2%** |
+| **Total** | **415** | **562** | **73.8%** |
 
 Integrated-server-only commands such as `/publish` and `/unpublish` are excluded from the command total. The upstream public tracker reports about 71.5% on the same in-scope basis.
 
