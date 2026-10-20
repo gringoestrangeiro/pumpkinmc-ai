@@ -5,6 +5,7 @@ use crossbeam::atomic::AtomicCell;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::Difficulty;
 use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
@@ -104,6 +105,7 @@ impl SlimeEntity {
         let actual_size = size.clamp(1, 127);
         let entity = &self.entity.living_entity.entity;
         entity.data.store(actual_size, Ordering::Relaxed);
+        entity.set_synced_data(tracked_data::slime::ID_SIZE, actual_size);
 
         // Update attributes
         {
