@@ -396,6 +396,30 @@ impl LivingEntity {
         }
     }
 
+    /// Emits vanilla equipment side effects for an equipment slot change.
+    pub fn on_equip_item(&self, slot: &EquipmentSlot, previous: &ItemStack, current: &ItemStack) {
+        if previous.are_items_and_components_equal(current) {
+            return;
+        }
+
+        let world = self.entity.world.load();
+        let position = self.entity.pos.load();
+
+        if let Some(equippable) = current.get_data_component::<EquippableImpl>()
+            && *equippable.slot == *slot
+        {
+            world.play_sound_event(&equippable.equip_sound, SoundCategory::Neutral, &position);
+        }
+
+        if current.is_empty() {
+            if !previous.is_empty() {
+                world.emit_game_event(GameEvent::Unequip, position);
+            }
+        } else {
+            world.emit_game_event(GameEvent::Equip, position);
+        }
+    }
+
     pub fn send_equipment_changes(&self, equipment: &[(EquipmentSlot, ItemStack)]) {
         if equipment.is_empty() {
             return;

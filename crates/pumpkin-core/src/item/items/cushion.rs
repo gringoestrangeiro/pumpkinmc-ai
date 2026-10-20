@@ -82,6 +82,7 @@ impl ItemBehaviour for CushionItem {
         );
 
         if !world.is_space_empty(bounding_box)
+            || !CushionEntity::can_be_placed_at(&world, &bounding_box)
             || !world.get_entities_at_box(&bounding_box).is_empty()
         {
             return BlockActionResult::Fail;

@@ -3,15 +3,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase, living::LivingEntity};
-use pumpkin_data::BlockDirection;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::painting_variant::PaintingVariant;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::{Block, BlockDirection};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_protocol::java::client::play::Metadata;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::version::JavaMinecraftVersion;
@@ -48,6 +49,7 @@ const fn facing_to_horizontal(direction: BlockDirection) -> u8 {
 pub struct PaintingEntity {
     pub entity: Entity,
     variant_id: AtomicU32,
+    ticks_since_last_check: AtomicU32,
 }
 
 impl PaintingEntity {
@@ -61,7 +63,64 @@ impl PaintingEntity {
         Self {
             entity,
             variant_id: AtomicU32::new(variant.id()),
+            ticks_since_last_check: AtomicU32::new(0),
         }
+    }
+
+    #[must_use]
+    pub fn direction(&self) -> BlockDirection {
+        let index = self.entity.data.load(Ordering::Relaxed) as u8;
+        BlockDirection::from_index(index).unwrap_or(BlockDirection::South)
+    }
+
+    /// Vanilla `Painting.calculateBoundingBox`: the entity box follows the
+    /// variant's size and is one sixteenth deep along the facing axis.
+    #[must_use]
+    pub fn bounding_box(&self) -> BoundingBox {
+        let variant = self.variant();
+        let center = self.entity.pos.load();
+        let along_x = self.direction().to_offset().x != 0;
+        let depth = 0.0625;
+        let size = Vector3::new(
+            if along_x {
+                depth
+            } else {
+                f64::from(variant.width())
+            },
+            f64::from(variant.height()),
+            if along_x {
+                f64::from(variant.width())
+            } else {
+                depth
+            },
+        );
+        let half = size.multiply(0.5, 0.5, 0.5);
+        BoundingBox::new(center - half, center + half)
+    }
+
+    /// Vanilla `HangingEntity.survives`: the wall behind the painting still
+    /// supports every cell and the space in front is free.
+    #[must_use]
+    pub fn survives(&self) -> bool {
+        let world = self.entity.world.load();
+        let bounding_box = self.bounding_box();
+        let step = self.direction().to_offset();
+        let support_box = bounding_box
+            .shift(Vector3::new(
+                f64::from(step.x) * -0.5,
+                f64::from(step.y) * -0.5,
+                f64::from(step.z) * -0.5,
+            ))
+            .contract_all(1.0e-7);
+
+        let supported = BlockPos::iterate(support_box.min_block_pos(), support_box.max_block_pos())
+            .all(|pos| {
+                let state = world.get_block_state(&pos);
+                state.is_solid()
+                    || crate::block::blocks::redstone::is_diode(Block::from_state_id(state.id))
+            });
+
+        supported && world.is_space_empty(bounding_box)
     }
 
     #[must_use]
@@ -187,26 +246,45 @@ impl PaintingEntity {
         fitting_variants.choose(&mut rng).copied()
     }
 
+    /// Vanilla `Painting.dropItem`.
     fn drop_and_remove(&self, caused_by: Option<&dyn EntityBase>) {
         let entity = &self.entity;
         let world = entity.world.load();
-        world.play_sound(
-            Sound::EntityPaintingBreak,
-            SoundCategory::Blocks,
-            &entity.pos.load(),
-        );
 
-        let is_creative = caused_by.is_some_and(|c| {
-            c.cast_any()
-                .downcast_ref::<Player>()
-                .is_some_and(Player::is_creative)
-        });
+        if world.level_info.load().game_rules.entity_drops {
+            world.play_sound(
+                Sound::EntityPaintingBreak,
+                SoundCategory::Blocks,
+                &entity.pos.load(),
+            );
 
-        if !is_creative {
-            world.drop_stack(&entity.block_pos.load(), ItemStack::new(1, &Item::PAINTING));
+            let is_creative = caused_by.is_some_and(|c| {
+                c.cast_any()
+                    .downcast_ref::<Player>()
+                    .is_some_and(Player::is_creative)
+            });
+
+            if !is_creative {
+                let mut stack = ItemStack::new(1, &Item::PAINTING);
+                if let Some(custom_name) = entity.custom_name.load().as_ref().clone() {
+                    stack.set_custom_name(custom_name.to_pretty_console());
+                }
+                world.drop_stack(&entity.block_pos.load(), stack);
+            }
         }
 
         entity.remove();
+    }
+
+    fn tick(&self, _caller: &dyn EntityBase, _server: &crate::server::Server) {
+        if self.ticks_since_last_check.fetch_add(1, Ordering::Relaxed) < 100 {
+            return;
+        }
+        self.ticks_since_last_check.store(0, Ordering::Relaxed);
+
+        if !self.entity.is_removed() && !self.survives() {
+            self.drop_and_remove(None);
+        }
     }
 }
 

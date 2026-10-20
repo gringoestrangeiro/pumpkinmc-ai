@@ -83,7 +83,7 @@ impl JavaClient {
                         }
                         ActionType::Interact | ActionType::InteractAt => {
                             if event.action == ActionType::InteractAt
-                                && let Some(pos) = interact.target_position
+                                && let Some(pos) = event.target_position
                             {
                                 let mut at_event = crate::plugin::api::events::player::player_interact_at_entity::PlayerInteractAtEntityEvent::new(
                                     player.clone(),
@@ -102,7 +102,16 @@ impl JavaClient {
 
                             let item_id = stack.item.id;
                             let before = stack.clone();
-                            let interacted = event.target.interact(player, &mut stack);
+                            let interacted = if event.action == ActionType::InteractAt {
+                                match event.target_position {
+                                    Some(position) => {
+                                        event.target.interact_at(player, &mut stack, position)
+                                    }
+                                    None => event.target.interact(player, &mut stack),
+                                }
+                            } else {
+                                event.target.interact(player, &mut stack)
+                            };
                             if !interacted {
                                 server
                                     .item_registry

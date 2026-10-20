@@ -88,6 +88,7 @@ pub mod lightning;
 pub mod living;
 pub mod marker;
 pub mod mob;
+pub mod ominous_item_spawner;
 pub mod passive;
 pub mod player;
 pub mod projectile;
@@ -486,6 +487,18 @@ pub trait EntityBase: Send + Sync + std::any::Any {
     /// Called when a player right-clicks this entity with an item.
     /// Called when a player right-clicks this entity with an item.
     /// Returns true if the interaction was handled.
+    /// Called when a player right-clicks a specific position on this entity.
+    /// Entities that do not use the hit position get the regular interaction
+    /// behavior by default.
+    fn interact_at(
+        &self,
+        player: &Arc<Player>,
+        item_stack: &mut ItemStack,
+        _position: Vector3<f64>,
+    ) -> bool {
+        self.interact(player, item_stack)
+    }
+
     fn interact(&self, _player: &Arc<Player>, _item_stack: &mut ItemStack) -> bool {
         false
     }

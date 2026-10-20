@@ -22,6 +22,19 @@ impl EnchantmentHelper {
         }
     }
 
+    /// Vanilla `EnchantmentHelper.has(stack, PREVENT_EQUIPMENT_DROP)`.
+    #[must_use]
+    pub fn prevents_equipment_drop(item_stack: &ItemStack) -> bool {
+        item_stack
+            .get_data_component::<EnchantmentsImpl>()
+            .is_some_and(|enchantments| {
+                enchantments
+                    .enchantment
+                    .iter()
+                    .any(|(enchantment, _)| enchantment.effects.prevent_equipment_drop)
+            })
+    }
+
     /// Applies projectile-spawned enchantment effects (e.g. Flame ignites the projectile for 100s).
     pub fn on_projectile_spawned(
         weapon: &ItemStack,
