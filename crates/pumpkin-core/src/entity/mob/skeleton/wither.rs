@@ -1,3 +1,4 @@
+use pumpkin_data::sound::Sound;
 use std::sync::Arc;
 
 use pumpkin_data::effect::StatusEffect;
@@ -44,5 +45,9 @@ impl Mob for WitherSkeletonEntity {
         // vanilla lights it for 100 seconds
         arrow.set_flame(true);
         arrow
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityWitherSkeletonAmbient)
     }
 }
