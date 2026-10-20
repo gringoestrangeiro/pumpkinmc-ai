@@ -59,6 +59,42 @@ Entities are the dominant gap. They are 110 of the 159 open rows, which is why m
 
 The Warden row remains partial. `798734a3a` adds vibration hearing and a minimal tendril-click response, but anger, sniffing, and the sonic boom are still missing.
 
+## Command parity audit
+
+Vanilla 26.3 registers **87 root commands** for a dedicated server once the dev-only commands are excluded. Pumpkin registers **85** of them.
+
+| Measure | Result |
+| :--- | ---: |
+| Root coverage against the dedicated target | 85 / 87 = 97.7% |
+| Root coverage if `/jfr` is a non-goal | 85 / 86 = 98.8% |
+
+Root coverage is not subcommand coverage. A full subcommand and behavior audit against vanilla 26.3 is still pending; `/debug function` and `/version` are known gaps from this pass.
+
+### Actually missing on a dedicated server
+
+| Command | State | Notes |
+| :--- | :--- | :--- |
+| `/perf start`, `/perf stop` | missing | In scope. PR `#2958` already implements it; review and land that instead of rewriting it. |
+| `/debug function` | missing subcommand | Pumpkin has `/debug start` and `/debug stop`; the vanilla function tracer is absent. |
+| `/version` | present, wrong behavior | `/version` is an alias of `/pumpkin`, which prints project and contributor info. Vanilla prints game version, data version, protocol, build time, and pack versions. Split it into a real `/version` or document the deviation. |
+| `/jfr start`, `/jfr stop`, `/jfr dump` | missing | JVM Flight Recorder tooling, not gameplay. Recommend a documented non-goal; operators can use JVM flags or `jcmd`. |
+
+`/locate` is marked partial by the tracker, but the current code implements structure, biome, and POI searches. It needs a live verification before the row is moved to done.
+
+### Not real gaps, remove from the parity target
+
+| Command | Why it does not belong in dedicated-server parity |
+| :--- | :--- |
+| `/publish`, `/unpublish` | Vanilla registers these only for the integrated server (`CommandSelection.includeIntegrated`). A dedicated server must not expose them. The public tracker currently lists both as planned; that is a tracker bug. |
+| `/chase`, `/debugpath`, `/debugmobspawning`, `/wardenspawntracker`, `/spawnarmortrims`, `/serverpack`, `/debugconfig` | Dev-only commands gated by `SharedConstants.DEBUG_DEV_COMMANDS`, `DEBUG_CHASE_COMMAND`, or running in the IDE. They are not part of normal dedicated parity. |
+| `/emote` | Not a vanilla command. `/me` is the command vanilla registers, and Pumpkin implements it. |
+
+Pumpkin extras that are not parity gaps: `/pumpkin`, `/plugin`, `/plugins`, `/tps`, and `/raid`. Vanilla only registers `/raid` in dev mode, so it can stay as a Pumpkin debug extra or be gated later.
+
+### Effect on the tracker
+
+Removing `/publish` and `/unpublish` from the 564-row denominator gives 562 rows and **405/562 = 72.1%**. Excluding `/jfr` as well gives 561 rows and **405/561 = 72.2%**. Verifying `/locate` would make it **406/561 = 72.4%**. These are audit corrections, not new implementations, so they are reported separately from the raw 71.8% headline until the tracker itself is updated.
+
 ## How to update this file
 
 1. Use the tracker snapshot that matches the date in this file. The current baseline is the 564-row snapshot collected on 2026-10-20.
@@ -76,6 +112,6 @@ The 152 partial and 7 planned rows are mapped to roadmap tasks in Appendix B. Th
 - **Redstone:** 3 partial rows.
 - **World:** 3 partial rows.
 - **Items:** 4 partial rows.
-- **Commands:** 1 partial and 4 planned rows.
+- **Commands:** 1 partial and 4 planned rows. Two planned rows (`/publish`, `/unpublish`) are integrated-server non-goals, and `/jfr` is a recommended non-goal, so only `/perf` is a real missing command.
 
 Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 19.5 pp.
