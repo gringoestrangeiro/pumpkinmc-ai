@@ -14,6 +14,7 @@ use crate::entity::decoration::{
     display::{BlockDisplayEntity, ItemDisplayEntity, TextDisplayEntity},
     end_crystal::EndCrystalEntity,
     item_frame::ItemFrameEntity,
+    mannequin::MannequinEntity,
     painting::PaintingEntity,
 };
 use crate::entity::experience_orb::ExperienceOrbEntity;
@@ -240,6 +241,7 @@ pub fn from_type(
             crate::entity::area_effect_cloud::AreaEffectCloudEntity::new(entity)
         }
         id if id == EntityType::ARMOR_STAND.id => Arc::new(ArmorStandEntity::new(entity)),
+        id if id == EntityType::MANNEQUIN.id => Arc::new(MannequinEntity::new(entity)),
         id if id == EntityType::CUSHION.id => Arc::new(CushionEntity::new(entity, 0)),
         id if id == EntityType::BLOCK_DISPLAY.id => BlockDisplayEntity::new(entity),
         id if id == EntityType::ITEM_DISPLAY.id => ItemDisplayEntity::new(entity),
