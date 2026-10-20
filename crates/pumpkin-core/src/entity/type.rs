@@ -110,6 +110,7 @@ use crate::entity::passive::wolf::WolfEntity;
 use crate::entity::passive::zombie_horse::ZombieHorseEntity;
 use crate::entity::projectile::ThrownItemEntity;
 use crate::entity::projectile::arrow::ArrowEntity;
+use crate::entity::projectile::dragon_fireball::DragonFireballEntity;
 use crate::entity::projectile::egg::EggEntity;
 use crate::entity::projectile::ender_pearl::EnderPearlEntity;
 use crate::entity::projectile::experience_bottle::ExperienceBottleEntity;
@@ -260,6 +261,7 @@ pub fn from_type(
         id if id == EntityType::EXPERIENCE_BOTTLE.id => {
             Arc::new(ExperienceBottleEntity::new(entity))
         }
+        id if id == EntityType::DRAGON_FIREBALL.id => Arc::new(DragonFireballEntity::new(entity)),
         id if id == EntityType::SILVERFISH.id => SilverfishEntity::new(entity),
         id if id == EntityType::SLIME.id => SlimeEntity::new(entity),
         id if id == EntityType::SULFUR_CUBE.id => SulfurCubeEntity::new(entity),
