@@ -153,6 +153,15 @@ impl BlockBehaviour for InfestedBlock {
         if args.player.gamemode.load() == GameMode::Creative {
             return;
         }
+        if args
+            .player
+            .inventory()
+            .held_item()
+            .get_enchantment_level(&pumpkin_data::Enchantment::SILK_TOUCH)
+            > 0
+        {
+            return;
+        }
         Self::spawn_infestation(args.world, args.position);
     }
 }

@@ -39,10 +39,11 @@ impl BlockBehaviour for LilyPadBlock {
 
 impl PlantBlockBase for LilyPadBlock {
     fn can_plant_on_top(&self, block_accessor: &dyn BlockAccessor, pos: &BlockPos) -> bool {
-        // TODO: get and use fluids not blocks
+        let fluid =
+            pumpkin_world::world::fluid_from_block_state(block_accessor.get_block_state_id(pos));
         let block = block_accessor.get_block(pos);
         let above_fluid = block_accessor.get_block(&pos.up());
-        (block.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_LILY_PAD)
+        (fluid.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_LILY_PAD)
             || block.has_tag(&tag::Block::MINECRAFT_SUPPORTS_LILY_PAD))
             && above_fluid.is_air()
     }
