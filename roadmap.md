@@ -4,7 +4,7 @@
 
 **Snapshot date:** 2026-10-20.
 
-**Repository state:** fork `fork-ai-main` code tip `bf5edaf97`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 1 code is merged; the docs and live checks are the remaining work. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` code tip `2140492cb`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 2 code is merged; the remaining work is Wave 3 onward plus live checks. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -2725,6 +2725,10 @@ Owner roles here match the workstream that owns the file. "Code" means read agai
 | `I01` world saving, `#3902` | Wave 1 verifier | verify | `stop` now saves block entities before `level.shutdown`; `save-all flush` still does not flush and `add_block_entity_nbt` can drop unloaded chunks. Live A/B in `#3902`. |
 | `T01`/`W14` parity bookkeeping | main agent | code merged, live check pending | PARITY now projects 464 / 94 / 4 = 82.6% if all Wave 1 live checks pass; the verified headline stays 415 / 143 / 4 until then. CI is the compile/test gate for this push. |
 
+#### Wave 2 close-out (2026-10-20)
+
+Wave 2 merged at `2140492cb` and closes 22 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod (1); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total: **486 / 74 / 2 = 86.5%**; verified total remains **415 / 143 / 4** until live checks run.
+
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
 - `W2` mob tasks in parallel by family.
@@ -3214,9 +3218,9 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ---
 
-## Appendix B — Tracker gaps (143 partial + 4 planned)
+## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. `done` entries are audited in `T01`; the rows below are the entries the tracker itself flags, minus the 13 rows this fork has already closed. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 71 more rows, so the current open list is **74 partial + 2 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |
