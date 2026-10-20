@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::block::entities::skull::SkullBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
@@ -25,7 +27,7 @@ use super::redstone::block_receives_redstone_power;
 pub struct NoteBlock;
 
 impl NoteBlock {
-    pub fn play_note(props: &NoteBlockLikeProperties, world: &World, pos: &BlockPos) {
+    pub fn play_note(props: &NoteBlockLikeProperties, world: &Arc<World>, pos: &BlockPos) {
         if !is_base_block(props.instrument) || world.get_block_state(&pos.up()).is_air() {
             let mut event = crate::plugin::api::events::block::note_play::NotePlayEvent::new(
                 *pos,
