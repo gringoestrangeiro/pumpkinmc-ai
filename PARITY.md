@@ -1,7 +1,7 @@
 # Parity Tracking
 
 **Last updated:** 2026-10-20
-**Fork code commit:** `f0dec5e23`
+**Fork code commit:** `bf5edaf97`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
@@ -92,7 +92,7 @@ Wave 1 targets one ported fix and a set of rows the tracker already lists as ope
 
 ### Wave 1 code merged, live check pending
 
-The Wave 1 code merge (`f0dec5e23`) implements 49 tracker rows. They stay **partial** in the headline until the live checks pass. If every check below passes, the counts become **464 done / 94 partial / 4 planned = 82.6%**; the current verified headline stays 415 / 143 / 4.
+The Wave 1 code merge (`bf5edaf97`) implements 49 tracker rows. They stay **partial** in the headline until the live checks pass. If every check below passes, the counts become **464 done / 94 partial / 4 planned = 82.6%**; the current verified headline stays 415 / 143 / 4.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
