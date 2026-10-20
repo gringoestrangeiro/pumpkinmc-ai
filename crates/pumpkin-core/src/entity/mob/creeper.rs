@@ -20,6 +20,7 @@ use crate::entity::{
         look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
         swim::SwimGoal, wander_around::WanderAroundGoal,
     },
+    area_effect_cloud::AreaEffectCloudEntity,
     mob::{Mob, MobEntity},
     player::Player,
 };
@@ -118,15 +119,62 @@ impl CreeperEntity {
             .living_entity
             .dead
             .store(true, Ordering::Relaxed);
-        let world = entity.world.load();
+        let world = entity.world.load_full();
         let pos = entity.pos.load();
         world.explode(
             pos,
             radius * multiplier,
             crate::world::ExplosionInteraction::Mob,
         );
-        // TODO: spawn area effect cloud with potion effects
+        self.spawn_lingering_cloud(&world);
         entity.remove();
+    }
+
+    /// Vanilla `Creeper.spawnLingeringCloud`.
+    fn spawn_lingering_cloud(&self, world: &Arc<crate::world::World>) {
+        let effects: Vec<_> = {
+            let active_effects = self
+                .mob_entity
+                .living_entity
+                .active_effects
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            active_effects
+                .values()
+                .map(|effect| {
+                    (
+                        effect.effect_type,
+                        effect.duration,
+                        effect.amplifier,
+                        effect.ambient,
+                        effect.show_particles,
+                        effect.show_icon,
+                    )
+                })
+                .collect()
+        };
+        if effects.is_empty() {
+            return;
+        }
+
+        let entity = &self.mob_entity.living_entity.entity;
+        let cloud_entity = Entity::new(
+            world.clone(),
+            entity.pos.load(),
+            &EntityType::AREA_EFFECT_CLOUD,
+        );
+        let cloud = AreaEffectCloudEntity::create(
+            cloud_entity,
+            ItemStack::new(0, &Item::GLASS_BOTTLE),
+            effects,
+            300,
+            2.5,
+            20,
+            10,
+            -0.5,
+            0,
+        );
+        let _ = world.spawn_entity(cloud);
     }
 }
 

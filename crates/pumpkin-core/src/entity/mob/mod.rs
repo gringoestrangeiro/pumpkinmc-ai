@@ -651,7 +651,9 @@ impl MobEntity {
             target,
             attack_damage,
             DamageType::MOB_ATTACK,
-            None,
+            // Vanilla `hurtServer` reads the attacker position from the damage source,
+            // which is what the shield block direction check uses.
+            Some(caller.get_entity().pos.load()),
             Some(caller),
             Some(caller),
         );
@@ -983,6 +985,9 @@ pub trait Mob: EntityBase + Send + Sync {
     fn drop_custom_death_loot(&self, _params: &LootContextParameters) {}
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
+
+    /// Vanilla `LivingEntity.blockedByItem`: the attacker reacts to a shield block.
+    fn blocked_by_item(&self, _defender: &dyn EntityBase) {}
 
     // getArrow in vanilla, lets skeletons change the arrow before it's shot
     fn get_arrow(&self, arrow: ArrowEntity) -> ArrowEntity {

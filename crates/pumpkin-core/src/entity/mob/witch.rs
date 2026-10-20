@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::effect::StatusEffect;
@@ -11,13 +12,14 @@ use pumpkin_data::potion::Potion;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::tracked_data;
+use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
+        Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        swim::SwimGoal, to_goal_ticks, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity, RangedAttackMob,
@@ -49,6 +51,134 @@ fn create_potion_stack(item: &'static Item, potion: &'static Potion) -> ItemStac
     stack
 }
 
+/// Vanilla `NearestHealableRaiderTargetGoal`: a witch in an active raid picks a
+/// raider to support with its next potion.
+struct WitchHealRaidersGoal {
+    witch: Weak<WitchEntity>,
+    target: Option<Arc<dyn EntityBase>>,
+}
+
+impl WitchHealRaidersGoal {
+    const DEFAULT_COOLDOWN: i32 = 200;
+
+    const fn new(witch: Weak<WitchEntity>) -> Self {
+        Self {
+            witch,
+            target: None,
+        }
+    }
+
+    fn find_target(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
+        let entity = mob.get_entity();
+        let world = entity.world.load();
+        let follow_range = mob
+            .get_mob_entity()
+            .living_entity
+            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+        let search_box =
+            entity
+                .bounding_box
+                .load()
+                .expand(follow_range, follow_range, follow_range);
+        let pos = entity.pos.load();
+
+        world
+            .get_entities_at_box(&search_box)
+            .into_iter()
+            .filter(|candidate| {
+                let candidate_entity = candidate.get_entity();
+                candidate_entity.is_alive()
+                    && candidate_entity.entity_id != entity.entity_id
+                    && *candidate_entity.entity_type != EntityType::WITCH
+                    && candidate_entity
+                        .entity_type
+                        .has_tag(&tag::EntityType::MINECRAFT_RAIDERS)
+                    && pos.squared_distance_to_vec(&candidate_entity.pos.load())
+                        <= follow_range * follow_range
+                    && mob.has_line_of_sight(candidate_entity)
+            })
+            .min_by(|a, b| {
+                let a_dist = pos.squared_distance_to_vec(&a.get_entity().pos.load());
+                let b_dist = pos.squared_distance_to_vec(&b.get_entity().pos.load());
+                a_dist.total_cmp(&b_dist)
+            })
+    }
+
+    fn target_is_valid(&self, mob: &dyn Mob) -> bool {
+        let Some(target) = &self.target else {
+            return false;
+        };
+        let entity = target.get_entity();
+        if !entity.is_alive()
+            || *entity.entity_type == EntityType::WITCH
+            || !entity
+                .entity_type
+                .has_tag(&tag::EntityType::MINECRAFT_RAIDERS)
+        {
+            return false;
+        }
+        let follow_range = mob
+            .get_mob_entity()
+            .living_entity
+            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+        mob.get_entity()
+            .pos
+            .load()
+            .squared_distance_to_vec(&entity.pos.load())
+            <= follow_range * follow_range
+            && mob.has_line_of_sight(entity)
+    }
+}
+
+impl Goal for WitchHealRaidersGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        let Some(witch) = self.witch.upgrade() else {
+            return false;
+        };
+        if witch.heal_raider_cooldown.load(Ordering::Relaxed) > 0
+            || !mob.get_random().random::<bool>()
+        {
+            return false;
+        }
+        if !mob
+            .as_raider()
+            .is_some_and(|raider| raider.has_active_raid())
+        {
+            return false;
+        }
+        self.target = Self::find_target(mob);
+        self.target.is_some()
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.target_is_valid(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        mob.set_mob_target(self.target.clone());
+        if let Some(witch) = self.witch.upgrade() {
+            witch
+                .heal_raider_cooldown
+                .store(to_goal_ticks(Self::DEFAULT_COOLDOWN), Ordering::Relaxed);
+        }
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        mob.set_mob_target(None);
+        self.target = None;
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::TARGET
+    }
+}
+
+fn witch_can_attack_players(mob: &dyn Mob) -> bool {
+    mob.cast_any()
+        .downcast_ref::<WitchEntity>()
+        .is_none_or(|witch| witch.heal_raider_cooldown.load(Ordering::Relaxed) <= 0)
+}
+
 /// Represents a Witch, a hostile ranged mob that throws splash potions and drinks restorative potions.
 ///
 /// Wiki: <https://minecraft.wiki/w/Witch>
@@ -57,6 +187,7 @@ pub struct WitchEntity {
     pub raider_data: RaiderData,
     drinking_potion: AtomicBool,
     using_time: AtomicI32,
+    heal_raider_cooldown: AtomicI32,
 }
 
 impl WitchEntity {
@@ -68,12 +199,14 @@ impl WitchEntity {
             raider_data: RaiderData::default(),
             drinking_potion: AtomicBool::new(false),
             using_time: AtomicI32::new(0),
+            heal_raider_cooldown: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(witch);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
+        let heal_weak: Weak<WitchEntity> = Arc::downgrade(&mob_arc);
         let ranged_weak: Weak<dyn RangedAttackMob> = {
             let ranged_arc: Arc<dyn RangedAttackMob> = mob_arc.clone();
             Arc::downgrade(&ranged_arc)
@@ -112,9 +245,11 @@ impl WitchEntity {
                     entity_type.has_tag(&tag::EntityType::MINECRAFT_RAIDERS)
                 })),
             );
+            target_selector.add_goal(2, Box::new(WitchHealRaidersGoal::new(heal_weak)));
             target_selector.add_goal(
-                2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+                3,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true)
+                    .gated_by(witch_can_attack_players),
             );
         };
 
@@ -154,7 +289,21 @@ impl WitchEntity {
 
         let mut potion = &Potion::HARMING;
 
-        if let Some(target_living) = target.get_living_entity() {
+        if target
+            .get_mob()
+            .is_some_and(|mob| mob.as_raider().is_some())
+        {
+            // Vanilla `Witch.performRangedAttack`: support raiders instead of attacking them.
+            let health = target
+                .get_living_entity()
+                .map_or(0.0, |living| living.health.load());
+            potion = if health <= 4.0 {
+                &Potion::HEALING
+            } else {
+                &Potion::REGENERATION
+            };
+            self.set_mob_target(None);
+        } else if let Some(target_living) = target.get_living_entity() {
             let r: f32 = rand::random();
             if dist >= 8.0 && !target_living.has_effect(&StatusEffect::SLOWNESS) {
                 potion = &Potion::SLOWNESS;
@@ -230,6 +379,12 @@ impl Mob for WitchEntity {
         let entity = &self.mob_entity.living_entity.entity;
         let living = &self.mob_entity.living_entity;
         let world = entity.world.load();
+
+        let cooldown = self.heal_raider_cooldown.load(Ordering::Relaxed);
+        if cooldown > 0 {
+            self.heal_raider_cooldown
+                .store(cooldown - 1, Ordering::Relaxed);
+        }
 
         if self.is_drinking_potion() {
             let remaining = self.using_time.fetch_sub(1, Ordering::Relaxed) - 1;

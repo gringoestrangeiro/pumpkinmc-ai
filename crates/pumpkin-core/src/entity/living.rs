@@ -3458,6 +3458,12 @@ impl LivingEntity {
                     }
                 }
 
+                if let Some(attacker) = cause.or(source)
+                    && let Some(attacker_mob) = attacker.get_mob()
+                {
+                    attacker_mob.blocked_by_item(self as &dyn EntityBase);
+                }
+
                 return false;
             }
         }
