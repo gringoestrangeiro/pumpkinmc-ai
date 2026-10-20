@@ -1,23 +1,23 @@
 # Parity Tracking
 
 **Last updated:** 2026-10-20
-**Fork code commit:** `2140492cb`
+**Fork code commit:** `b5d232b02`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
 
 The public PumpkinMC tracker had **564 entries: 402 done, 155 partial, 7 planned**. Two of those planned rows are `/publish` and `/unpublish`, which vanilla registers only for the integrated server. They are excluded from the dedicated-server target, so the in-scope baseline is **562 entries: 402 done, 155 partial, 5 planned**, or **71.5%**.
 
-This fork now has **487 done, 73 partial, 2 planned** in the **theoretical code-complete** count, or **86.7%**. That count includes Wave 1 and Wave 2 code that is implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
+This fork now has **494 done, 66 partial, 2 planned** in the **theoretical code-complete** count, or **87.9%**. That count includes Wave 1, Wave 2, and the first Wave 3 rows, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
 
 | Metric | Upstream | This fork (theoretical) | Delta |
 | :--- | ---: | ---: | ---: |
 | In-scope tracker entries | 562 | 562 | 0 |
-| Done | 402 | 487 | +85 |
-| Partial | 155 | 73 | -82 |
+| Done | 402 | 494 | +92 |
+| Partial | 155 | 66 | -89 |
 | Planned | 5 | 2 | -3 |
-| Strict completion, done only | 71.5% | 86.7% | +15.2 pp |
-| Weighted completion, partial = 0.5 | 85.3% | 93.2% | +7.9 pp |
+| Strict completion, done only | 71.5% | 87.9% | +16.4 pp |
+| Weighted completion, partial = 0.5 | 85.3% | 93.8% | +8.5 pp |
 
 ## What the percentage means
 
@@ -33,22 +33,22 @@ The tracker's green entries still mean only "an implementation source exists". T
 
 Commit `798734a3a` repairs both paths. They stay counted as done, but they now have code, game rules, and dispatch tests behind them.
 
-**75 tracker rows are still open** (73 partial and 2 planned). The theoretical percentage is not a claim that those rows or the 487 done rows behave correctly in-game.
+**68 tracker rows are still open** (66 partial and 2 planned). The theoretical percentage is not a claim that those rows or the 494 done rows behave correctly in-game.
 
 ## Per-category status
 
 | Category | Entries | Done | Partial | Planned | Done % |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Blocks | 196 | 183 | 13 | 0 | 93.4% |
+| Blocks | 196 | 190 | 6 | 0 | 96.9% |
 | Entities | 160 | 106 | 54 | 0 | 66.3% |
 | Commands | 94 | 92 | 1 | 1 | 97.9% |
 | Items | 55 | 53 | 2 | 0 | 96.4% |
 | Redstone | 27 | 26 | 1 | 0 | 96.3% |
 | World | 16 | 14 | 2 | 0 | 87.5% |
 | Combat | 14 | 13 | 0 | 1 | 92.9% |
-| **Total** | **562** | **487** | **73** | **2** | **86.7%** |
+| **Total** | **562** | **494** | **66** | **2** | **87.9%** |
 
-Entities are still the dominant gap. They are 54 of the 75 open rows, which is why mob AI work moves the tracker percentage much more than block edge cases do.
+Entities are still the dominant gap. They are 54 of the 68 open rows, which is why mob AI work moves the tracker percentage much more than block edge cases do.
 
 ## Rows closed or repaired by this fork
 
@@ -119,6 +119,18 @@ Wave 2 closes 22 more rows in the theoretical count and leaves the live checks b
 
 The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity Fishing Bobber (the same fishing-loot fix as Fishing Rod), 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball remains deferred.
 
+## Wave 3 (in progress)
+
+| Row | Work | Live check |
+| :--- | :--- | :--- |
+| Chests | Cat sitting on the lid now blocks opening, matching `ChestBlock.isCatSittingOnChest`. | Sit a tamed cat on a chest and right-click it. |
+| Conduit | Code audit: frame activation, conduit power, attack target and destroy range are present. | Activate a conduit frame and damage a hostile mob nearby. |
+| Dragon Egg | Code audit: teleport, falling and use/attack paths are present. | Hit and right-click the egg; confirm teleport and fall. |
+| Sea Pickles | Code audit: bonemeal, placement and waterlogged support are present. | Bonemeal a pickle on coral; check light and placement. |
+| Fire | Hardcoded increased-burnout biome list matches the eight `gameplay/increased_fire_burnout` biomes in the 26.3 data; the TODO is stale. | Burn in swamp/jungle vs plains and compare burnout. |
+| Lily Pad | Placement now uses the fluid tag instead of testing a block against a fluid tag. | Place a lily pad on water and on a tagged support block. |
+| Infested Blocks | Silk Touch now suppresses the silverfish spawn; normal breaks still spawn it. | Break infested stone with and without Silk Touch. |
+
 ## Command parity audit
 
 Vanilla 26.3 registers **87 root commands** for a dedicated server once the dev-only commands are excluded. Pumpkin registers **86** of them.
@@ -162,10 +174,10 @@ The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562
 
 ## Open gaps by workstream
 
-The 73 partial and 2 planned rows are mapped to roadmap tasks in Appendix B. The largest clusters are:
+The 66 partial and 2 planned rows are mapped to roadmap tasks in Appendix B. The largest clusters are:
 
 - **Entities:** 54 partial rows, mostly mob AI, pathfinding, and missing interactions.
-- **Blocks:** 13 partial rows, mostly block-specific edge cases and world interaction.
+- **Blocks:** 6 partial rows (Beehive & Bee Nest, Sculk Catalyst, Moving Piston, Piston Head, Pistons, Dispenser).
 - **Redstone:** 1 partial row (pistons).
 - **World:** 2 partial rows (world saving and moved-block persistence).
 - **Items:** 2 partial rows (Mace and Elytra).

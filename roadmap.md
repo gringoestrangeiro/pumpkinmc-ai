@@ -4,7 +4,7 @@
 
 **Snapshot date:** 2026-10-20.
 
-**Repository state:** fork `fork-ai-main` code tip `2140492cb`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 2 code is merged; the remaining work is Wave 3 onward plus live checks. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` code tip `b5d232b02`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 3 is in progress; the remaining work is the rest of Wave 3 onward plus live checks. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -2727,7 +2727,11 @@ Owner roles here match the workstream that owns the file. "Code" means read agai
 
 #### Wave 2 close-out (2026-10-20)
 
-Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod and Fishing Bobber (2); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total: **487 / 73 / 2 = 86.7%**; verified total remains **415 / 143 / 4** until live checks run.
+Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod and Fishing Bobber (2); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total after Wave 2: **487 / 73 / 2 = 86.7%**; verified total remains **415 / 143 / 4** until live checks run.
+
+#### Wave 3 progress (2026-10-20)
+
+Wave 3 has started directly with the low-risk block rows. Merged at `b5d232b02`: Chests (cat on lid blocks opening), Lily Pad (fluid-tag support), Infested Blocks (Silk Touch suppresses silverfish). Code-audited and closed theoretically: Conduit, Dragon Egg, Sea Pickles, Fire (the hardcoded biome list matches the eight 26.3 increased-burnout biomes). That is **7 rows** and moves the theoretical total to **494 / 66 / 2 = 87.9%**. Still open in Wave 3: Mace, Elytra, Beehive & Bee Nest, Sculk Catalyst, Dispenser, the piston cluster, `/locate`, world saving, and the `/jfr` + 1.8 combat deviation write-ups.
 
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
@@ -3220,7 +3224,7 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 71 more rows, so the current open list is **73 partial + 2 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 72 more rows, and the first Wave 3 rows closed 7, so the current open list is **66 partial + 2 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |
