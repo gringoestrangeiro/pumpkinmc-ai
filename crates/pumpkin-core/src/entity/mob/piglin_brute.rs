@@ -3,28 +3,113 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+use crossbeam::atomic::AtomicCell;
 use pumpkin_data::Block;
+use pumpkin_data::dimension::Dimension;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
 
 use crate::entity::{
     Entity, EntityBase,
-    ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal,
-        revenge::RevengeGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+    ai::{
+        brain::memory::{codec, global_pos::GlobalPos, value::MemoryValue},
+        goal::{
+            Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
+            look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
+            open_door::OpenDoorGoal, revenge::RevengeGoal, swim::SwimGoal,
+            wander_around::WanderAroundGoal,
+        },
+        pathfinder::NavigatorGoal,
     },
     mob::{Mob, MobEntity},
 };
 use crate::world::World;
 
+/// Vanilla `StrollToPoi(HOME, 0.6, 2, 100)`: walk back to the remembered bastion
+/// when it is between two and one hundred blocks away.
+struct StrollToHomeGoal {
+    speed: f64,
+}
+
+impl StrollToHomeGoal {
+    fn move_to_home(&self, mob: &dyn Mob) {
+        let Some(home) = mob.get_home_pos() else {
+            return;
+        };
+        let mob_pos = mob.get_entity().pos.load();
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_progress(NavigatorGoal::new(
+                mob_pos,
+                home.to_centered_f64(),
+                self.speed,
+            ));
+    }
+
+    fn distance_sq(mob: &dyn Mob) -> Option<f64> {
+        let home = mob.get_home_pos()?;
+        Some(
+            mob.get_entity()
+                .pos
+                .load()
+                .squared_distance_to_vec(&home.to_centered_f64()),
+        )
+    }
+}
+
+impl Goal for StrollToHomeGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        if mob
+            .get_mob_entity()
+            .position_target_range
+            .load(Ordering::Relaxed)
+            == -1
+        {
+            return false;
+        }
+        Self::distance_sq(mob)
+            .is_some_and(|distance| (2.0f64 * 2.0..=100.0f64 * 100.0).contains(&distance))
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        Self::distance_sq(mob).is_some_and(|distance| distance > 4.0) && !mob.is_navigator_idle()
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.move_to_home(mob);
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        if mob.is_navigator_idle() {
+            self.move_to_home(mob);
+        }
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stop();
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE
+    }
+}
+
 pub struct PiglinBruteEntity {
     pub mob_entity: MobEntity,
     pub immune_to_zombification: AtomicBool,
     pub time_in_overworld: AtomicI32,
+    /// Vanilla stores this in the brain's `minecraft:home` memory.
+    home: AtomicCell<Option<GlobalPos>>,
 }
 
 impl PiglinBruteEntity {
@@ -37,6 +122,7 @@ impl PiglinBruteEntity {
             mob_entity,
             immune_to_zombification: AtomicBool::new(false),
             time_in_overworld: AtomicI32::new(0),
+            home: AtomicCell::new(None),
         };
         let mob_arc = Arc::new(piglin);
         let mob_weak: Weak<dyn Mob> = {
@@ -54,7 +140,8 @@ impl PiglinBruteEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(OpenDoorGoal::new(true)));
             goal_selector.add_goal(2, Box::new(MeleeAttackGoal::new(1.0, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(4, Box::new(StrollToHomeGoal { speed: 0.6 }));
+            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.6)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
@@ -86,6 +173,32 @@ impl PiglinBruteEntity {
         };
 
         mob_arc
+    }
+
+    fn set_home(&self, home: Option<GlobalPos>, world: &World) {
+        self.home.store(home);
+        if let Some(home) = home
+            && home.dimension.id == world.dimension.id
+        {
+            self.mob_entity.position_target.store(home.pos);
+            self.mob_entity.position_target_range.store(5);
+        } else {
+            self.mob_entity.position_target_range.store(-1);
+        }
+    }
+
+    fn init_home(&self, world: &World) {
+        if self.home.load().is_some() {
+            return;
+        }
+        let Some(dimension) = Dimension::from_name(world.dimension.minecraft_name) else {
+            return;
+        };
+        let home = GlobalPos::new(
+            dimension,
+            self.mob_entity.living_entity.entity.block_pos.load(),
+        );
+        self.set_home(Some(home), world);
     }
 
     #[must_use]
@@ -177,6 +290,10 @@ impl Mob for PiglinBruteEntity {
         &self.mob_entity
     }
 
+    fn get_home(&self) -> Option<BlockPos> {
+        self.home.load().map(|home| home.pos)
+    }
+
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
         if self.is_immune_to_zombification() {
@@ -196,6 +313,15 @@ impl Mob for PiglinBruteEntity {
             nbt.put_int("TimeInOverworld", time_in_overworld);
         }
         nbt.put_bool("CanPickUpLoot", true);
+        if let Some(home) = self.home.load()
+            && let Some(tag) = (codec::GLOBAL_POS.encode)(&home as &dyn MemoryValue)
+        {
+            let mut memories = NbtCompound::new();
+            memories.put("minecraft:home", tag);
+            let mut brain = NbtCompound::new();
+            brain.put("memories", NbtTag::Compound(memories));
+            nbt.put("Brain", NbtTag::Compound(brain));
+        }
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
@@ -204,6 +330,16 @@ impl Mob for PiglinBruteEntity {
         }
         if let Some(time) = nbt.get_int("TimeInOverworld") {
             self.time_in_overworld.store(time, Ordering::Relaxed);
+        }
+        if let Some(tag) = nbt
+            .get_compound("Brain")
+            .and_then(|brain| brain.get_compound("memories"))
+            .and_then(|memories| memories.get("minecraft:home"))
+            && let Some(value) = (codec::GLOBAL_POS.decode)(tag)
+            && let Some(home) = value.as_any().downcast_ref::<GlobalPos>()
+        {
+            let world = self.mob_entity.living_entity.entity.world.load();
+            self.set_home(Some(*home), &world);
         }
     }
 
@@ -214,6 +350,7 @@ impl Mob for PiglinBruteEntity {
         }
 
         let world = entity.world.load();
+        self.init_home(&world);
         if self.is_converting(&world) {
             let time = self.time_in_overworld.fetch_add(1, Ordering::Relaxed) + 1;
             if time > Self::CONVERSION_TIME {
