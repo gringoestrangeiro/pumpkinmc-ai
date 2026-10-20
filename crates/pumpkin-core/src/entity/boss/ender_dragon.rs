@@ -1,6 +1,7 @@
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::{Block, BlockStateId};
+use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::{chunk::ChunkHeightmapType, world::BlockFlags};
@@ -238,6 +239,24 @@ impl EnderDragonEntity {
                 entity.pos.load(),
                 &EntityType::ENDER_DRAGON,
             );
+            // Vanilla `EnderDragon` gives every part its own dimensions; the dragon
+            // entity type's 16x8 box would make every contact check overlap.
+            let (width, height) = match i - 1 {
+                0 => (1.0, 1.0),     // head
+                1 => (3.0, 3.0),     // neck
+                2 => (5.0, 3.0),     // body
+                3..=5 => (2.0, 2.0), // tails
+                _ => (4.0, 2.0),     // wings
+            };
+            let dimensions = EntityDimensions::new(width, height, 0.0);
+            part_entity.entity_dimension.store(dimensions);
+            let part_pos = part_entity.pos.load();
+            part_entity.bounding_box.store(BoundingBox::new_from_pos(
+                part_pos.x,
+                part_pos.y,
+                part_pos.z,
+                &dimensions,
+            ));
             let part = Arc::new(EnderDragonPart::new(part_entity, dragon_uuid));
             world.add_entity_lookup_only(part.clone() as Arc<dyn EntityBase>);
             parts.push(part);
@@ -582,40 +601,84 @@ impl EnderDragonEntity {
 
     fn handle_player_collisions(&self) {
         let world = self.mob_entity.living_entity.entity.world.load();
+        let body = self.parts[2].entity.bounding_box.load();
+        let xm = f64::midpoint(body.min.x, body.max.x);
+        let zm = f64::midpoint(body.min.z, body.max.z);
+        let sitting = self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_sitting();
+        // Vanilla skips every part contact check while the dragon is hurt.
+        if self
+            .mob_entity
+            .living_entity
+            .hurt_cooldown
+            .load(Ordering::Relaxed)
+            > 0
+        {
+            return;
+        }
 
-        let dragon_bbox = self.mob_entity.living_entity.entity.bounding_box.load();
-        let xm = f64::midpoint(dragon_bbox.min.x, dragon_bbox.max.x);
-        let zm = f64::midpoint(dragon_bbox.min.z, dragon_bbox.max.z);
+        // Vanilla `EnderDragon.tick`: wings push and can deal 5 damage, while
+        // the head and neck deal 10 damage without knockback.
+        for wing in [&self.parts[6], &self.parts[7]] {
+            let wing_box = wing.entity.bounding_box.load().expand(4.0, 2.0, 4.0);
+            let wing_box = BoundingBox::new(
+                Vector3::new(wing_box.min.x, wing_box.min.y - 2.0, wing_box.min.z),
+                Vector3::new(wing_box.max.x, wing_box.max.y - 2.0, wing_box.max.z),
+            );
 
-        for player in world.players.load().iter() {
-            if player
-                .living_entity
-                .entity
-                .bounding_box
-                .load()
-                .intersects(&dragon_bbox)
-            {
-                let player_pos = player.get_entity().pos.load();
-                let xd = player_pos.x - xm;
-                let zd = player_pos.z - zm;
+            for target in world.get_entities_and_players_at_box(&wing_box) {
+                if !self.is_dragon_contact_target(&target) {
+                    continue;
+                }
+
+                let target_entity = target.get_entity();
+                let target_pos = target_entity.pos.load();
+                let xd = target_pos.x - xm;
+                let zd = target_pos.z - zm;
                 let dd = (xd * xd + zd * zd).max(0.1);
 
-                player
-                    .living_entity
-                    .entity
-                    .apply_knockback(4.0, xd / dd, zd / dd);
-                player.get_entity().send_velocity();
+                target_entity.apply_knockback(4.0, xd / dd, zd / dd);
+                target_entity.send_velocity();
 
-                if !self
-                    .phase
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_sitting()
-                {
-                    player.damage(self, 5.0, DamageType::MOB_ATTACK);
+                if !sitting {
+                    let now = world.level_info.load().day_time;
+                    let recently_hurt = target.get_living_entity().is_some_and(|living| {
+                        living.last_hurt_by_mob_time.load(Ordering::Relaxed) >= now - 2
+                    });
+                    if !recently_hurt {
+                        target.damage(self, 5.0, DamageType::MOB_ATTACK);
+                    }
                 }
             }
         }
+
+        for part in [&self.parts[0], &self.parts[1]] {
+            let part_box = part.entity.bounding_box.load().expand(1.0, 1.0, 1.0);
+            for target in world.get_entities_and_players_at_box(&part_box) {
+                if self.is_dragon_contact_target(&target) {
+                    target.damage(self, 10.0, DamageType::MOB_ATTACK);
+                }
+            }
+        }
+    }
+
+    fn is_dragon_contact_target(&self, target: &Arc<dyn EntityBase>) -> bool {
+        if target.get_entity().entity_id == self.mob_entity.living_entity.entity.entity_id
+            || target.get_living_entity().is_none()
+            || (self as &dyn EntityBase).is_allied_to(target.as_ref())
+        {
+            return false;
+        }
+        if let Some(player) = target.get_player() {
+            return !matches!(
+                player.gamemode.load(),
+                pumpkin_util::GameMode::Creative | pumpkin_util::GameMode::Spectator
+            );
+        }
+        true
     }
 
     fn tick_crystal_healing(&self) {

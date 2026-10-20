@@ -27,8 +27,8 @@ use crate::{
     entity::{
         Entity, EntityBase,
         ai::goal::{
-            look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-            revenge::RevengeGoal,
+            active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
+            look_at_entity::LookAtEntityGoal, revenge::RevengeGoal,
         },
         mob::{Mob, MobEntity},
         projectile::wither_skull::WitherSkullEntity,
@@ -94,6 +94,17 @@ impl WitherEntity {
             goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
 
             target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
+            // Vanilla `WitherBoss.registerGoals`: the primary head picks any attackable
+            // living entity except the wither's own friends.
+            target_selector.add_goal(
+                2,
+                ActiveTargetGoal::predicated(&mob_arc.mob_entity, 0, false, |target, _world| {
+                    !target
+                        .get_entity()
+                        .entity_type
+                        .has_tag(&tag::EntityType::MINECRAFT_WITHER_FRIENDS)
+                }),
+            );
         };
 
         mob_arc
