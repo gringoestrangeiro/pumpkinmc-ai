@@ -921,6 +921,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn post_tick(&self) {}
 
+    /// Vanilla `Mob.pushEntities`. Bats override it to do nothing.
+    fn pushes_entities(&self) -> bool {
+        true
+    }
+
     fn get_preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
         None
     }
@@ -963,6 +968,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn can_attack_with_owner(&self, _target: &dyn EntityBase, _owner: &dyn EntityBase) -> bool {
         true
+    }
+
+    /// Vanilla `Mob.isPushable`.
+    fn is_pushable(&self) -> bool {
+        self.get_mob_entity().living_entity.is_pushable()
     }
 
     fn get_mob_gravity(&self) -> f64 {
@@ -1333,7 +1343,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     }
 
     fn is_pushable(&self) -> bool {
-        self.get_mob_entity().living_entity.is_pushable()
+        Mob::is_pushable(self)
     }
 
     fn on_lightning_strike(
@@ -1413,7 +1423,6 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         //
         // TODO NoAI: move these vanilla `customServerAiStep` parts of `mob_tick`
         // into `custom_server_ai_step`:
-        // Bat `tick_flying`/`tick_roosting` (not `tick_ambient_sound`)
         // Bee sting death (`time_since_sting`)
         // Armadillo scute drop, state switching, `danger_detected_recently_ticks`
         // (not `in_state_ticks`, that is vanilla `tick`)

@@ -84,7 +84,7 @@ impl BatEntity {
             if !self.is_roosting() || rand::random_range(0..4) == 0 {
                 world.play_sound_fine(
                     Sound::EntityBatAmbient,
-                    SoundCategory::Ambient,
+                    SoundCategory::Neutral,
                     pos,
                     0.1,
                     0.95,
@@ -95,6 +95,7 @@ impl BatEntity {
 
     fn tick_roosting(&self, world: &World, above_pos: &BlockPos, pos: &Vector3<f64>) {
         let entity = &self.mob_entity.living_entity.entity;
+        let is_silent = entity.is_silent();
         let above_state = world.get_block_state(above_pos);
         if above_state.is_solid_block() {
             let rotate_head = {
@@ -105,28 +106,37 @@ impl BatEntity {
                 entity.head_yaw.store(head_yaw);
             }
 
-            if world
-                .get_closest_player(*pos, CLOSE_PLAYER_DISTANCE)
-                .is_some()
-            {
+            // Vanilla `BAT_RESTING_TARGETING`: a player that is part of the game and
+            // visible from here.
+            let player_near = world
+                .get_nearest_player(*pos, CLOSE_PLAYER_DISTANCE, |player| {
+                    player.living_entity.is_part_of_game()
+                        && entity.has_line_of_sight(player.get_entity())
+                })
+                .is_some();
+            if player_near {
                 self.set_roosting(false);
+                if !is_silent {
+                    world.play_sound_fine(
+                        Sound::EntityBatTakeoff,
+                        SoundCategory::Neutral,
+                        pos,
+                        0.1,
+                        0.95,
+                    );
+                }
+            }
+        } else {
+            self.set_roosting(false);
+            if !is_silent {
                 world.play_sound_fine(
                     Sound::EntityBatTakeoff,
-                    SoundCategory::Ambient,
+                    SoundCategory::Neutral,
                     pos,
                     0.1,
                     0.95,
                 );
             }
-        } else {
-            self.set_roosting(false);
-            world.play_sound_fine(
-                Sound::EntityBatTakeoff,
-                SoundCategory::Ambient,
-                pos,
-                0.1,
-                0.95,
-            );
         }
     }
 
@@ -150,15 +160,17 @@ impl BatEntity {
                 || rng.random_range(0u32..30) == 0
                 || hanging_pos.is_some_and(|hp| {
                     let dx = f64::from(hp.0.x) + 0.5 - pos.x;
-                    let dy = f64::from(hp.0.y) + 0.1 - pos.y;
+                    let dy = f64::from(hp.0.y) + 0.5 - pos.y;
                     let dz = f64::from(hp.0.z) + 0.5 - pos.z;
                     dx * dx + dy * dy + dz * dz < 4.0
                 });
             let new_target = should_pick.then(|| {
                 BlockPos::new(
-                    pos.x as i32 + rng.random_range(0i32..7) - rng.random_range(0i32..7),
-                    (pos.y + f64::from(rng.random_range(0i32..6)) - 2.0) as i32,
-                    pos.z as i32 + rng.random_range(0i32..7) - rng.random_range(0i32..7),
+                    (pos.x + f64::from(rng.random_range(0i32..7) - rng.random_range(0i32..7)))
+                        .floor() as i32,
+                    (pos.y + f64::from(rng.random_range(0i32..6)) - 2.0).floor() as i32,
+                    (pos.z + f64::from(rng.random_range(0i32..7) - rng.random_range(0i32..7)))
+                        .floor() as i32,
                 )
             });
             let try_roost = rng.random_range(0u32..100) == 0;
@@ -166,16 +178,7 @@ impl BatEntity {
         };
 
         if should_pick_new {
-            if let Some(target) = new_target {
-                let target_state = world.get_block_state(&target);
-                if target_state.is_air() && target.0.y > world.dimension.min_y {
-                    *hanging_pos = Some(target);
-                } else {
-                    *hanging_pos = None;
-                }
-            } else {
-                *hanging_pos = None;
-            }
+            *hanging_pos = new_target;
         }
 
         if let Some(target) = *hanging_pos {
@@ -195,6 +198,10 @@ impl BatEntity {
             let yaw_diff = pumpkin_util::math::wrap_degrees(yaw - entity.yaw.load());
             entity.yaw.store(entity.yaw.load() + yaw_diff);
         }
+        self.mob_entity
+            .living_entity
+            .movement_input
+            .store(Vector3::new(0.0, 0.0, 0.5));
         drop(hanging_pos);
 
         if try_roost {
@@ -228,14 +235,28 @@ impl Mob for BatEntity {
         &self.mob_entity
     }
 
+    fn is_pushable(&self) -> bool {
+        false
+    }
+
+    fn pushes_entities(&self) -> bool {
+        false
+    }
+
     fn mob_tick(&self, _caller: &dyn EntityBase) {
+        let entity = &self.mob_entity.living_entity.entity;
+        let world = entity.world.load();
+        let pos = entity.pos.load();
+
+        self.tick_ambient_sound(&world, &pos);
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         let block_pos = entity.block_pos.load();
         let above_pos = BlockPos::new(block_pos.0.x, block_pos.0.y + 1, block_pos.0.z);
         let world = entity.world.load();
         let pos = entity.pos.load();
-
-        self.tick_ambient_sound(&world, &pos);
 
         if self.is_roosting() {
             self.tick_roosting(&world, &above_pos, &pos);
@@ -245,35 +266,23 @@ impl Mob for BatEntity {
     }
 
     fn post_tick(&self) {
+        let entity = &self.mob_entity.living_entity.entity;
         if self.is_roosting() {
-            let entity = &self.mob_entity.living_entity.entity;
             entity.velocity.store(Vector3::new(0.0, 0.0, 0.0));
             let pos = entity.pos.load();
             let snapped_y = (pos.y.floor()) + 1.0 - f64::from(entity.height());
             entity.set_pos(Vector3::new(pos.x, snapped_y, pos.z));
+        } else {
+            let velo = entity.velocity.load();
+            entity
+                .velocity
+                .store(Vector3::new(velo.x, velo.y * 0.6, velo.z));
         }
-    }
-
-    fn get_mob_gravity(&self) -> f64 {
-        0.0
-    }
-
-    fn get_mob_y_velocity_drag(&self) -> Option<f64> {
-        Some(0.6)
     }
 
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
         if self.is_roosting() {
             self.set_roosting(false);
-            let entity = &self.mob_entity.living_entity.entity;
-            let pos = entity.pos.load();
-            entity.world.load().play_sound_fine(
-                Sound::EntityBatTakeoff,
-                SoundCategory::Ambient,
-                &pos,
-                0.1,
-                0.95,
-            );
         }
     }
 }
