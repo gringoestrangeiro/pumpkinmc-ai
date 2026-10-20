@@ -4,7 +4,7 @@
 
 **Snapshot date:** 2026-10-20.
 
-**Repository state:** fork `fork-ai-main` at `bf5edaf97`, 36 commits ahead of `origin/master` at `fb7c8e223`. Wave 1 code is merged; the docs and live checks are the remaining work. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` at `bf5edaf97` (code) / `6e0bcf7fd` (docs), 38 commits ahead of `origin/master` at `fb7c8e223`. Wave 1 code is merged; the docs and live checks are the remaining work. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
