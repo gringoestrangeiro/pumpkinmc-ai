@@ -9,12 +9,14 @@ use pumpkin_data::{
 };
 use pumpkin_macros::pumpkin_block_from_tag;
 use pumpkin_world::tick::TickPriority;
+use pumpkin_world::world::BlockFlags;
 
 use crate::block::entities::campfire::CampfireBlockEntity;
 use crate::{
     block::{
         BlockBehaviour, BlockIsReplacing, GetStateForNeighborUpdateArgs, OnEntityCollisionArgs,
-        OnPlaceArgs, PathComputationType, PlacedArgs, UseWithItemArgs, registry::BlockActionResult,
+        OnPlaceArgs, OnProjectileHitArgs, PathComputationType, PlacedArgs, UseWithItemArgs,
+        registry::BlockActionResult,
     },
     entity::EntityBase,
 };
@@ -146,11 +148,22 @@ impl BlockBehaviour for CampfireBlock {
         props.to_state_id(args.block)
     }
 
+    fn on_projectile_hit(&self, args: OnProjectileHitArgs<'_>) {
+        let state = args.world.get_block_state(args.position);
+        let mut props = CampfireLikeProperties::from_state_id(state.id);
+        if args.projectile.get_entity().is_on_fire() && !props.lit && !props.waterlogged {
+            props.lit = true;
+            args.world.set_block_state(
+                args.position,
+                props.to_state_id(args.block),
+                BlockFlags::NOTIFY_ALL,
+            );
+        }
+    }
+
     fn is_pathfindable(&self, _state: &BlockState, _computation_type: PathComputationType) -> bool {
         false
     }
-
-    // TODO: onProjectileHit
 }
 
 fn is_signal_fire_base_block(block: &Block) -> bool {

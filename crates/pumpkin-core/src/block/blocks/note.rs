@@ -1,3 +1,4 @@
+use crate::block::entities::skull::SkullBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
     AttackArgs, GetStateForNeighborUpdateArgs, NormalUseArgs, OnNeighborUpdateArgs, OnPlaceArgs,
@@ -5,6 +6,7 @@ use crate::block::{
 };
 use pumpkin_data::BlockStateId;
 use pumpkin_data::block_properties::{Axis, NoteblockInstrument};
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::{Block, BlockDirection, block_properties::NoteBlockLikeProperties};
@@ -37,6 +39,7 @@ impl NoteBlock {
                 return;
             }
             world.add_synced_block_event(*pos, 0, 0);
+            world.emit_game_event(GameEvent::NoteBlockPlay, pos.to_centered_f64());
         }
     }
     fn get_note_pitch(note: u16) -> f32 {
@@ -139,9 +142,25 @@ impl BlockBehaviour for NoteBlock {
         } else {
             1.0 // default pitch
         };
-        // check hasCustomSound
+        if instrument == NoteblockInstrument::CustomHead {
+            // Vanilla `NoteBlock.getCustomSoundId`: the sound comes from the head above.
+            let Some(sound) = get_custom_head_sound(args.world, &args.position.up()) else {
+                return false;
+            };
+            args.world.play_custom_sound(
+                &sound,
+                SoundCategory::Records,
+                &args.position.to_f64(),
+                3.0,
+                pitch,
+            );
+            return true;
+        }
+        let Some(sound) = convert_instrument_to_sound(instrument) else {
+            return false;
+        };
         args.world.play_sound_raw(
-            convert_instrument_to_sound(instrument) as u16,
+            sound as u16,
             SoundCategory::Records,
             &args.position.to_f64(),
             3.0,
@@ -175,8 +194,20 @@ impl BlockBehaviour for NoteBlock {
     }
 }
 
-const fn convert_instrument_to_sound(instrument: NoteblockInstrument) -> Sound {
-    match instrument {
+fn get_custom_head_sound(world: &World, pos: &BlockPos) -> Option<String> {
+    world
+        .get_block_entity(pos)?
+        .as_any()
+        .downcast_ref::<SkullBlockEntity>()?
+        .note_block_sound
+        .lock()
+        .ok()?
+        .clone()
+}
+
+/// `None` for custom heads, whose sound comes from the head's `note_block_sound`.
+const fn convert_instrument_to_sound(instrument: NoteblockInstrument) -> Option<Sound> {
+    Some(match instrument {
         NoteblockInstrument::Harp => Sound::BlockNoteBlockHarp,
         NoteblockInstrument::Basedrum => Sound::BlockNoteBlockBasedrum,
         NoteblockInstrument::Snare => Sound::BlockNoteBlockSnare,
@@ -199,12 +230,12 @@ const fn convert_instrument_to_sound(instrument: NoteblockInstrument) -> Sound {
         NoteblockInstrument::Dragon => Sound::BlockNoteBlockImitateEnderDragon,
         NoteblockInstrument::WitherSkeleton => Sound::BlockNoteBlockImitateWitherSkeleton,
         NoteblockInstrument::Piglin => Sound::BlockNoteBlockImitatePiglin,
-        NoteblockInstrument::CustomHead => Sound::UiButtonClick,
+        NoteblockInstrument::CustomHead => return None,
         NoteblockInstrument::Trumpet => Sound::BlockNoteBlockTrumpet,
         NoteblockInstrument::TrumpetExposed => Sound::BlockNoteBlockTrumpetExposed,
         NoteblockInstrument::TrumpetOxidized => Sound::BlockNoteBlockTrumpetOxidized,
         NoteblockInstrument::TrumpetWeathered => Sound::BlockNoteBlockTrumpetWeathered,
-    }
+    })
 }
 
 const fn is_base_block(instrument: NoteblockInstrument) -> bool {

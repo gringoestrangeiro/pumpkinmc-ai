@@ -126,7 +126,6 @@ use crate::block::blocks::redstone::lightning_rod::LightningRodBlock;
 use crate::block::blocks::redstone::observer::ObserverBlock;
 use crate::block::blocks::redstone::pressure_plate::plate::PressurePlateBlock;
 use crate::block::blocks::redstone::pressure_plate::weighted::WeightedPressurePlateBlock;
-use crate::block::blocks::redstone::rails::activator_rail::ActivatorRailBlock;
 use crate::block::blocks::redstone::rails::detector_rail::DetectorRailBlock;
 use crate::block::blocks::redstone::rails::powered_rail::PoweredRailBlock;
 use crate::block::blocks::redstone::rails::rail::RailBlock;
@@ -473,7 +472,6 @@ pub fn default_registry() -> Arc<BlockRegistry> {
 
     // Rails
     manager.register(RailBlock);
-    manager.register(ActivatorRailBlock);
     manager.register(DetectorRailBlock);
     manager.register(PoweredRailBlock);
 

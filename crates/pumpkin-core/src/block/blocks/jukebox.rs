@@ -11,6 +11,7 @@ use crate::entity::item::ItemEntity;
 use crate::world::World;
 use pumpkin_data::data_component_impl::JukeboxPlayableImpl;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::jukebox_song::JukeboxSong;
 use pumpkin_data::world::WorldEvent;
 use pumpkin_data::{Block, BlockStateId, block_properties::JukeboxLikeProperties};
@@ -93,6 +94,9 @@ impl BlockBehaviour for JukeboxBlock {
             Self::drop_record(args.position, args.world);
             // Stop the music and update block state
             Self::stop_playing(args.block, args.position, args.world);
+            // Vanilla `JukeboxBlockEntity.notifyItemChangedInJukebox`.
+            args.world
+                .emit_game_event(GameEvent::BlockChange, args.position.to_centered_f64());
             return BlockActionResult::Success;
         }
 
@@ -155,7 +159,7 @@ impl BlockBehaviour for JukeboxBlock {
             1,
         );
 
-        // TODO: world.emitGameEvent(GameEvent.BLOCK_CHANGE, pos, ...)
+        world.emit_game_event(GameEvent::BlockChange, args.position.to_centered_f64());
 
         BlockActionResult::Success
     }
@@ -169,10 +173,13 @@ impl BlockBehaviour for JukeboxBlock {
             .sync_world_event(WorldEvent::SoundStopJukeboxSong, *args.position, 0);
     }
 
-    /// Vanilla: `JukeboxBlock.onStateReplaced()` -> `ItemScatterer.onStateReplaced()`
-    fn on_state_replaced(&self, _args: OnStateReplacedArgs<'_>) {
-        // Vanilla calls ItemScatterer.onStateReplaced which updates comparators
-        // TODO: world.updateComparators(pos, block) when implemented
+    /// Vanilla: `JukeboxBlock.affectNeighborsAfterRemoval()` -> `Containers.updateNeighboursAfterDestroy()`,
+    /// plus the stop event from `JukeboxBlockEntity.setRemoved`.
+    fn on_state_replaced(&self, args: OnStateReplacedArgs<'_>) {
+        args.world
+            .update_neighbour_for_output_signal(args.position, args.block);
+        args.world
+            .emit_game_event(GameEvent::JukeboxStopPlay, args.position.to_centered_f64());
     }
 
     /// Vanilla: `JukeboxBlock.emitsRedstonePower()` returns true

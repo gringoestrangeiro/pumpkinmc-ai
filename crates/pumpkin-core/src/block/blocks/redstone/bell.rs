@@ -10,6 +10,7 @@ use crate::block::{
 use crate::world::World;
 use pumpkin_data::block_properties::HorizontalFacing;
 use pumpkin_data::block_properties::{AttachFace, BellAttachment, BellLikeProperties};
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::sound::SoundCategory;
 use pumpkin_data::tag::Taggable;
@@ -25,6 +26,7 @@ fn ring_bell(
     hit_direction: Option<HorizontalFacing>,
     entity: Option<Arc<dyn crate::entity::EntityBase>>,
 ) -> bool {
+    let game_event_source = entity.clone();
     let mut event = crate::plugin::block::bell_ring::BellRingEvent {
         block_pos: position,
         world: world.clone(),
@@ -58,7 +60,11 @@ fn ring_bell(
         2.0,
     );
 
-    //TODO Emit game event: BLOCK_CHANGE -> Send block update Packet
+    world.emit_game_event_with_source(
+        GameEvent::BlockChange,
+        position.to_centered_f64(),
+        game_event_source.as_deref(),
+    );
     true
 }
 

@@ -13,8 +13,10 @@ use crate::entity::EntityBase;
 use crate::entity::ai::random_pos::land_random_pos;
 use crate::entity::item::ItemEntity;
 use crate::entity::living::LivingEntity;
+use crate::entity::mob::Mob;
 use crate::entity::mob::piglin::{PiglinActivity, PiglinEntity};
 use crate::entity::player::Player;
+use crate::world::World;
 
 pub struct PiglinAi;
 
@@ -72,6 +74,35 @@ impl PiglinAi {
             return false;
         }
         rand::random::<f32>() < Self::PROBABILITY_OF_CELEBRATION_DANCE
+    }
+
+    /// Vanilla `PiglinAi.angerNearbyPiglins`: idle piglins within 16 blocks target the player.
+    pub fn anger_nearby_piglins(
+        world: &Arc<World>,
+        player: &Arc<Player>,
+        only_if_they_see_the_player: bool,
+    ) {
+        let search_box = player
+            .get_entity()
+            .bounding_box
+            .load()
+            .expand(16.0, 16.0, 16.0);
+        let player_entity = player.get_entity();
+        for entity in world.get_entities_at_box(&search_box) {
+            if entity.get_entity().entity_type.id != EntityType::PIGLIN.id {
+                continue;
+            }
+            let Some(piglin) = entity.cast_any().downcast_ref::<PiglinEntity>() else {
+                continue;
+            };
+            if piglin.activity.load() != PiglinActivity::Idle {
+                continue;
+            }
+            if only_if_they_see_the_player && !piglin.has_line_of_sight(player_entity) {
+                continue;
+            }
+            piglin.set_mob_target(Some(player.clone() as Arc<dyn EntityBase>));
+        }
     }
 
     #[must_use]

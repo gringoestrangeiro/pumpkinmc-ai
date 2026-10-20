@@ -12,7 +12,6 @@ use crate::world::World;
 
 mod common;
 
-pub mod activator_rail;
 pub mod detector_rail;
 pub mod powered_rail;
 pub mod rail;

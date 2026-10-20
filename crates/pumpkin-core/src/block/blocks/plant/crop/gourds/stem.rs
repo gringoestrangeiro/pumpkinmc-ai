@@ -114,10 +114,12 @@ impl BlockBehaviour for StemBlock {
                 let plant_block_pos = args.position.offset(dir.to_offset());
                 let plant_block_state = args.world.get_block_state(&plant_block_pos);
                 let under_block: &Block = args.world.get_block(&plant_block_pos.down());
-                if plant_block_state.is_air()
-                    && (under_block == &Block::FARMLAND
-                        || under_block.has_tag(&tag::Block::MINECRAFT_DIRT))
-                {
+                let fruit_support_tag = if block.id == Block::PUMPKIN_STEM.id {
+                    &tag::Block::MINECRAFT_SUPPORTS_PUMPKIN_STEM_FRUIT
+                } else {
+                    &tag::Block::MINECRAFT_SUPPORTS_MELON_STEM_FRUIT
+                };
+                if plant_block_state.is_air() && under_block.has_tag(fruit_support_tag) {
                     let attached_stem = Self::get_attached_stem(dir, block);
                     let gourd = Self::get_gourd(block);
                     args.world.set_block_state(
