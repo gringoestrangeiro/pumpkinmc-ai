@@ -36,7 +36,7 @@ impl AttackType {
         let held_item = player.inventory().held_item();
         let is_mace = held_item.item.id == pumpkin_data::item::Item::MACE.id;
 
-        if is_mace && !on_ground && fall_distance > 1.5 {
+        if is_mace && !on_ground && !entity.is_fall_flying() && fall_distance > 1.5 {
             return Self::MaceSmash;
         }
 

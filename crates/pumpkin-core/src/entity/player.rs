@@ -1443,7 +1443,20 @@ impl Player {
                     enchantment.modify_fall_based_damage(*level, &mut smash_bonus_per_block);
                 }
             }
-            damage += (1.5 + smash_bonus_per_block) * f64::from(fall_distance);
+            // Vanilla `MaceItem.getAttackDamageBonus` is piecewise above 3 and 8 blocks.
+            let fall_bonus = if fall_distance > 1.5 {
+                let distance = f64::from(fall_distance);
+                if distance > 8.0 {
+                    22.0 + (distance - 8.0)
+                } else if distance > 3.0 {
+                    12.0 + 2.0 * (distance - 3.0)
+                } else {
+                    4.0 * distance
+                }
+            } else {
+                0.0
+            };
+            damage += fall_bonus + smash_bonus_per_block * f64::from(fall_distance);
         }
 
         if !victim.damage_with_context(
@@ -1466,6 +1479,31 @@ impl Player {
                 &self.living_entity.entity.pos.load(),
             );
             return;
+        }
+
+        if is_mace_smash {
+            // Vanilla `MaceItem.hurtEnemy`: the smash pushes nearby living entities away.
+            let radius = 3.5;
+            let search_box = BoundingBox::new(
+                Vector3::new(pos.x - radius, pos.y - radius, pos.z - radius),
+                Vector3::new(pos.x + radius, pos.y + radius, pos.z + radius),
+            );
+            let attacker_pos = self.living_entity.entity.pos.load();
+            for other in world.get_entities_and_players_at_box(&search_box) {
+                let other_entity = other.get_entity();
+                if other_entity.entity_id == self.living_entity.entity.entity_id
+                    || other_entity.entity_id == victim_entity.entity_id
+                    || other.get_living_entity().is_none()
+                {
+                    continue;
+                }
+                let delta = other_entity.pos.load() - attacker_pos;
+                let horizontal = Vector3::new(delta.x, 0.0, delta.z);
+                let length = horizontal.length();
+                if length > 1.0e-6 {
+                    other_entity.knockback(0.5, -horizontal.x / length, -horizontal.z / length);
+                }
+            }
         }
 
         if is_mace_smash && damage >= 100.0 {
