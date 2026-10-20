@@ -24,6 +24,7 @@ mod active_chunks;
 pub mod brightness;
 pub mod chunker;
 pub mod explosion;
+pub(crate) mod game_event;
 pub mod generation_cache;
 pub mod loot;
 pub mod map;
@@ -71,6 +72,7 @@ use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::dimension::Dimension;
 use pumpkin_data::entity::MobCategory;
 use pumpkin_data::fluid::FluidState;
+use pumpkin_data::game_event::GameEvent as DataGameEvent;
 use pumpkin_data::game_rules::{GameRule, GameRuleValue};
 use pumpkin_data::noise_settings::NoiseSettings;
 use pumpkin_data::{
@@ -6868,14 +6870,27 @@ impl World {
         Self::broadcast_bedrock_grouped(be_packet, bedrock_recipients.into_iter());
     }
 
-    pub fn emit_game_event(&self, event_key: impl Into<String>, position: Vector3<f64>) {
-        let mut event = crate::plugin::api::events::world::generic_game::GenericGameEvent::new(
-            event_key.into(),
-            position,
-        );
+    pub fn emit_game_event(self: &Arc<Self>, event: DataGameEvent, position: Vector3<f64>) {
+        self.emit_game_event_with_source(event, position, None);
+    }
+
+    pub fn emit_game_event_with_source(
+        self: &Arc<Self>,
+        event: DataGameEvent,
+        position: Vector3<f64>,
+        source: Option<&dyn EntityBase>,
+    ) {
+        let mut plugin_event =
+            crate::plugin::api::events::world::generic_game::GenericGameEvent::new(
+                event.name().to_string(),
+                position,
+            );
         if let Some(server) = self.server.upgrade() {
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            server
+                .plugin_manager
+                .fire_blocking(&server, &mut plugin_event);
         }
+        game_event::dispatch(self, event, position, source);
     }
 
     pub async fn unload(self: &Arc<Self>) {

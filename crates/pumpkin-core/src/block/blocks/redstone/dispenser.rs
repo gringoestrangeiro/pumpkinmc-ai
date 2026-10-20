@@ -589,7 +589,7 @@ impl DispenserBlock {
         ctx.world
             .play_sound(Sound::EntityTntPrimed, SoundCategory::Blocks, &spawn_pos);
         ctx.world
-            .emit_game_event(GameEvent::EntityPlace.name(), target.to_centered_f64());
+            .emit_game_event(GameEvent::EntityPlace, target.to_centered_f64());
 
         Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
     }

@@ -126,7 +126,7 @@ impl LeverBlock {
         } else {
             GameEvent::BlockDeactivate
         };
-        world.emit_game_event(game_event.name(), block_pos.to_centered_f64());
+        world.emit_game_event(game_event, block_pos.to_centered_f64());
     }
 
     fn update_neighbors(

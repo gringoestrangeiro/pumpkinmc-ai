@@ -663,7 +663,7 @@ impl EntityBase for ItemEntity {
             }
         };
 
-        world.emit_game_event(GameEvent::EntityDamage.name(), entity.pos.load());
+        world.emit_game_event_with_source(GameEvent::EntityDamage, entity.pos.load(), Some(self));
         if destroyed {
             self.on_destroyed(&world);
             entity.remove();

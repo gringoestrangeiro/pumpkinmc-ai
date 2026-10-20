@@ -5,7 +5,7 @@ use crate::block::entities::sculk_shrieker::SculkShriekerBlockEntity;
 use crate::block::{
     BlockBehaviour, BlockMetadata, OnEntityStepArgs, OnPlaceArgs, OnScheduledTickArgs,
 };
-use crate::entity::Entity;
+use crate::entity::EntityBase;
 use crate::entity::mob::warden::WardenEntity;
 use crate::entity::mob::warden_spawn_tracker::{MAX_WARNING_LEVEL, WardenSpawnTracker};
 use crate::entity::player::Player;
@@ -41,16 +41,25 @@ impl BlockMetadata for SculkShriekerBlock {
 }
 
 impl SculkShriekerBlock {
-    fn try_get_player(world: &World, entity: &Entity) -> Option<Arc<Player>> {
-        if let Some(player) = world.get_player_by_id(entity.entity_id) {
+    pub(crate) fn try_get_player(world: &World, entity: &dyn EntityBase) -> Option<Arc<Player>> {
+        let entity_id = entity.get_entity().entity_id;
+        if let Some(player) = world.get_player_by_id(entity_id) {
             return Some(player);
         }
         let passengers = entity
+            .get_entity()
             .passengers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let rider = passengers.first()?;
-        world.get_player_by_id(rider.get_entity().entity_id)
+        if let Some(rider) = passengers.first()
+            && let Some(player) = world.get_player_by_id(rider.get_entity().entity_id)
+        {
+            return Some(player);
+        }
+        drop(passengers);
+        entity
+            .get_owner_id()
+            .and_then(|owner_id| world.get_player_by_id(owner_id))
     }
 
     fn with_shrieker<R>(
@@ -107,7 +116,11 @@ impl SculkShriekerBlock {
         world.set_block_state(pos, props.to_state_id(block), BlockFlags::NOTIFY_LISTENERS);
         world.schedule_block_tick(block, *pos, SHRIEKING_TICKS, TickPriority::Normal);
         world.sync_world_event(WorldEvent::ParticlesSculkShriek, *pos, 0);
-        world.emit_game_event(GameEvent::Shriek.name(), pos.to_centered_f64());
+        world.emit_game_event_with_source(
+            GameEvent::Shriek,
+            pos.to_centered_f64(),
+            Some(player.as_ref()),
+        );
     }
 
     fn try_respond(world: &Arc<World>, pos: &BlockPos, can_summon: bool) {
@@ -189,7 +202,7 @@ impl BlockBehaviour for SculkShriekerBlock {
     }
 
     fn on_entity_step(&self, args: OnEntityStepArgs<'_>) {
-        if let Some(player) = Self::try_get_player(args.world, args.entity.get_entity()) {
+        if let Some(player) = Self::try_get_player(args.world, args.entity) {
             Self::try_shriek(args.world, args.position, &player);
         }
     }

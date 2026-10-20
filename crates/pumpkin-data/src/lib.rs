@@ -149,6 +149,9 @@ pub mod chunk {
 #[path = "generated/game_event.rs"]
 pub mod game_event;
 
+#[cfg(all(feature = "game_event", feature = "tag"))]
+pub mod game_event_data;
+
 #[cfg(feature = "game_rules")]
 #[rustfmt::skip]
 #[path ="generated/game_rules.rs"]

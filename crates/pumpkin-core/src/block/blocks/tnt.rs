@@ -110,7 +110,7 @@ impl TNTBlock {
             SoundCategory::Blocks,
             &pos,
         );
-        world.emit_game_event(GameEvent::PrimeFuse.name(), location.to_centered_f64());
+        world.emit_game_event(GameEvent::PrimeFuse, location.to_centered_f64());
     }
 }
 

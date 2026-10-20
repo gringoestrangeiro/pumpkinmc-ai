@@ -3,6 +3,7 @@ use std::any::Any;
 use crate::entity::player::Player;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use pumpkin_data::data_component_impl::{CustomDataImpl, InstrumentImpl, UseCooldownImpl};
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::instrument::Instrument;
 use pumpkin_data::item::Item;
 use pumpkin_data::sound::SoundCategory;
@@ -62,7 +63,7 @@ impl ItemBehaviour for GoatHornItem {
             volume,
             1.0,
         );
-        world.emit_game_event("instrument_play", pos);
+        world.emit_game_event_with_source(GameEvent::InstrumentPlay, pos, Some(player));
         let (cooldown_key, cooldown_ticks) =
             stack.get_data_component::<UseCooldownImpl>().map_or_else(
                 || (item.registry_key.to_string(), duration),

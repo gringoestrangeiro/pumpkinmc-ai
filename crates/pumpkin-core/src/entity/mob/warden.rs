@@ -12,7 +12,7 @@ use pumpkin_data::{
 use pumpkin_util::{GameMode, math::vector3::Vector3};
 
 use crate::entity::{
-    Entity,
+    Entity, EntityBase,
     ai::goal::{
         Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, swim::SwimGoal,
@@ -128,6 +128,43 @@ impl WardenEntity {
             5.0,
             1.0,
         );
+    }
+
+    pub fn hear_vibration(&self, world: &World, source: Option<&dyn EntityBase>) {
+        let entity = &self.mob_entity.living_entity.entity;
+        if !entity.is_alive()
+            || self.mob_entity.living_entity.health.load() <= 0.0
+            || self.emerge_ticks.load(Ordering::Relaxed) > 0
+        {
+            return;
+        }
+        world.play_sound_fine(
+            Sound::EntityWardenTendrilClicks,
+            SoundCategory::Hostile,
+            &entity.pos.load(),
+            5.0,
+            1.0,
+        );
+
+        // Vanilla raises anger here; without an anger system the warden investigates the source.
+        if self.mob_entity.get_target().is_some() {
+            return;
+        }
+        let Some(source) = source else {
+            return;
+        };
+        let source_id = source.get_entity().entity_id;
+        let target = world.get_player_by_id(source_id).map_or_else(
+            || {
+                source
+                    .get_owner_id()
+                    .and_then(|owner_id| world.get_entity_by_id(owner_id))
+            },
+            |player| Some(player as Arc<dyn EntityBase>),
+        );
+        if let Some(target) = target {
+            self.set_mob_target(Some(target));
+        }
     }
 
     pub fn apply_darkness_around(world: &World, position: Vector3<f64>, radius: f64) {
