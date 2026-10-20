@@ -5127,6 +5127,8 @@ impl World {
 
         if is_new_block
             && old_block.default_state.block_entity_type != u16::MAX
+            && old_block.default_state.block_entity_type
+                != new_block.default_state.block_entity_type
             && let Some(entity) = self.get_block_entity(position)
         {
             if !flags.contains(BlockFlags::SKIP_BLOCK_ENTITY_REPLACED_CALLBACK) {

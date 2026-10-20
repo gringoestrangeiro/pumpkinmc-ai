@@ -3087,27 +3087,30 @@ impl LivingEntity {
                     );
                 }
 
-                let active_hand = self
+                let active_hand = *self
                     .active_hand
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(hand) = *active_hand {
+                if let Some(hand) = active_hand {
                     let slot = if hand == Hand::Left {
                         EquipmentSlot::MAIN_HAND
                     } else {
                         EquipmentSlot::OFF_HAND
                     };
 
+                    let mut blocking_item_key = None;
                     let durability_damage = (amount / 1.0).floor().max(1.0) as i32;
                     if let Some(player) = caller.get_player() {
+                        let hand_slot = match &slot {
+                            EquipmentSlot::OffHand(_) => Hand::Left,
+                            _ => Hand::Right,
+                        };
+                        let stack_before = player.inventory.get_stack_in_hand(hand_slot);
+                        if !stack_before.is_empty() {
+                            blocking_item_key = Some(stack_before.item.registry_key.to_string());
+                        }
                         let broke = player.damage_item_in_slot(&slot, durability_damage);
-                        let empty = player
-                            .inventory
-                            .get_stack_in_hand(match &slot {
-                                EquipmentSlot::OffHand(_) => Hand::Left,
-                                _ => Hand::Right,
-                            })
-                            .is_empty();
+                        let empty = player.inventory.get_stack_in_hand(hand_slot).is_empty();
                         if broke && empty {
                             self.clear_active_hand();
                         }
@@ -3116,20 +3119,67 @@ impl LivingEntity {
                             .entity_equipment
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if let Some(stack) = equipment_guard.equipment.get_mut(&slot)
-                            && stack.damage_item(durability_damage) == DamageResult::Broken
-                        {
-                            world.send_entity_status(
-                                &self.entity,
-                                crate::entity::equipment_break_status(&slot),
-                                None,
-                            );
-                            *stack = ItemStack::EMPTY.clone();
-                            let broken_stack = stack.clone();
-                            drop(equipment_guard);
+                        if let Some(stack) = equipment_guard.equipment.get_mut(&slot) {
+                            let break_sound = stack
+                                .get_data_component::<pumpkin_data::data_component_impl::BreakSoundImpl>()
+                                .and_then(|bs| match bs.sound {
+                                    pumpkin_data::data_component_impl::IdOr::Id(s) => Some(s),
+                                    pumpkin_data::data_component_impl::IdOr::Value(_) => None,
+                                });
+                            if stack.damage_item(durability_damage) == DamageResult::Broken {
+                                if let Some(sound) = break_sound {
+                                    world.play_sound(sound, SoundCategory::Neutral, &player_pos);
+                                }
+                                world.send_entity_status(
+                                    &self.entity,
+                                    crate::entity::equipment_break_status(&slot),
+                                    None,
+                                );
+                                *stack = ItemStack::EMPTY.clone();
+                                let broken_stack = stack.clone();
+                                drop(equipment_guard);
 
-                            self.send_equipment_changes(&[(slot, broken_stack)]);
+                                self.send_equipment_changes(&[(slot, broken_stack)]);
+                                self.clear_active_hand();
+                            }
+                        }
+                    }
+
+                    let disable_seconds = cause.or(source).map_or(0.0, |attacker| {
+                        if attacker.get_entity().entity_type == &EntityType::WARDEN {
+                            5.0
+                        } else if let Some(attacker_player) = attacker.get_player() {
+                            attacker_player
+                                .inventory()
+                                .held_item()
+                                .get_data_component::<pumpkin_data::data_component_impl::WeaponImpl>()
+                                .map_or(0.0, |w| w.disable_blocking_for_seconds)
+                        } else if let Some(attacker_living) = attacker.get_living_entity() {
+                            attacker_living
+                                .entity_equipment
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .get(&EquipmentSlot::MAIN_HAND)
+                                .get_data_component::<pumpkin_data::data_component_impl::WeaponImpl>()
+                                .map_or(0.0, |w| w.disable_blocking_for_seconds)
+                        } else {
+                            0.0
+                        }
+                    });
+                    if disable_seconds > 0.0 {
+                        let cooldown_ticks = (disable_seconds * 20.0).round() as i32;
+                        if cooldown_ticks > 0 {
+                            if let Some(player) = caller.get_player()
+                                && let Some(blocking_key) = blocking_item_key
+                            {
+                                player.start_cooldown(blocking_key, cooldown_ticks);
+                            }
                             self.clear_active_hand();
+                            world.play_sound(
+                                Sound::ItemShieldBreak,
+                                SoundCategory::Players,
+                                &player_pos,
+                            );
                         }
                     }
                 }
@@ -3510,6 +3560,39 @@ impl EntityBase for LivingEntity {
                     );
                 }
 
+                if let Some(ominous) = item
+                    .get_data_component::<pumpkin_data::data_component_impl::OminousBottleAmplifierImpl>()
+                {
+                    self.add_effect(Effect {
+                        effect_type: &StatusEffect::BAD_OMEN,
+                        duration: 120_000,
+                        amplifier: ominous.amplifier.clamp(0, 4) as u8,
+                        ambient: false,
+                        show_particles: false,
+                        show_icon: true,
+                        blend: false,
+                    });
+                }
+
+                if let Some(stew) = item
+                    .get_data_component::<pumpkin_data::data_component_impl::SuspiciousStewEffectsImpl>()
+                {
+                    for entry in stew.effects.iter() {
+                        if let Some(effect_type) = StatusEffect::from_minecraft_name(&entry.effect)
+                        {
+                            self.add_effect(Effect {
+                                effect_type,
+                                duration: entry.duration,
+                                amplifier: 0,
+                                ambient: false,
+                                show_particles: true,
+                                show_icon: true,
+                                blend: false,
+                            });
+                        }
+                    }
+                }
+
                 if let Some(player) = caller.get_player() {
                     player.trigger_advancement(
                         crate::entity::player::advancement::trigger::AdvancementTrigger::ConsumeItem {
@@ -3755,7 +3838,15 @@ impl LivingEntity {
                         );
                     }
                 }
-                ConsumeEffect::PlaySound(_) => {}
+                ConsumeEffect::PlaySound(sound) => {
+                    if let pumpkin_data::data_component_impl::IdOr::Id(sound) = sound {
+                        self.entity.world.load().play_sound(
+                            *sound,
+                            SoundCategory::Neutral,
+                            &self.entity.pos.load(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -3811,6 +3902,65 @@ impl LivingEntity {
         }
 
         None
+    }
+
+    /// Mirrors vanilla `LivingEntity.getVisibilityPercent`.
+    #[must_use]
+    pub fn visibility_percent(&self, targeting_entity_type: Option<&'static EntityType>) -> f64 {
+        use pumpkin_data::data_component_impl::{EquippableImpl, IDSet, MobVisibilityImpl};
+
+        let mut percent = 1.0;
+        if self.entity.is_sneaking() {
+            percent *= 0.8;
+        }
+        let equipment = self
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .entity
+            .invisible
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let worn = [
+                EquipmentSlot::HEAD,
+                EquipmentSlot::CHEST,
+                EquipmentSlot::LEGS,
+                EquipmentSlot::FEET,
+            ]
+            .iter()
+            .filter(|slot| !equipment.get(slot).is_empty())
+            .count();
+            let cover = (worn as f64 / 4.0).max(0.1);
+            percent *= 0.7 * cover;
+        }
+        if let Some(target_type) = targeting_entity_type {
+            for slot in [
+                EquipmentSlot::MAIN_HAND,
+                EquipmentSlot::OFF_HAND,
+                EquipmentSlot::FEET,
+                EquipmentSlot::LEGS,
+                EquipmentSlot::CHEST,
+                EquipmentSlot::HEAD,
+                EquipmentSlot::BODY,
+                EquipmentSlot::SADDLE,
+            ] {
+                let stack = equipment.get(&slot);
+                if let Some(mob_visibility) = stack.get_data_component::<MobVisibilityImpl>()
+                    && let Some(equippable) = stack.get_data_component::<EquippableImpl>()
+                    && *equippable.slot == slot
+                {
+                    let matches_target = match &mob_visibility.targeting_entity_types {
+                        IDSet::Tag(tag) => target_type.is_tagged_with(tag).unwrap_or(false),
+                        IDSet::IDs(ids) => ids.iter().any(|id| id.id == target_type.id),
+                    };
+                    if matches_target {
+                        percent *= f64::from(mob_visibility.visibility);
+                    }
+                }
+            }
+        }
+        percent.clamp(0.0, 10.0)
     }
 }
 

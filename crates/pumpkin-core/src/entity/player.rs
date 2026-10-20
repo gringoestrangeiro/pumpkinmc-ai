@@ -1381,6 +1381,21 @@ impl Player {
         let attack_speed = base_attack_speed + add_speed;
 
         let is_bedrock = matches!(self.client.as_ref(), ClientPlatform::Bedrock(_));
+        if !is_bedrock
+            && let Some(min_charge) = item_stack
+                .get_data_component::<pumpkin_data::data_component_impl::MinimumAttackChargeImpl>(
+            )
+            && min_charge.charge > 0.0
+        {
+            let charge_progress = self.get_attack_cooldown_progress(
+                f64::from(server.basic_config.tps),
+                5.0,
+                attack_speed,
+            );
+            if (charge_progress as f32) < min_charge.charge {
+                return;
+            }
+        }
         let attack_cooldown_progress = if is_bedrock {
             1.0
         } else {
@@ -1437,7 +1452,9 @@ impl Player {
             if is_mace_smash {
                 DamageType::MACE_SMASH
             } else {
-                DamageType::PLAYER_ATTACK
+                item_stack
+                    .get_data_component::<pumpkin_data::data_component_impl::DamageTypeImpl>()
+                    .map_or(DamageType::PLAYER_ATTACK, |dt| dt.damage_type)
             },
             None,
             Some(self),
@@ -1707,6 +1724,12 @@ impl Player {
 
         let mut stack = self.inventory.get_slot(slot_index);
         let original_item = stack.item;
+        let break_sound = stack
+            .get_data_component::<pumpkin_data::data_component_impl::BreakSoundImpl>()
+            .and_then(|bs| match bs.sound {
+                pumpkin_data::data_component_impl::IdOr::Id(s) => Some(s),
+                pumpkin_data::data_component_impl::IdOr::Value(_) => None,
+            });
         let result = stack.damage_item(amount);
         let updated = (result != pumpkin_data::item_stack::DamageResult::Untouched)
             .then_some((result, stack.clone()));
@@ -1738,6 +1761,13 @@ impl Player {
                     original_item.id as i32,
                     1,
                 );
+                if let Some(sound) = break_sound {
+                    self.world().play_sound(
+                        sound,
+                        pumpkin_data::sound::SoundCategory::Players,
+                        &self.living_entity.entity.pos.load(),
+                    );
+                }
                 self.world().send_entity_status(
                     &self.living_entity.entity,
                     super::equipment_break_status(slot),
@@ -6449,17 +6479,12 @@ impl Player {
 
     /// Find arrow in inventory (main hand, offhand, or inventory slots)
     pub fn find_arrow(&self) -> Option<usize> {
-        use pumpkin_data::item::Item;
         let inventory = &self.inventory;
 
         // Check offhand first
         let stack = inventory.get_slot(PlayerInventory::OFF_HAND_SLOT);
-        if matches!(
-            stack.item.id,
-            id if id == Item::ARROW.id
-                || id == Item::TIPPED_ARROW.id
-                || id == Item::SPECTRAL_ARROW.id
-        ) && stack.item_count > 0
+        if crate::item::items::projectile_weapon::ProjectileWeaponItem::is_arrow(stack.item)
+            && stack.item_count > 0
         {
             return Some(PlayerInventory::OFF_HAND_SLOT);
         }
@@ -6467,18 +6492,38 @@ impl Player {
         // Check hotbar and main inventory
         for slot in 0..PlayerInventory::MAIN_SIZE {
             let stack = inventory.get_slot(slot);
-            if matches!(
-                stack.item.id,
-                id if id == Item::ARROW.id
-                    || id == Item::TIPPED_ARROW.id
-                    || id == Item::SPECTRAL_ARROW.id
-            ) && stack.item_count > 0
+            if crate::item::items::projectile_weapon::ProjectileWeaponItem::is_arrow(stack.item)
+                && stack.item_count > 0
             {
                 return Some(slot);
             }
         }
 
         None
+    }
+
+    /// Find crossbow projectile in inventory (offhand/mainhand arrow or firework rocket, then inventory arrows)
+    pub fn find_crossbow_projectile(&self) -> Option<usize> {
+        let inventory = &self.inventory;
+
+        let off_hand = inventory.get_slot(PlayerInventory::OFF_HAND_SLOT);
+        if crate::item::items::projectile_weapon::ProjectileWeaponItem::is_arrow_or_firework(
+            off_hand.item,
+        ) && off_hand.item_count > 0
+        {
+            return Some(PlayerInventory::OFF_HAND_SLOT);
+        }
+
+        let selected = inventory.get_selected_slot() as usize;
+        let main_hand = inventory.get_slot(selected);
+        if crate::item::items::projectile_weapon::ProjectileWeaponItem::is_arrow_or_firework(
+            main_hand.item,
+        ) && main_hand.item_count > 0
+        {
+            return Some(selected);
+        }
+
+        self.find_arrow()
     }
 
     /// Consume one arrow from the specified slot
