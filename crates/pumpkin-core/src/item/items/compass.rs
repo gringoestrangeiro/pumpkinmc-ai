@@ -22,6 +22,43 @@ impl ItemMetadata for CompassItem {
 }
 
 impl ItemBehaviour for CompassItem {
+    fn inventory_tick(&self, item: &mut ItemStack, player: &Player) -> bool {
+        if item.item.id != Item::COMPASS.id {
+            return false;
+        }
+        let Some(tracker) = item.get_data_component::<LodestoneTrackerImpl>() else {
+            return false;
+        };
+        if !tracker.tracked {
+            return false;
+        }
+        let Some(target) = tracker.target.clone() else {
+            return false;
+        };
+
+        let world = player.world();
+        if target.dimension != world.dimension.minecraft_name {
+            return false;
+        }
+
+        // Vanilla checks the lodestone point-of-interest. Pumpkin does not track
+        // points of interest, so the lodestone block is the equivalent check. Leave
+        // the tracker alone while the target chunk is not loaded.
+        let target_pos = BlockPos::new(target.x, target.y, target.z);
+        let Some(target_state) = world.get_block_state_id_if_loaded(&target_pos) else {
+            return false;
+        };
+        if Block::from_state_id(target_state) == &Block::LODESTONE {
+            return false;
+        }
+
+        item.set_data_component(LodestoneTrackerImpl {
+            target: None,
+            tracked: true,
+        });
+        true
+    }
+
     fn use_on_block(
         &self,
         item: &mut ItemStack,

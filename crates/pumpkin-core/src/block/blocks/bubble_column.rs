@@ -127,7 +127,12 @@ fn reconcile_action(
 }
 
 fn schedule_reconcile(world: &Arc<World>, position: BlockPos, delay: u8) {
-    world.schedule_block_tick(&Block::BUBBLE_COLUMN, position, delay, TickPriority::Normal);
+    world.schedule_block_tick(
+        &Block::BUBBLE_COLUMN,
+        position,
+        u16::from(delay),
+        TickPriority::Normal,
+    );
 }
 
 fn bubble_column_vertical_velocity(

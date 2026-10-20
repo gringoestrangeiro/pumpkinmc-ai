@@ -15,6 +15,8 @@ pub struct ChunkTickScheduler<T> {
 
 struct ChunkTickSchedulerInner<T> {
     tick_queue: [Vec<OrderedTick<T>>; MAX_TICK_DELAY],
+    /// Delays longer than the timing wheel, kept as a remaining-tick countdown.
+    long_ticks: Vec<(u16, OrderedTick<T>)>,
     queued_ticks: FxHashSet<(BlockPos, T)>,
 }
 
@@ -34,6 +36,19 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         };
 
         let res = std::mem::take(&mut inner.tick_queue[current_offset]);
+
+        let mut i = 0;
+        while i < inner.long_ticks.len() {
+            let (remaining, _) = &mut inner.long_ticks[i];
+            *remaining -= 1;
+            if *remaining < MAX_TICK_DELAY as u16 {
+                let (remaining, tick) = inner.long_ticks.swap_remove(i);
+                let index = (next_offset + remaining as usize) % MAX_TICK_DELAY;
+                inner.tick_queue[index].push(tick);
+            } else {
+                i += 1;
+            }
+        }
 
         if !res.is_empty() {
             for next_tick in &res {
@@ -57,19 +72,25 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         let inner = inner_guard.get_or_insert_with(|| {
             Box::new(ChunkTickSchedulerInner {
                 tick_queue: std::array::from_fn(|_| Vec::new()),
+                long_ticks: Vec::new(),
                 queued_ticks: FxHashSet::default(),
             })
         });
 
         if inner.queued_ticks.insert((tick.position, tick.value)) {
-            let index = (offset + tick.delay as usize) % MAX_TICK_DELAY;
-
-            inner.tick_queue[index].push(OrderedTick {
+            let ordered_tick = OrderedTick {
                 priority: tick.priority,
                 sub_tick_order,
                 position: tick.position,
                 value: tick.value,
-            });
+            };
+
+            if tick.delay < MAX_TICK_DELAY as u16 {
+                let index = (offset + tick.delay as usize) % MAX_TICK_DELAY;
+                inner.tick_queue[index].push(ordered_tick);
+            } else {
+                inner.long_ticks.push((tick.delay, ordered_tick));
+            }
         }
     }
 
@@ -102,6 +123,9 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         for queue in &mut inner.tick_queue {
             queue.retain(|tick| !contains(&tick.position));
         }
+        inner
+            .long_ticks
+            .retain(|(_, tick)| !contains(&tick.position));
         inner
             .queued_ticks
             .retain(|(position, _)| !contains(position));
@@ -136,12 +160,18 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         for i in 0..MAX_TICK_DELAY {
             let index = (offset + i) % MAX_TICK_DELAY;
             res.extend(inner.tick_queue[index].iter().map(|x| ScheduledTick {
-                delay: i as u8,
+                delay: i as u16,
                 priority: x.priority,
                 position: x.position,
                 value: x.value,
             }));
         }
+        res.extend(inner.long_ticks.iter().map(|(delay, x)| ScheduledTick {
+            delay: *delay,
+            priority: x.priority,
+            position: x.position,
+            value: x.value,
+        }));
         res
     }
 }
@@ -162,6 +192,7 @@ impl<'a, T: std::hash::Hash + Eq + 'static> FromIterator<ScheduledTick<&'a T>>
             let inner = inner_guard.get_or_insert_with(|| {
                 Box::new(ChunkTickSchedulerInner {
                     tick_queue: std::array::from_fn(|_| Vec::new()),
+                    long_ticks: Vec::new(),
                     queued_ticks: FxHashSet::default(),
                 })
             });
@@ -181,5 +212,28 @@ impl<T> Default for ChunkTickScheduler<T> {
             inner: Mutex::new(None),
             offset: AtomicUsize::new(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tick::TickPriority;
+
+    #[test]
+    fn long_delay_tick_fires_after_requested_ticks() {
+        let scheduler: ChunkTickScheduler<&'static str> = ChunkTickScheduler::default();
+        let tick = ScheduledTick {
+            delay: 300,
+            priority: TickPriority::Normal,
+            position: BlockPos::new(0, 0, 0),
+            value: "test",
+        };
+        scheduler.schedule_tick(&tick, 0);
+
+        for _ in 0..300 {
+            assert!(scheduler.step_tick().is_empty());
+        }
+        assert_eq!(scheduler.step_tick().len(), 1);
     }
 }

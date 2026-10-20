@@ -1345,6 +1345,28 @@ impl BlockRegistry {
         }
     }
 
+    pub fn player_will_destroy(
+        &self,
+        world: &Arc<World>,
+        block: &Block,
+        player: &Arc<Player>,
+        position: &BlockPos,
+        server: &Server,
+        state: &BlockState,
+    ) {
+        let pumpkin_block = self.get_pumpkin_block(block.id);
+        if let Some(pumpkin_block) = pumpkin_block {
+            pumpkin_block.player_will_destroy(BrokenArgs {
+                block,
+                player,
+                position,
+                server,
+                world,
+                state,
+            });
+        }
+    }
+
     pub fn on_state_replaced(
         &self,
         world: &Arc<World>,

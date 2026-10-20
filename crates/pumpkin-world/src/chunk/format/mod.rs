@@ -187,7 +187,7 @@ where
     let x = nbt.get_int("x")?;
     let y = nbt.get_int("y")?;
     let z = nbt.get_int("z")?;
-    let delay = nbt.get_int("t")? as u8;
+    let delay = nbt.get_int("t")? as u16;
     let priority = TickPriority::try_from(nbt.get_int("p")?).ok()?;
     let res_loc_str = nbt.get_string("i")?;
     let res_loc = ResourceLocation::from_str(res_loc_str).ok()?;
@@ -817,7 +817,7 @@ impl ChunkData {
             out.put_i32(tick.position.0.x);
             out.put_i32(tick.position.0.y);
             out.put_i32(tick.position.0.z);
-            out.put_u8(tick.delay);
+            out.put_u8(tick.delay as u8);
             out.put_i8(tick.priority as i32 as i8);
             out.put_u16(tick.value.id.as_u16());
         }
@@ -828,7 +828,7 @@ impl ChunkData {
             out.put_i32(tick.position.0.x);
             out.put_i32(tick.position.0.y);
             out.put_i32(tick.position.0.z);
-            out.put_u8(tick.delay);
+            out.put_u8(tick.delay as u8);
             out.put_i8(tick.priority as i32 as i8);
             out.put_u16(tick.value.id);
         }
@@ -1011,7 +1011,7 @@ impl ChunkData {
             let x = buf.get_i32();
             let y = buf.get_i32();
             let z = buf.get_i32();
-            let delay = buf.get_u8();
+            let delay = u16::from(buf.get_u8());
             let priority = i32::from(buf.get_i8());
             let raw_id = buf.get_u16();
             if let Ok(priority) = TickPriority::try_from(priority)
@@ -1042,7 +1042,7 @@ impl ChunkData {
             let x = buf.get_i32();
             let y = buf.get_i32();
             let z = buf.get_i32();
-            let delay = buf.get_u8();
+            let delay = u16::from(buf.get_u8());
             let priority = i32::from(buf.get_i8());
             let raw_id = buf.get_u16();
             if let Ok(priority) = TickPriority::try_from(priority)

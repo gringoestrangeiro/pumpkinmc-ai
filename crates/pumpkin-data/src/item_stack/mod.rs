@@ -497,6 +497,11 @@ impl ItemStack {
         {
             return custom_name.name.clone().get_text();
         }
+        if self.item.id == Item::COMPASS.id
+            && self.has_data_component(DataComponent::LodestoneTracker)
+        {
+            return "Lodestone Compass".to_string();
+        }
         if let Some(item_name) =
             self.get_data_component::<crate::data_component_impl::ItemNameImpl>()
         {
@@ -884,7 +889,7 @@ mod tests {
     use crate::data_component::DataComponent;
     use crate::data_component_impl::{
         CustomDataImpl, CustomNameImpl, DataComponentImpl, EnchantmentsImpl, ItemNameImpl,
-        LoreImpl, MapDecorationsImpl, UnbreakableImpl,
+        LodestoneTrackerImpl, LoreImpl, MapDecorationsImpl, UnbreakableImpl,
     };
     use pumpkin_nbt::Nbt;
     use pumpkin_nbt::deserializer::NbtReadHelperJava;
@@ -907,6 +912,17 @@ mod tests {
         assert!(!plain.are_items_and_components_equal(&customized));
         assert!(!customized.are_items_and_components_equal(&plain));
         assert!(customized.are_items_and_components_equal(&customized.clone()));
+    }
+
+    #[test]
+    fn lodestone_compass_uses_its_own_hover_name() {
+        let mut stack = ItemStack::new(1, &Item::COMPASS);
+        stack.set_data_component(LodestoneTrackerImpl {
+            target: None,
+            tracked: true,
+        });
+
+        assert_eq!(stack.get_hover_name(), "Lodestone Compass");
     }
 
     #[test]

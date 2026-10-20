@@ -3041,6 +3041,7 @@ impl Player {
         self.tick_health();
         self.tick_raid_omen();
         self.tick_maps(server);
+        self.tick_inventory_items(server);
 
         // Anti-spam counter decay
         let anti_spam = &server.advanced_config.chat.anti_spam;
@@ -5320,6 +5321,29 @@ impl Player {
                 },
             );
         }
+    }
+
+    fn tick_inventory_items(&self, server: &Server) {
+        for slot in 0..PlayerInventory::MAIN_SIZE {
+            self.tick_inventory_slot(server, slot);
+        }
+        self.tick_inventory_slot(server, PlayerInventory::OFF_HAND_SLOT);
+    }
+
+    fn tick_inventory_slot(&self, server: &Server, slot: usize) {
+        let mut stack = self.inventory.get_slot(slot);
+        if stack.is_empty() {
+            return;
+        }
+        if !server.item_registry.inventory_tick(&mut stack, self) {
+            return;
+        }
+        self.inventory.set_slot(slot, stack.clone());
+        self.try_send_slot_set_packet(&CSetPlayerInventory::new(
+            (slot as i32).into(),
+            &ItemStackSerializer::from(stack),
+        ));
+        self.sync_inventory_to_client();
     }
 
     pub fn tick_maps(&self, server: &Server) {

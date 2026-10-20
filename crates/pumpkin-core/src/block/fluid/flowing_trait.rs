@@ -101,7 +101,12 @@ pub trait FlowingFluid: Send + Sync {
 
                     // Schedule next tick for this position
                     let tick_delay = self.get_flow_speed(world);
-                    world.schedule_fluid_tick(fluid, *block_pos, tick_delay, TickPriority::Normal);
+                    world.schedule_fluid_tick(
+                        fluid,
+                        *block_pos,
+                        u16::from(tick_delay),
+                        TickPriority::Normal,
+                    );
                 }
 
                 // Use the new state for spreading
@@ -373,7 +378,7 @@ pub trait FlowingFluid: Send + Sync {
 
         if !is_source {
             let tick_delay = self.get_flow_speed(world);
-            world.schedule_fluid_tick(fluid, *pos, tick_delay, TickPriority::Normal);
+            world.schedule_fluid_tick(fluid, *pos, u16::from(tick_delay), TickPriority::Normal);
         }
     }
 

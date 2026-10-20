@@ -22,8 +22,12 @@ impl FallingBlock {
 
     /// `FallingBlock.onPlace`, for subclasses that override `getDelayAfterPlace` in vanilla (`DragonEggBlock`).
     pub fn placed_with_delay(args: &PlacedArgs<'_>, delay: u8) {
-        args.world
-            .schedule_block_tick(args.block, *args.position, delay, TickPriority::Normal);
+        args.world.schedule_block_tick(
+            args.block,
+            *args.position,
+            u16::from(delay),
+            TickPriority::Normal,
+        );
     }
 
     /// `FallingBlock.updateShape`, for subclasses that override `getDelayAfterPlace`.
@@ -32,8 +36,12 @@ impl FallingBlock {
         args: &GetStateForNeighborUpdateArgs<'_>,
         delay: u8,
     ) -> BlockStateId {
-        args.world
-            .schedule_block_tick(args.block, *args.position, delay, TickPriority::Normal);
+        args.world.schedule_block_tick(
+            args.block,
+            *args.position,
+            u16::from(delay),
+            TickPriority::Normal,
+        );
         args.state_id
     }
 

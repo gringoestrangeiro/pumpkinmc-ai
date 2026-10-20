@@ -185,7 +185,9 @@ impl RedstoneGateBlock<ComparatorLikeProperties> for ComparatorBlock {
             world.schedule_block_tick(
                 block,
                 pos,
-                RedstoneGateBlock::get_update_delay_internal(self, state.id, block),
+                u16::from(RedstoneGateBlock::get_update_delay_internal(
+                    self, state.id, block,
+                )),
                 priority,
             );
         }

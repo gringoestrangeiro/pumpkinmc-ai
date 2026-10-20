@@ -77,11 +77,11 @@ impl BlockBehaviour for RepeaterBlock {
                 args.world.schedule_block_tick(
                     block,
                     *args.position,
-                    RedstoneGateBlock::get_update_delay_internal(
+                    u16::from(RedstoneGateBlock::get_update_delay_internal(
                         self,
                         props.to_state_id(block),
                         block,
-                    ),
+                    )),
                     TickPriority::VeryHigh,
                 );
             }
@@ -204,7 +204,9 @@ impl RedstoneGateBlock<RepeaterProperties> for RepeaterBlock {
             world.schedule_block_tick(
                 block,
                 pos,
-                RedstoneGateBlock::get_update_delay_internal(self, state.id, block),
+                u16::from(RedstoneGateBlock::get_update_delay_internal(
+                    self, state.id, block,
+                )),
                 priority,
             );
         }

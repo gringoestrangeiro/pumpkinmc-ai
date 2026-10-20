@@ -303,7 +303,7 @@ impl BlockBehaviour for CrafterBlock {
             args.world.schedule_block_tick(
                 args.block,
                 *args.position,
-                Self::CRAFTING_TICK_DELAY,
+                u16::from(Self::CRAFTING_TICK_DELAY),
                 TickPriority::Normal,
             );
         }
@@ -319,7 +319,7 @@ impl BlockBehaviour for CrafterBlock {
             args.world.schedule_block_tick(
                 args.block,
                 *args.position,
-                Self::CRAFTING_TICK_DELAY,
+                u16::from(Self::CRAFTING_TICK_DELAY),
                 TickPriority::Normal,
             );
             args.world.set_block_state(

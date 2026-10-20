@@ -72,6 +72,12 @@ pub trait ItemBehaviour: Send + Sync {
 
     fn on_use_tick(&self, _stack: &ItemStack, _player: &Player, _remaining_use_ticks: i32) {}
 
+    /// Called once per tick for each inventory stack, like vanilla's `Item.inventoryTick`.
+    /// Returns whether the stack changed and has to be written back.
+    fn inventory_tick(&self, _stack: &mut ItemStack, _player: &Player) -> bool {
+        false
+    }
+
     /// Returns the maximum number of ticks this item can be used for.
     /// Return 0 if the item does not have a behaviour-driven use duration.
     fn get_use_duration(&self) -> i32 {

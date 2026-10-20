@@ -124,7 +124,7 @@ impl LecternBlock {
         world.schedule_block_tick(
             block,
             *position,
-            Self::PAGE_TURN_PULSE_TICKS,
+            u16::from(Self::PAGE_TURN_PULSE_TICKS),
             TickPriority::Normal,
         );
         world.sync_world_event(WorldEvent::SoundPageTurn, *position, 0);

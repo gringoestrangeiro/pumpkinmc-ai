@@ -152,6 +152,9 @@ pub trait BlockBehaviour: Send + Sync {
 
     fn broken(&self, _args: BrokenArgs<'_>) {}
 
+    /// Called before a player removes the block, mirroring vanilla's `playerWillDestroy`.
+    fn player_will_destroy(&self, _args: BrokenArgs<'_>) {}
+
     fn on_neighbor_update(&self, _args: OnNeighborUpdateArgs<'_>) {}
 
     /// Called if a block state is replaced or it replaces another state
@@ -461,6 +464,38 @@ pub struct BlockEvent {
     pub pos: BlockPos,
     pub r#type: u8,
     pub data: u8,
+}
+
+/// Vanilla `Block.pushEntitiesUp` for blocks whose collision height grows on conversion.
+pub fn push_entities_up(
+    world: &World,
+    pos: &BlockPos,
+    old_state: &BlockState,
+    new_state: &BlockState,
+) {
+    let old_top = old_state
+        .get_block_collision_shapes()
+        .map(|shape| shape.max.y)
+        .fold(0.0, f64::max);
+    let new_top = new_state
+        .get_block_collision_shapes()
+        .map(|shape| shape.max.y)
+        .fold(0.0, f64::max);
+    if new_top <= old_top {
+        return;
+    }
+
+    let x = f64::from(pos.0.x);
+    let y = f64::from(pos.0.y);
+    let z = f64::from(pos.0.z);
+    let aabb = BoundingBox::new(
+        Vector3::new(x, y + old_top, z),
+        Vector3::new(x + 1.0, y + new_top, z + 1.0),
+    );
+    let offset = new_top - old_top;
+    for entity in world.get_entities_and_players_at_box(&aabb) {
+        entity.get_entity().move_pos(Vector3::new(0.0, offset, 0.0));
+    }
 }
 
 pub fn drop_loot(

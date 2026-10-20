@@ -157,7 +157,12 @@ impl FluidBehaviour for FlowingLava {
     ) {
         if old_state_id != state_id && Self::receive_neighbor_fluids(world, block_pos) {
             let flow_speed = self.get_flow_speed(world);
-            world.schedule_fluid_tick(fluid, *block_pos, flow_speed, TickPriority::Normal);
+            world.schedule_fluid_tick(
+                fluid,
+                *block_pos,
+                u16::from(flow_speed),
+                TickPriority::Normal,
+            );
         }
     }
 
@@ -174,7 +179,12 @@ impl FluidBehaviour for FlowingLava {
     ) {
         if Self::receive_neighbor_fluids(world, block_pos) {
             let flow_speed = self.get_flow_speed(world);
-            world.schedule_fluid_tick(fluid, *block_pos, flow_speed, TickPriority::Normal);
+            world.schedule_fluid_tick(
+                fluid,
+                *block_pos,
+                u16::from(flow_speed),
+                TickPriority::Normal,
+            );
         }
     }
 

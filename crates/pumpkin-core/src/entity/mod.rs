@@ -235,6 +235,21 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    /// Vanilla `Entity.isIgnoringBlockTriggers`.
+    fn is_ignoring_block_triggers(&self) -> bool {
+        let id = self.get_entity().entity_type.id;
+        [
+            EntityType::BAT.id,
+            EntityType::MARKER.id,
+            EntityType::INTERACTION.id,
+            EntityType::ITEM_DISPLAY.id,
+            EntityType::BLOCK_DISPLAY.id,
+            EntityType::TEXT_DISPLAY.id,
+            EntityType::OMINOUS_ITEM_SPAWNER.id,
+        ]
+        .contains(&id)
+    }
+
     fn get_gravity(&self) -> f64 {
         0.0
     }

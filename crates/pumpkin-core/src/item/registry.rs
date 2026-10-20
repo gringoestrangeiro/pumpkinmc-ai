@@ -83,6 +83,11 @@ impl ItemRegistry {
         }
     }
 
+    pub fn inventory_tick(&self, stack: &mut ItemStack, player: &Player) -> bool {
+        self.get_pumpkin_item(stack.item.id)
+            .is_some_and(|behaviour| behaviour.inventory_tick(stack, player))
+    }
+
     /// Returns the item's use duration in ticks, as defined by its registered behaviour.
     /// Returns `None` if the item has no registered behaviour or its duration is 0.
     #[must_use]

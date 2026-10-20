@@ -62,7 +62,7 @@ impl BlockBehaviour for DriedGhastBlock {
             args.world.schedule_fluid_tick(
                 &Fluid::WATER,
                 *args.position,
-                Fluid::WATER.flow_speed as u8,
+                Fluid::WATER.flow_speed as u16,
                 TickPriority::Normal,
             );
         }
@@ -80,7 +80,7 @@ impl BlockBehaviour for DriedGhastBlock {
             args.world.schedule_block_tick(
                 args.block,
                 *args.position,
-                HYDRATION_TICK_DELAY,
+                u16::from(HYDRATION_TICK_DELAY),
                 TickPriority::Normal,
             );
         }

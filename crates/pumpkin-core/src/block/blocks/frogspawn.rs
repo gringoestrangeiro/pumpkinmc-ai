@@ -25,8 +25,8 @@ use crate::{
 
 const MIN_TADPOLES_SPAWN: u8 = 2;
 const MAX_TADPOLES_SPAWN: u8 = 5;
-/// Clamped to `u8::MAX` due to Pumpkin's block tick delay representation.
-const HATCH_DELAY: u8 = u8::MAX;
+const MIN_HATCH_TICK_DELAY: u16 = 3600;
+const MAX_HATCH_TICK_DELAY: u16 = 12000;
 
 #[pumpkin_block("minecraft:frogspawn")]
 pub struct FrogspawnBlock;
@@ -69,7 +69,7 @@ impl BlockBehaviour for FrogspawnBlock {
         args.world.schedule_block_tick(
             args.block,
             *args.position,
-            HATCH_DELAY,
+            rand::rng().random_range(MIN_HATCH_TICK_DELAY..MAX_HATCH_TICK_DELAY),
             TickPriority::Normal,
         );
     }
@@ -105,11 +105,11 @@ impl BlockBehaviour for FrogspawnBlock {
             let z_offset = rand::rng().random_range(0.2..0.8);
             let spawn_pos = Vector3::new(
                 f64::from(args.position.0.x) + x_offset,
-                f64::from(args.position.0.y),
+                f64::from(args.position.0.y) - 0.5,
                 f64::from(args.position.0.z) + z_offset,
             );
             let tadpole = from_type(&EntityType::TADPOLE, spawn_pos, args.world, Uuid::new_v4());
-            let yaw = rand::rng().random::<f32>() * 360.0;
+            let yaw = rand::rng().random_range(1..=360) as f32;
             tadpole.get_entity().set_rotation(yaw, 0.0);
             if let Some(mob) = tadpole.get_mob() {
                 mob.get_mob_entity()

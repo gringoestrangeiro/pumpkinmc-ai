@@ -5365,6 +5365,19 @@ impl World {
             return None;
         }
 
+        if let Some(player) = cause
+            && let Some(server) = self.server.upgrade()
+        {
+            server.block_registry.player_will_destroy(
+                self,
+                broken_block,
+                player,
+                position,
+                &server,
+                broken_block_state,
+            );
+        }
+
         if event.drop {
             flags.remove(BlockFlags::SKIP_DROPS);
         } else {
@@ -5622,7 +5635,7 @@ impl World {
         &self,
         block: &Block,
         block_pos: BlockPos,
-        delay: u8,
+        delay: u16,
         priority: TickPriority,
     ) {
         self.level
@@ -5633,7 +5646,7 @@ impl World {
         &self,
         fluid: &Fluid,
         block_pos: BlockPos,
-        delay: u8,
+        delay: u16,
         priority: TickPriority,
     ) {
         self.level

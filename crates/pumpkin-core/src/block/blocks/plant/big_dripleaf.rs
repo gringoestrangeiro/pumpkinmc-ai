@@ -167,7 +167,7 @@ fn set_tilt_and_schedule_tick(
         world.schedule_block_tick(
             &Block::BIG_DRIPLEAF,
             *pos,
-            tick_delay as u8,
+            tick_delay as u16,
             pumpkin_world::tick::TickPriority::Normal,
         );
     }

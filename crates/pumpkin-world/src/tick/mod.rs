@@ -58,7 +58,7 @@ impl TryFrom<i32> for TickPriority {
 
 #[derive(Clone)]
 pub struct ScheduledTick<T> {
-    pub delay: u8,
+    pub delay: u16,
     pub priority: TickPriority,
     pub position: BlockPos,
     pub value: T,
@@ -132,7 +132,7 @@ where
         let x = nbt.get_int("x")?;
         let y = nbt.get_int("y")?;
         let z = nbt.get_int("z")?;
-        let delay = nbt.get_int("t")? as u8;
+        let delay = nbt.get_int("t")? as u16;
         let priority = TickPriority::try_from(nbt.get_int("p")?).ok()?;
         let res_loc_str = nbt.get_string("i")?;
         let res_loc = ResourceLocation::from_str(res_loc_str).ok()?;

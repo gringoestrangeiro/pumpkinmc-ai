@@ -31,7 +31,12 @@ impl FluidBehaviour for FlowingWater {
         _notify: bool,
     ) {
         if old_state_id != state_id {
-            world.schedule_fluid_tick(fluid, *block_pos, WATER_FLOW_SPEED, TickPriority::Normal);
+            world.schedule_fluid_tick(
+                fluid,
+                *block_pos,
+                u16::from(WATER_FLOW_SPEED),
+                TickPriority::Normal,
+            );
         }
     }
 
@@ -48,7 +53,12 @@ impl FluidBehaviour for FlowingWater {
     ) {
         // Avoid rescheduling a fluid tick if one is already queued.
         if !world.is_fluid_tick_scheduled(block_pos, fluid) {
-            world.schedule_fluid_tick(fluid, *block_pos, WATER_FLOW_SPEED, TickPriority::Normal);
+            world.schedule_fluid_tick(
+                fluid,
+                *block_pos,
+                u16::from(WATER_FLOW_SPEED),
+                TickPriority::Normal,
+            );
         }
     }
 

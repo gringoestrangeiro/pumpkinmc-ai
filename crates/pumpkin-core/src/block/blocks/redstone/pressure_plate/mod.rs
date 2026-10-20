@@ -73,7 +73,12 @@ pub(crate) trait PressurePlate {
             world.update_neighbors(&pos.down(), None);
         }
         if has_output {
-            world.schedule_block_tick(block, *pos, self.tick_rate(), TickPriority::Normal);
+            world.schedule_block_tick(
+                block,
+                *pos,
+                u16::from(self.tick_rate()),
+                TickPriority::Normal,
+            );
         }
     }
 

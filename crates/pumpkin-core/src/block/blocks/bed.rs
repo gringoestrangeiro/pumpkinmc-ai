@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use crate::block::entities::bed::BedBlockEntity;
 use pumpkin_data::block_properties::BedPart;
-use pumpkin_data::entity::EntityType;
+use pumpkin_data::entity::{EntityPose, EntityType};
 use pumpkin_data::translation;
 use pumpkin_data::{Block, BlockState, BlockStateId};
 use pumpkin_macros::pumpkin_block_from_tag;
 use pumpkin_util::GameMode;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::world::BlockFlags;
 
@@ -247,15 +248,17 @@ impl BedBlock {
 
         // Make sure the bed is not occupied
         if bed_props.occupied {
-            // TODO: Wake up villager
-
-            player.send_system_message_raw(
-                &pumpkin_macros::translate_cross!(
-                    translation::java::BLOCK_MINECRAFT_BED_OCCUPIED,
-                    translation::bedrock::TILE_BED_OCCUPIED
-                ),
-                true,
-            );
+            if Self::kick_villager_out_of_bed(world, &bed_head_pos) {
+                Self::set_occupied(false, world, block, position, state_id);
+            } else {
+                player.send_system_message_raw(
+                    &pumpkin_macros::translate_cross!(
+                        translation::java::BLOCK_MINECRAFT_BED_OCCUPIED,
+                        translation::bedrock::TILE_BED_OCCUPIED
+                    ),
+                    true,
+                );
+            }
             return BlockActionResult::SuccessServer;
         }
 
@@ -354,6 +357,20 @@ impl BedBlock {
 }
 
 impl BedBlock {
+    fn kick_villager_out_of_bed(world: &Arc<World>, pos: &BlockPos) -> bool {
+        let aabb = BoundingBox::from_block(pos);
+        for entity in world.get_entities_at_box(&aabb) {
+            let entity = entity.get_entity();
+            if entity.entity_type == &EntityType::VILLAGER
+                && entity.pose.load() == EntityPose::Sleeping
+            {
+                entity.set_pose(EntityPose::Standing);
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn set_occupied(
         occupied: bool,
         world: &Arc<World>,

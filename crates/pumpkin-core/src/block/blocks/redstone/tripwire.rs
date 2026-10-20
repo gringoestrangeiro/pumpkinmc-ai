@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::{Block, BlockDirection, BlockStateId, block_properties::HorizontalFacing};
 use pumpkin_macros::pumpkin_block;
@@ -11,6 +12,7 @@ use crate::{
         BlockBehaviour, BrokenArgs, GetStateForNeighborUpdateArgs, OnEntityCollisionArgs,
         OnPlaceArgs, OnScheduledTickArgs, OnStateReplacedArgs, PlacedArgs,
     },
+    entity::EntityBase,
     world::World,
 };
 
@@ -24,6 +26,9 @@ pub struct TripwireBlock;
 
 impl BlockBehaviour for TripwireBlock {
     fn on_entity_collision(&self, args: OnEntityCollisionArgs<'_>) {
+        if args.entity.is_ignoring_block_triggers() {
+            return;
+        }
         let mut props = TripwireProperties::from_state_id(args.state.id);
         if props.powered {
             return;
@@ -71,19 +76,25 @@ impl BlockBehaviour for TripwireBlock {
         Self::update(args.world, args.position, args.state_id);
     }
 
-    fn broken(&self, args: BrokenArgs<'_>) {
-        let has_shears = args.player.inventory().held_item().get_item() == &Item::SHEARS;
-        if has_shears {
-            let mut props = TripwireProperties::from_state_id(args.state.id);
-            props.disarmed = true;
-            args.world.set_block_state(
-                args.position,
-                props.to_state_id(args.block),
-                BlockFlags::empty(),
-            );
-            // TODO world.emitGameEvent(player, GameEvent.SHEAR, pos);
-            // TODO: Deduct 1 durability from held shears (skip in Creative mode).
+    fn player_will_destroy(&self, args: BrokenArgs<'_>) {
+        if args.player.inventory().held_item().get_item() != &Item::SHEARS {
+            return;
         }
+
+        let mut props = TripwireProperties::from_state_id(args.state.id);
+        props.disarmed = true;
+        args.world.set_block_state(
+            args.position,
+            props.to_state_id(args.block),
+            BlockFlags::empty(),
+        );
+        args.world.emit_game_event_with_source(
+            GameEvent::Shear,
+            args.position.to_centered_f64(),
+            Some(args.player.as_ref()),
+        );
+        // Tripwire has zero hardness, so the generic block-break tool damage skips it.
+        args.player.damage_held_item(1);
     }
 
     fn get_state_for_neighbor_update(
@@ -113,10 +124,17 @@ impl BlockBehaviour for TripwireBlock {
         }
 
         let aabb = BoundingBox::from_block(args.position);
-        // TODO entity.canAvoidTraps()
-        if args.world.get_entities_at_box(&aabb).is_empty()
-            && args.world.get_players_at_box(&aabb).is_empty()
-        {
+        let pressed = args
+            .world
+            .get_entities_at_box(&aabb)
+            .iter()
+            .any(|entity| !entity.is_ignoring_block_triggers())
+            || args
+                .world
+                .get_players_at_box(&aabb)
+                .iter()
+                .any(|player| !player.is_ignoring_block_triggers());
+        if !pressed {
             props.powered = false;
             let state_id = props.to_state_id(args.block);
             args.world
@@ -132,8 +150,7 @@ impl BlockBehaviour for TripwireBlock {
         if args.moved || Block::from_state_id(args.old_state_id) == args.block {
             return;
         }
-        let state_id = args.world.get_block_state_id(args.position);
-        Self::update(args.world, args.position, state_id);
+        Self::update(args.world, args.position, args.old_state_id);
     }
 }
 

@@ -160,7 +160,7 @@ pub fn try_changing_state(world: &Arc<World>, current_block: &Block, pos: &Block
                     world.schedule_block_tick(
                         current_block,
                         nearby_pos,
-                        delay.max(1),
+                        u16::from(delay.max(1)),
                         TickPriority::Normal,
                     );
                 }

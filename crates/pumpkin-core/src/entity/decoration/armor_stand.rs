@@ -521,6 +521,10 @@ impl EntityBase for ArmorStandEntity {
         Some(&self.living_entity)
     }
 
+    fn is_ignoring_block_triggers(&self) -> bool {
+        self.is_marker()
+    }
+
     fn kill(&self, caller: &dyn EntityBase) {
         let entity = self.get_entity();
         entity.world.load().emit_game_event_with_source(
