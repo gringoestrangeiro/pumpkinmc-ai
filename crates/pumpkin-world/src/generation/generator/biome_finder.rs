@@ -12,7 +12,7 @@ use super::{VanillaGenerator, WorldGenerator};
 /// Finds the closest position whose sampled biome id is contained in
 /// `targets`, mirroring vanilla's `BiomeSource.findClosestBiome3d`.
 ///
-/// The search spirals outwards from `origin` ring by ring in steps of
+/// The search walks vanilla's square spiral from `origin` in steps of
 /// `horizontal_step` blocks up to `horizontal_radius`, probing each column at
 /// y levels spreading out from the origin y in steps of `vertical_step`
 /// (staying within the dimension's build height). The first match wins, which
@@ -34,8 +34,7 @@ pub fn find_closest_biome_3d(
         WorldGenerator::Flat(flat) => {
             // Superflat worlds use a single fixed biome everywhere, matching
             // the resolution in `FlatGenerator::step_to_biomes`.
-            let name = flat.biome.strip_prefix("minecraft:").unwrap_or(&flat.biome);
-            let biome = Biome::from_name(name).unwrap_or(&Biome::PLAINS);
+            let biome = flat.biome();
             targets.contains(&biome.id).then_some((origin, biome))
         }
         WorldGenerator::Noise(generator) => find_in_noise_world(
@@ -95,37 +94,79 @@ fn find_in_noise_world(
         None
     };
 
+    // Vanilla walks a square spiral from the origin instead of one ring at a
+    // time. The first match therefore differs from a ring-major scan.
     let rings = horizontal_radius / horizontal_step;
-    for radius in 0..=rings {
-        if radius == 0 {
-            if let Some(found) = check_column(origin.0.x, origin.0.z, &mut sampler) {
-                return Some(found);
-            }
-            continue;
-        }
-
-        // Perimeter of the square ring at Chebyshev distance `radius`.
-        for dx in -radius..=radius {
-            for dz in [-radius, radius] {
-                let x = origin.0.x + dx * horizontal_step;
-                let z = origin.0.z + dz * horizontal_step;
-                if let Some(found) = check_column(x, z, &mut sampler) {
-                    return Some(found);
-                }
-            }
-        }
-        for dz in (1 - radius)..radius {
-            for dx in [-radius, radius] {
-                let x = origin.0.x + dx * horizontal_step;
-                let z = origin.0.z + dz * horizontal_step;
-                if let Some(found) = check_column(x, z, &mut sampler) {
-                    return Some(found);
-                }
-            }
+    for (dx, dz) in SpiralAround::new(rings) {
+        let x = origin.0.x + dx * horizontal_step;
+        let z = origin.0.z + dz * horizontal_step;
+        if let Some(found) = check_column(x, z, &mut sampler) {
+            return Some(found);
         }
     }
 
     None
+}
+
+/// Offsets in the order of vanilla's
+/// `BlockPos.spiralAround(ZERO, radius, EAST, SOUTH)`: every position of the
+/// `(2 * radius + 1)` square around the origin, starting at the origin and
+/// walking one leg per side.
+struct SpiralAround {
+    x: i32,
+    z: i32,
+    leg: i32,
+    leg_size: i32,
+    leg_index: i32,
+    legs: i32,
+    first: bool,
+}
+
+impl SpiralAround {
+    const fn new(radius: i32) -> Self {
+        Self {
+            x: 0,
+            z: 1,
+            leg: -1,
+            leg_size: 0,
+            leg_index: 0,
+            legs: 4 * radius,
+            first: true,
+        }
+    }
+}
+
+impl Iterator for SpiralAround {
+    type Item = (i32, i32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.first {
+            self.first = false;
+            // Vanilla's cursor starts one step along the second direction.
+            self.x = 0;
+            self.z = 0;
+        } else {
+            let (dx, dz) = match self.leg.rem_euclid(4) {
+                0 => (1, 0),
+                1 => (0, 1),
+                2 => (-1, 0),
+                _ => (0, -1),
+            };
+            self.x += dx;
+            self.z += dz;
+        }
+
+        if self.leg_index >= self.leg_size {
+            if self.leg >= self.legs {
+                return None;
+            }
+            self.leg += 1;
+            self.leg_index = 0;
+            self.leg_size = self.leg / 2 + 1;
+        }
+        self.leg_index += 1;
+        Some((self.x, self.z))
+    }
 }
 
 /// The ids of every biome the given dimension's biome source can produce.
@@ -197,7 +238,7 @@ mod test {
 
     use super::super::flat::FlatGenerator;
     use super::super::{GeneratorInit, VanillaGenerator, WorldGenerator};
-    use super::{find_closest_biome_3d, out_from_origin};
+    use super::{SpiralAround, find_closest_biome_3d, out_from_origin};
 
     fn targets(biomes: &[&Biome]) -> FxHashSet<u8> {
         biomes.iter().map(|biome| biome.id).collect()
@@ -211,6 +252,27 @@ mod test {
         );
         // Origin outside the bounds gets clamped first.
         assert_eq!(out_from_origin(-500, -63, 320, 200), vec![-63, 137]);
+    }
+
+    /// The first match of `/locate biome` depends on this order, so it has to
+    /// be the order of vanilla's `BlockPos.spiralAround`.
+    #[test]
+    fn spiral_matches_vanilla_order() {
+        assert_eq!(SpiralAround::new(0).collect::<Vec<_>>(), vec![(0, 0)]);
+        assert_eq!(
+            SpiralAround::new(1).collect::<Vec<_>>(),
+            vec![
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (0, 1),
+                (-1, 1),
+                (-1, 0),
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+            ]
+        );
     }
 
     #[test]

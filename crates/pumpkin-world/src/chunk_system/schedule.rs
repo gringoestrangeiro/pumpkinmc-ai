@@ -103,6 +103,7 @@ impl GenerationSchedule {
         level: Arc<Level>,
         level_channel: Arc<LevelChannel>,
         listener: Arc<ChunkListener>,
+        io_lock: IOLock,
         thread_tracker: &mut Vec<thread::JoinHandle<()>>,
     ) {
         let (send_chunk, recv_chunk) = crossbeam::channel::unbounded();
@@ -111,11 +112,6 @@ impl GenerationSchedule {
         let recv_read_io = Arc::new(tokio::sync::Mutex::new(recv_read_io));
 
         let (send_write_io, recv_write_io) = tokio::sync::mpsc::channel(500);
-
-        let io_lock = Arc::new((
-            Mutex::new(HashMapType::default()),
-            tokio::sync::Notify::new(),
-        ));
 
         for _ in 0..io_read_thread_count {
             level.chunk_system_tasks.spawn(io_read_work(
@@ -1261,13 +1257,19 @@ impl GenerationSchedule {
                 self.process_unload_queue();
             }
             if level.should_save.swap(false, Relaxed) {
+                let request = level.save_requests.load(Relaxed);
                 self.save_all_chunk(false);
+                level.save_handled.fetch_max(request, Relaxed);
+                level.io_lock.1.notify_waiters();
             }
             if level.shut_down_chunk_system.load(Relaxed) {
                 info!("Saving chunks before shutdown...");
                 self.garbage_collect_dependencies();
                 self.process_unload_queue();
+                let request = level.save_requests.load(Relaxed);
                 self.save_all_chunk(true);
+                level.save_handled.fetch_max(request, Relaxed);
+                level.io_lock.1.notify_waiters();
                 break;
             }
 

@@ -10,6 +10,7 @@ use pumpkin_util::permission::{Permission, PermissionDefault, PermissionRegistry
 use pumpkin_util::text::click::ClickEvent;
 use pumpkin_util::text::hover::HoverEvent;
 use pumpkin_util::text::{TextComponent, color::NamedColor};
+use pumpkin_world::generation::generator::WorldGenerator;
 use pumpkin_world::generation::generator::biome_finder::find_closest_biome_3d;
 use pumpkin_world::generation::generator::structure_finder::{
     StructureSearch, find_nearest_structure, find_nearest_structure_start,
@@ -122,15 +123,13 @@ fn result_name(searched: &ResourceOrTag, found: &str) -> String {
 
 /// The structures a `/locate structure` argument names: one for a plain id,
 /// every member for a `#tag`. Vanilla's `LocateCommand.getHolders` resolves
-/// both against the `worldgen/structure` registry the same way.
+/// both against the `worldgen/structure` registry the same way. The generated
+/// structure registry only knows vanilla entries, so a namespaced id is
+/// resolved by its path; the namespace is not required to be `minecraft:`.
 /// `None` means the id or tag is unknown; a known empty tag is still valid.
 fn wanted_structures(searched: &ResourceOrTag) -> Option<Vec<StructureKeys>> {
     match searched {
-        ResourceOrTag::Resource(id) => id
-            .is_vanilla()
-            .then(|| StructureKeys::from_name(id.path()))
-            .flatten()
-            .map(|key| vec![key]),
+        ResourceOrTag::Resource(id) => StructureKeys::from_name(id.path()).map(|key| vec![key]),
         ResourceOrTag::Tag(id) => {
             tag::get_tag_values(RegistryKey::WorldgenStructure, &id.to_string()).map(|names| {
                 names
@@ -151,6 +150,15 @@ fn structure_set_containing(key: StructureKeys) -> Option<usize> {
     StructureSet::ALL
         .iter()
         .position(|set| set.structures.iter().any(|entry| entry.structure == key))
+}
+
+/// Whether the world's `structure_overrides` enable a set. Vanilla builds its
+/// structure state only from enabled sets, so a disabled set has no placement
+/// to search.
+fn structure_set_enabled(generator: &WorldGenerator, set_index: usize) -> bool {
+    generator
+        .enabled_structure_sets()
+        .is_none_or(|enabled| enabled.contains(&set_index))
 }
 
 /// Unfloored horizontal distance, for picking the nearest of several hits
@@ -208,28 +216,32 @@ impl CommandExecutor for LocateStructureExecutor {
                 .create_without_context(TextComponent::text(searched.printable())));
         };
 
+        let origin = BlockPos::floored_v(context.source.position);
+
+        let world = context.source.world();
+        let seed = world.level.seed.0;
+        let world_gen = world.level.world_gen.load_full();
+
         // A structure is located through the placement of the set that holds
         // it, but only that structure counts as a hit: `minecraft:fortress`
         // must not report a bastion just because both share
         // `minecraft:nether_complexes`. Mirrors the `placementScans` map in
-        // vanilla's `ChunkGenerator.findNearestMapStructure`.
+        // vanilla's `ChunkGenerator.findNearestMapStructure`, which only holds
+        // the sets enabled by the world's `structure_overrides`.
         let mut scans: Vec<(usize, Vec<StructureKeys>)> = Vec::new();
         for key in wanted {
             let Some(set_index) = structure_set_containing(key) else {
                 continue;
             };
+            if !structure_set_enabled(&world_gen, set_index) {
+                continue;
+            }
             if let Some((_, keys)) = scans.iter_mut().find(|(index, _)| *index == set_index) {
                 keys.push(key);
             } else {
                 scans.push((set_index, vec![key]));
             }
         }
-
-        let origin = BlockPos::floored_v(context.source.position);
-
-        let world = context.source.world();
-        let seed = world.level.seed.0;
-        let world_gen = world.level.world_gen.load_full();
 
         let mut found: Option<(BlockPos, StructureKeys)> = None;
         for (set_index, keys) in scans {
@@ -486,6 +498,50 @@ mod tests {
     fn structure_set_names_are_not_locatable() {
         assert!(wanted_structures(&resource("nether_complexes")).is_none());
         assert!(wanted_structures(&resource("villages")).is_none());
+    }
+
+    /// The worldgen registry only has vanilla entries, but the command must not
+    /// reject a namespaced id whose path is one of them (datapack ids included).
+    #[test]
+    fn namespaced_structure_ids_resolve_by_path() {
+        let datapack = ResourceOrTag::Resource(
+            Identifier::new("mypack", "fortress").expect("valid identifier"),
+        );
+        assert_eq!(
+            wanted_structures(&datapack),
+            Some(vec![StructureKeys::Fortress])
+        );
+
+        let unknown =
+            ResourceOrTag::Resource(Identifier::new("mypack", "castle").expect("valid identifier"));
+        assert!(wanted_structures(&unknown).is_none());
+    }
+
+    #[test]
+    fn disabled_structure_sets_are_not_searched() {
+        use pumpkin_data::dimension::Dimension;
+        use pumpkin_util::world_seed::Seed;
+        use pumpkin_world::generation::generator::VanillaGenerator;
+
+        let overrides = vec!["minecraft:villages".to_string()];
+        let generator = WorldGenerator::Noise(Box::new(VanillaGenerator::new_with_all_settings(
+            Seed(0),
+            Dimension::OVERWORLD,
+            None,
+            None,
+            Some(overrides.as_slice()),
+        )));
+        let villages = StructureSet::NAMES
+            .iter()
+            .position(|&name| name == "villages")
+            .expect("villages set");
+        let mineshafts = StructureSet::NAMES
+            .iter()
+            .position(|&name| name == "mineshafts")
+            .expect("mineshafts set");
+
+        assert!(structure_set_enabled(&generator, villages));
+        assert!(!structure_set_enabled(&generator, mineshafts));
     }
 
     #[test]

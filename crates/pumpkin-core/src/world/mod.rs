@@ -297,6 +297,10 @@ pub struct World {
     /// active chunks instead of scanning every loaded block entity each tick.
     pub block_entities: DashMap<Vector2<i32>, FxHashMap<BlockPos, Arc<dyn BlockEntity>>>,
     pending_block_entity_migrations: crossbeam::queue::SegQueue<Vector2<i32>>,
+    /// Block entity NBT written while its chunk was not loaded. It is merged
+    /// into the chunk the next time that chunk is loaded or saved instead of
+    /// being dropped.
+    unloaded_block_entity_nbt: DashMap<Vector2<i32>, FxHashMap<BlockPos, NbtCompound>>,
     /// Persistent custom data for the world (matching Bukkit's `PersistentDataHolder`)
     pub custom_data: std::sync::Mutex<NbtCompound>,
     /// Persistent custom data for block entities at specific positions
@@ -445,6 +449,7 @@ impl World {
             server,
             block_entities: DashMap::new(),
             pending_block_entity_migrations: crossbeam::queue::SegQueue::new(),
+            unloaded_block_entity_nbt: DashMap::new(),
             custom_data: std::sync::Mutex::new(custom_data),
             custom_block_entity_data: DashMap::new(),
             entity_tracker: entity_tracker::EntityTracker::new(),
@@ -609,6 +614,10 @@ impl World {
         for chunk_pos in chunks {
             self.save_block_entities(chunk_pos);
         }
+
+        // Block entity writes held for unloaded chunks have to reach those
+        // chunks before the chunk system shuts down and saves them.
+        self.flush_unloaded_block_entity_nbt().await;
 
         // Save portal POI to disk
         let save_result = self
@@ -6198,6 +6207,7 @@ impl World {
 
     pub fn get_block_entity(&self, block_pos: &BlockPos) -> Option<Arc<dyn BlockEntity>> {
         let chunk_pos = block_pos.chunk_position();
+        self.merge_unloaded_block_entity_nbt(chunk_pos);
         if let Some(entity) = self
             .block_entities
             .get(&chunk_pos)
@@ -6328,9 +6338,10 @@ impl World {
     }
 
     pub fn add_block_entity_nbt(&self, block_pos: BlockPos, nbt: &NbtCompound) {
-        if self
+        let chunk_pos = block_pos.chunk_position();
+        let stored = self
             .level
-            .read_chunk_sync(&block_pos.chunk_position(), |chunk| {
+            .read_chunk_sync(&chunk_pos, |chunk| {
                 chunk
                     .pending_block_entities
                     .lock()
@@ -6338,10 +6349,64 @@ impl World {
                     .insert(block_pos, nbt.clone());
                 chunk.mark_dirty(true);
             })
-            .is_some()
-        {
-            self.pending_block_entity_migrations
-                .push(block_pos.chunk_position());
+            .is_some();
+        if stored {
+            self.pending_block_entity_migrations.push(chunk_pos);
+        } else {
+            // The chunk is not loaded, so there is no chunk to hold the write.
+            // Keep it here and merge it when the chunk loads or is saved.
+            self.unloaded_block_entity_nbt
+                .entry(chunk_pos)
+                .or_default()
+                .insert(block_pos, nbt.clone());
+        }
+    }
+
+    /// Moves block entity NBT held for an unloaded chunk into that chunk. The
+    /// caller must have loaded `chunk_pos`.
+    fn merge_unloaded_block_entity_nbt(&self, chunk_pos: Vector2<i32>) {
+        if self.level.read_chunk_sync(&chunk_pos, |_| ()).is_none() {
+            return;
+        }
+        let Some((_, entries)) = self.unloaded_block_entity_nbt.remove(&chunk_pos) else {
+            return;
+        };
+        if entries.is_empty() {
+            return;
+        }
+        let stored = self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let mut chunk_entities = chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for (pos, nbt) in &entries {
+                    chunk_entities.insert(*pos, nbt.clone());
+                }
+                drop(chunk_entities);
+                chunk.mark_dirty(true);
+            })
+            .is_some();
+        if !stored {
+            self.unloaded_block_entity_nbt
+                .entry(chunk_pos)
+                .or_default()
+                .extend(entries);
+        }
+    }
+
+    /// Loads the chunks that still hold block entity NBT written while they
+    /// were unloaded, so a normal chunk save writes that NBT to disk.
+    async fn flush_unloaded_block_entity_nbt(&self) {
+        let chunks: Vec<Vector2<i32>> = self
+            .unloaded_block_entity_nbt
+            .iter()
+            .map(|e| *e.key())
+            .collect();
+        for chunk_pos in chunks {
+            self.level.get_or_fetch_chunk(chunk_pos, |_| ()).await;
+            self.merge_unloaded_block_entity_nbt(chunk_pos);
         }
     }
 
@@ -6369,7 +6434,15 @@ impl World {
                 .is_some_and(|mut chunk_block_entities| {
                     chunk_block_entities.remove(block_pos).is_some()
                 });
-        if removed || removed_pending {
+        let removed_unloaded = self
+            .unloaded_block_entity_nbt
+            .get_mut(&chunk_pos)
+            .is_some_and(|mut entities| entities.remove(block_pos).is_some());
+        if removed_unloaded {
+            self.unloaded_block_entity_nbt
+                .remove_if(&chunk_pos, |_, entities| entities.is_empty());
+        }
+        if removed || removed_pending || removed_unloaded {
             self.custom_block_entity_data.remove(block_pos);
             // Drop the chunk's map once its last block entity is gone.
             self.block_entities
@@ -6381,6 +6454,8 @@ impl World {
     }
 
     fn migrate_pending_block_entities(&self, chunk_pos: Vector2<i32>) {
+        self.merge_unloaded_block_entity_nbt(chunk_pos);
+
         let positions: Vec<BlockPos> = self
             .level
             .read_chunk_sync(&chunk_pos, |chunk| {
@@ -6938,6 +7013,8 @@ impl World {
             self.save_block_entities(chunk_pos);
         }
 
+        self.flush_unloaded_block_entity_nbt().await;
+
         if let Ok(mut portal_poi) = self.portal_poi.try_lock() {
             let _ = portal_poi.save_all();
         }
@@ -6958,10 +7035,7 @@ impl World {
             }
         }
 
-        self.level
-            .should_save
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.level.level_channel.notify();
+        self.level.request_save();
 
         let mut save_event = crate::plugin::api::events::world::world_save::WorldSaveEvent::new(
             format!("{:?}", self.dimension),
@@ -6969,6 +7043,11 @@ impl World {
         if let Some(server) = self.server.upgrade() {
             server.plugin_manager.fire(&server, &mut save_event).await;
         }
+    }
+
+    /// Waits for the chunk save requested by [`Self::save`] to reach disk.
+    pub async fn flush(&self) {
+        self.level.flush_chunk_saves().await;
     }
 
     pub fn set_custom_data(&self, namespace: &str, key: &str, value: pumpkin_nbt::tag::NbtTag) {

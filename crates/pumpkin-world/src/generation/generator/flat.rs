@@ -3,37 +3,78 @@ use crate::chunk_system::StagedChunkEnum;
 use crate::generation::Seed;
 use crate::generation::positions::chunk_pos::{start_block_x, start_block_z};
 use crate::generation::proto_chunk::ProtoChunk;
+use crate::generation::structure::placement::GlobalStructureCache;
 use pumpkin_data::Block;
+use pumpkin_data::chunk::Biome;
 use pumpkin_data::dimension::Dimension;
+use pumpkin_data::structures::{
+    StructurePlacementCalculator, StructurePlacementType, StructureSet,
+};
+use rustc_hash::FxHashSet;
 
 pub struct FlatGenerator {
     pub seed: u64,
     pub dimension: Dimension,
     pub layers: Vec<FlatLayer>,
     pub biome: String,
+    pub structure_calculator: StructurePlacementCalculator,
+    pub enabled_structure_sets: Option<FxHashSet<usize>>,
+    pub global_structure_cache: GlobalStructureCache,
 }
 
 impl FlatGenerator {
     #[must_use]
-    pub const fn new(
+    pub fn new(seed: Seed, dimension: Dimension, layers: Vec<FlatLayer>, biome: String) -> Self {
+        Self::new_with_structures(seed, dimension, layers, biome, None)
+    }
+
+    /// Creates a flat generator with the world's `structure_overrides`, which
+    /// decide the structure sets a flat world may place. Vanilla's flat
+    /// generator builds its structure state from seed 0 for the stronghold
+    /// rings (`ChunkGeneratorStructureState.createForFlat`).
+    #[must_use]
+    pub fn new_with_structures(
         seed: Seed,
         dimension: Dimension,
         layers: Vec<FlatLayer>,
         biome: String,
+        structure_overrides: Option<&[String]>,
     ) -> Self {
+        let biome_id = flat_biome_id(&biome);
+        let enabled_structure_sets = super::parse_enabled_structure_sets(structure_overrides);
+        let strongholds_enabled = enabled_structure_sets
+            .as_ref()
+            .is_none_or(|enabled| enabled.contains(&strongholds_index()));
+        let global_structure_cache = match &StructureSet::STRONGHOLDS.placement.placement_type {
+            StructurePlacementType::ConcentricRings(rings)
+                if strongholds_enabled
+                    && dimension == Dimension::OVERWORLD
+                    && ProtoChunk::get_allowed_biomes(&StructureSet::STRONGHOLDS)
+                        .contains(&u16::from(biome_id)) =>
+            {
+                GlobalStructureCache::with_background_fixed_biome_strongholds(rings, biome_id)
+            }
+            _ => GlobalStructureCache::new(),
+        };
         Self {
             seed: seed.0,
             dimension,
             layers,
             biome,
+            structure_calculator: StructurePlacementCalculator::new(seed.0 as i64),
+            enabled_structure_sets,
+            global_structure_cache,
         }
     }
 
+    #[must_use]
+    pub fn biome(&self) -> &'static Biome {
+        Biome::from_name(self.biome.strip_prefix("minecraft:").unwrap_or(&self.biome))
+            .unwrap_or(&Biome::PLAINS)
+    }
+
     pub fn step_to_biomes(&self, chunk: &mut ProtoChunk) {
-        let clean_biome = self.biome.strip_prefix("minecraft:").unwrap_or(&self.biome);
-        let biome_id = pumpkin_data::chunk::Biome::from_name(clean_biome)
-            .map_or(pumpkin_data::chunk::Biome::PLAINS.id, |b| b.id);
-        chunk.flat_biome_map.fill(biome_id);
+        chunk.flat_biome_map.fill(self.biome().id);
         chunk.stage = StagedChunkEnum::Biomes;
     }
 
@@ -68,4 +109,17 @@ impl FlatGenerator {
         chunk.snapshot_wg_heightmaps();
         chunk.stage = StagedChunkEnum::Carvers;
     }
+}
+
+fn flat_biome_id(name: &str) -> u8 {
+    Biome::from_name(name.strip_prefix("minecraft:").unwrap_or(name))
+        .unwrap_or(&Biome::PLAINS)
+        .id
+}
+
+fn strongholds_index() -> usize {
+    StructureSet::NAMES
+        .iter()
+        .position(|&name| name == "strongholds")
+        .unwrap_or(usize::MAX)
 }

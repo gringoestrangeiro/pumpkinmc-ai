@@ -107,8 +107,19 @@ impl WorldGenerator {
     ) -> Option<&crate::generation::structure::placement::GlobalStructureCache> {
         match self {
             Self::Noise(noise_gen) => Some(&noise_gen.global_structure_cache),
-            Self::Flat(_) => None,
+            Self::Flat(flat_gen) => Some(&flat_gen.global_structure_cache),
             Self::Custom(custom_gen) => custom_gen.global_structure_cache(),
+        }
+    }
+
+    /// The structure sets enabled through the world's `structure_overrides`.
+    /// `None` means every set is enabled.
+    #[must_use]
+    pub fn enabled_structure_sets(&self) -> Option<&rustc_hash::FxHashSet<usize>> {
+        match self {
+            Self::Noise(noise_gen) => noise_gen.enabled_structure_sets.as_ref(),
+            Self::Flat(flat_gen) => flat_gen.enabled_structure_sets.as_ref(),
+            Self::Custom(_) => None,
         }
     }
 
@@ -119,6 +130,22 @@ impl WorldGenerator {
             _ => pumpkin_util::math::position::BlockPos::ZERO,
         }
     }
+}
+
+/// Maps `structure_overrides` names to indexes in [`StructureSet::ALL`].
+/// `None` means no override list was configured, so all sets are enabled.
+pub(crate) fn parse_enabled_structure_sets(
+    structure_overrides: Option<&[String]>,
+) -> Option<rustc_hash::FxHashSet<usize>> {
+    structure_overrides.map(|overrides| {
+        overrides
+            .iter()
+            .filter_map(|s| {
+                let clean = s.strip_prefix("minecraft:").unwrap_or(s);
+                StructureSet::NAMES.iter().position(|&name| name == clean)
+            })
+            .collect()
+    })
 }
 
 pub struct VanillaGenerator {
@@ -200,16 +227,7 @@ impl VanillaGenerator {
             );
         }
 
-        let enabled_structure_sets: Option<rustc_hash::FxHashSet<usize>> =
-            structure_overrides.map(|overrides| {
-                overrides
-                    .iter()
-                    .filter_map(|s| {
-                        let clean = s.strip_prefix("minecraft:").unwrap_or(s);
-                        StructureSet::NAMES.iter().position(|&name| name == clean)
-                    })
-                    .collect()
-            });
+        let enabled_structure_sets = parse_enabled_structure_sets(structure_overrides);
 
         let global_structure_cache = if dimension == Dimension::OVERWORLD {
             let pumpkin_data::structures::StructurePlacementType::ConcentricRings(rings) =

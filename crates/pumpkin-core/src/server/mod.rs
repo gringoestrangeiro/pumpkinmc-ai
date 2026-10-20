@@ -593,6 +593,16 @@ impl Server {
     }
 
     pub async fn save_all(&self) -> Result<(), String> {
+        self.save_all_impl(false).await
+    }
+
+    /// `/save-all flush`: like [`Self::save_all`], but waits until every world's
+    /// chunks and region files have been written before returning.
+    pub async fn save_all_flush(&self) -> Result<(), String> {
+        self.save_all_impl(true).await
+    }
+
+    async fn save_all_impl(&self, flush: bool) -> Result<(), String> {
         self.management_hub.broadcast_server_saving();
 
         if let Err(err) = self.save_world_info() {
@@ -616,6 +626,11 @@ impl Server {
 
         for world in self.worlds.load().iter() {
             world.save().await;
+        }
+        if flush {
+            for world in self.worlds.load().iter() {
+                world.flush().await;
+            }
         }
 
         self.management_hub.broadcast_server_saved();

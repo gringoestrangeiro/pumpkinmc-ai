@@ -71,7 +71,13 @@ pub fn get_world_gen_with_all_settings(
 ) -> Box<generator::WorldGenerator> {
     if is_flat {
         Box::new(generator::WorldGenerator::Flat(Box::new(
-            generator::flat::FlatGenerator::new(seed, dimension, flat_layers, flat_biome),
+            generator::flat::FlatGenerator::new_with_structures(
+                seed,
+                dimension,
+                flat_layers,
+                flat_biome,
+                structure_overrides,
+            ),
         )))
     } else {
         Box::new(generator::WorldGenerator::Noise(Box::new(

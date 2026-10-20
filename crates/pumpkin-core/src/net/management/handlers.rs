@@ -801,9 +801,13 @@ async fn execute_method(
             Ok(serde_json::to_value(state).unwrap_or(Value::Null))
         }
         "minecraft:server/save" => {
-            let _flush: bool = parse_param(params, "flush")?;
+            let flush: bool = parse_param(params, "flush")?;
             server.management_hub.broadcast_server_saving();
-            let _ = server.save_all().await;
+            if flush {
+                let _ = server.save_all_flush().await;
+            } else {
+                let _ = server.save_all().await;
+            }
             server.management_hub.broadcast_server_saved();
             Ok(json!(true))
         }

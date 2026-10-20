@@ -138,22 +138,46 @@ pub fn find_nearest_structure_start(
             },
         },
     };
-    use pumpkin_data::structures::Structure;
+    use pumpkin_data::structures::{Structure, StructurePlacementCalculator};
 
-    let WorldGenerator::Noise(noise_generator) = generator else {
-        return None;
-    };
     let StructurePlacementType::RandomSpread(placement) = &structure_set.placement.placement_type
     else {
         return None;
+    };
+
+    // Flat worlds use their fixed biome to accept or reject a placement, and a
+    // custom generator can only be searched when it exposes a structure cache.
+    // Both report vanilla's locate position (the start chunk origin) because
+    // neither generates the start through the noise pipeline.
+    let custom_calculator;
+    let (world_seed, calculator, global_cache, flat_biome) = match generator {
+        WorldGenerator::Noise(noise_generator) => (
+            noise_generator.random_config.seed as i64,
+            &noise_generator.structure_calculator,
+            &noise_generator.global_structure_cache,
+            None,
+        ),
+        WorldGenerator::Flat(flat_generator) => (
+            flat_generator.seed as i64,
+            &flat_generator.structure_calculator,
+            &flat_generator.global_structure_cache,
+            Some(flat_generator.biome().id),
+        ),
+        WorldGenerator::Custom(custom_generator) => {
+            custom_calculator = StructurePlacementCalculator::new(custom_generator.seed() as i64);
+            (
+                custom_calculator.seed,
+                &custom_calculator,
+                custom_generator.global_structure_cache()?,
+                None,
+            )
+        }
     };
 
     let chunk_origin_x = origin.0.x >> 4;
     let chunk_origin_z = origin.0.z >> 4;
     let region_origin_x = floor_div(chunk_origin_x, placement.spacing);
     let region_origin_z = floor_div(chunk_origin_z, placement.spacing);
-    let world_seed = noise_generator.random_config.seed as i64;
-    let global_cache = &noise_generator.global_structure_cache;
 
     for radius in 0..=max_search_radius {
         let mut nearest: Option<(FoundStructure, pumpkin_data::structures::StructureKeys)> = None;
@@ -171,7 +195,7 @@ pub fn find_nearest_structure_start(
                 );
                 if !should_generate_structure(
                     &structure_set.placement,
-                    &noise_generator.structure_calculator,
+                    calculator,
                     chunk_x,
                     chunk_z,
                     global_cache,
@@ -180,43 +204,55 @@ pub fn find_nearest_structure_start(
                 }
 
                 for &key in target_structures {
-                    let start =
-                        global_cache.get_or_compute_structure_start(key, chunk_x, chunk_z, || {
-                            let settings = noise_generator.settings;
-                            // The start is cached and chunk generation reuses it, so it has to be
-                            // computed the same way: real column heights and this dimension's biomes.
-                            let mut height_sampler = NoiseHeightSampler::new(noise_generator);
-                            let mut biome_sampler = MultiNoiseSampler::generate(
-                                &noise_generator.base_router.multi_noise,
-                            );
-                            let biome_supplier: &dyn BiomeSupplier =
-                                &noise_generator.biome_supplier;
-                            let context = StructureGeneratorContext {
-                                seed: world_seed,
-                                chunk_x,
-                                chunk_z,
-                                random: create_chunk_random(world_seed, chunk_x, chunk_z),
-                                sea_level: settings.sea_level,
-                                min_y: (settings.shape.min_y as i32)
-                                    .max(noise_generator.dimension.min_y),
-                                height: settings
-                                    .shape
-                                    .height
-                                    .min(noise_generator.dimension.height as u16),
-                                height_sampler: Some(&mut height_sampler),
-                                structure_key: Some(key),
-                            };
-                            lazily_generate_structure(
-                                &key,
-                                Structure::get(&key),
-                                context,
-                                biome_supplier,
-                                &mut biome_sampler,
-                            )
-                        });
-                    let Some(_start) = start else {
-                        continue;
+                    let valid = match generator {
+                        WorldGenerator::Noise(noise_generator) => {
+                            global_cache
+                                .get_or_compute_structure_start(key, chunk_x, chunk_z, || {
+                                    let settings = noise_generator.settings;
+                                    // The start is cached and chunk generation reuses it, so it has to be
+                                    // computed the same way: real column heights and this dimension's biomes.
+                                    let mut height_sampler =
+                                        NoiseHeightSampler::new(noise_generator);
+                                    let mut biome_sampler = MultiNoiseSampler::generate(
+                                        &noise_generator.base_router.multi_noise,
+                                    );
+                                    let biome_supplier: &dyn BiomeSupplier =
+                                        &noise_generator.biome_supplier;
+                                    let context = StructureGeneratorContext {
+                                        seed: world_seed,
+                                        chunk_x,
+                                        chunk_z,
+                                        random: create_chunk_random(world_seed, chunk_x, chunk_z),
+                                        sea_level: settings.sea_level,
+                                        min_y: (settings.shape.min_y as i32)
+                                            .max(noise_generator.dimension.min_y),
+                                        height: settings
+                                            .shape
+                                            .height
+                                            .min(noise_generator.dimension.height as u16),
+                                        height_sampler: Some(&mut height_sampler),
+                                        structure_key: Some(key),
+                                    };
+                                    lazily_generate_structure(
+                                        &key,
+                                        Structure::get(&key),
+                                        context,
+                                        biome_supplier,
+                                        &mut biome_sampler,
+                                    )
+                                })
+                                .is_some()
+                        }
+                        WorldGenerator::Flat(_) => {
+                            flat_biome.is_some_and(|biome_id| structure_allows_biome(key, biome_id))
+                        }
+                        // A custom generator's starts are opaque; its cache is the
+                        // only structure data the server shares with it.
+                        WorldGenerator::Custom(_) => true,
                     };
+                    if !valid {
+                        continue;
+                    }
                     // Vanilla getLocatePos: chunkPos.getMinBlockX(), 0, chunkPos.getMinBlockZ()
                     let locate_x = chunk_x << 4;
                     let locate_z = chunk_z << 4;
@@ -241,6 +277,18 @@ pub fn find_nearest_structure_start(
         }
     }
     None
+}
+
+/// Whether `key` lists `biome_id` among its biomes, which is how vanilla's
+/// flat structure state decides that a set may place in its single biome.
+fn structure_allows_biome(key: pumpkin_data::structures::StructureKeys, biome_id: u8) -> bool {
+    let structure = pumpkin_data::structures::Structure::get(&key);
+    let tag = structure
+        .biomes
+        .strip_prefix('#')
+        .unwrap_or(structure.biomes);
+    pumpkin_data::tag::get_tag_ids(pumpkin_data::tag::RegistryKey::WorldgenBiome, tag)
+        .is_some_and(|ids| ids.contains(&u16::from(biome_id)))
 }
 
 fn find_nearest_concentric(
@@ -335,7 +383,7 @@ mod configured_biome_regression {
     use super::find_nearest_structure_start;
     use crate::{
         generation::{
-            generator::{VanillaGenerator, WorldGenerator},
+            generator::{VanillaGenerator, WorldGenerator, flat::FlatGenerator},
             positions::chunk_pos::{start_block_x, start_block_z},
             proto_chunk::ProtoChunk,
             structure::{
@@ -484,6 +532,49 @@ mod configured_biome_regression {
         assert_eq!(
             actual, expected,
             "locate changed configured-biome starts/order"
+        );
+        Ok(())
+    }
+
+    /// Flat worlds locate through their single biome, like vanilla's
+    /// `createForFlat` structure state. A biome the structure cannot use must
+    /// not produce a hit.
+    #[test]
+    fn flat_world_locates_by_its_fixed_biome() -> TestResult<()> {
+        let overrides = ["minecraft:villages".to_owned()];
+        let flat = |biome: &str| {
+            WorldGenerator::Flat(Box::new(FlatGenerator::new_with_structures(
+                Seed(SEED),
+                Dimension::OVERWORLD,
+                Vec::new(),
+                biome.to_owned(),
+                Some(overrides.as_slice()),
+            )))
+        };
+
+        let plains = flat("minecraft:plains");
+        let found = find_nearest_structure_start(
+            BlockPos::ZERO,
+            &StructureSet::VILLAGES,
+            &[StructureKeys::VillagePlains],
+            2,
+            &plains,
+        );
+        assert_eq!(
+            found.map(|(_, key)| key),
+            Some(StructureKeys::VillagePlains)
+        );
+
+        let nether = flat("minecraft:nether_wastes");
+        assert!(
+            find_nearest_structure_start(
+                BlockPos::ZERO,
+                &StructureSet::VILLAGES,
+                &[StructureKeys::VillagePlains],
+                2,
+                &nether,
+            )
+            .is_none()
         );
         Ok(())
     }

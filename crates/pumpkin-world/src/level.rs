@@ -1,4 +1,6 @@
-use crate::chunk_system::{ChunkListener, ChunkLoading, GenerationSchedule, LevelChannel};
+use crate::chunk_system::{
+    ChunkListener, ChunkLoading, GenerationSchedule, HashMapType, IOLock, LevelChannel,
+};
 use crate::generation::generator::WorldGenerator;
 use crate::lighting::DynamicLightEngine;
 use crate::{
@@ -102,6 +104,13 @@ pub struct Level {
 
     pub shut_down_chunk_system: AtomicBool,
     pub should_save: AtomicBool,
+    /// Save requests whose chunk dispatch is counted by [`Self::save_handled`].
+    /// `/save-all flush` uses the pair to wait for the save it asked for instead
+    /// of returning as soon as the scheduler is idle.
+    pub(crate) save_requests: AtomicU64,
+    pub(crate) save_handled: AtomicU64,
+    /// Chunks queued for the chunk I/O writer. Empty means no write is in flight.
+    pub(crate) io_lock: IOLock,
     pub should_unload: AtomicBool,
     /// Whether periodic autosaving is enabled. Toggled by `/save-off` and `/save-on`;
     /// a manual `/save-all` still saves while this is `false`.
@@ -286,6 +295,10 @@ impl Level {
         let level_channel = Arc::new(LevelChannel::new());
         let thread_tracker = Mutex::new(Vec::new());
         let listener = Arc::new(ChunkListener::new());
+        let io_lock: IOLock = Arc::new((
+            Mutex::new(HashMapType::default()),
+            tokio::sync::Notify::new(),
+        ));
 
         let level_ref = Arc::new(Self {
             seed,
@@ -308,6 +321,9 @@ impl Level {
             cancel_token: CancellationToken::new(),
             shut_down_chunk_system: AtomicBool::new(false),
             should_save: AtomicBool::new(false),
+            save_requests: AtomicU64::new(0),
+            save_handled: AtomicU64::new(0),
+            io_lock: io_lock.clone(),
             should_unload: AtomicBool::new(false),
             save_enabled: AtomicBool::new(true),
             autosave_ticks: level_config.autosave_ticks,
@@ -322,6 +338,7 @@ impl Level {
             level_ref.clone(),
             level_channel,
             listener,
+            io_lock,
             level_ref
                 .thread_tracker
                 .lock()
@@ -445,6 +462,46 @@ impl Level {
     pub async fn flush_due_regions(&self) {
         self.chunk_saver.flush_due().await;
         self.entity_saver.flush_due().await;
+    }
+
+    /// Queues a chunk save pass without waiting for it, matching `/save-all`.
+    pub fn request_save(&self) {
+        self.save_requests.fetch_add(1, Ordering::Relaxed);
+        self.should_save.store(true, Ordering::Relaxed);
+        self.level_channel.notify();
+    }
+
+    /// Queues a save pass and waits until every chunk it dispatched has been
+    /// written, then flushes the region files to disk. `/save-all flush` uses
+    /// this so the success message means the chunks are on disk.
+    pub async fn flush_chunk_saves(&self) {
+        let request = self.save_requests.fetch_add(1, Ordering::Relaxed) + 1;
+        self.should_save.store(true, Ordering::Relaxed);
+        self.level_channel.notify();
+
+        loop {
+            let writes_pending = !self
+                .io_lock
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty();
+            if self.save_handled.load(Ordering::Relaxed) >= request && !writes_pending {
+                break;
+            }
+            // Shutdown drains and flushes its own writes; do not wait forever
+            // for a scheduler that has already stopped.
+            if self.shut_down_chunk_system.load(Ordering::Relaxed) {
+                break;
+            }
+            // The scheduler and the I/O writer notify on progress. A timeout
+            // covers a notification that lands between the check and the wait.
+            let _ =
+                tokio::time::timeout(Duration::from_millis(50), self.io_lock.1.notified()).await;
+        }
+
+        self.chunk_saver.flush_all().await;
+        self.entity_saver.flush_all().await;
     }
 
     pub fn loaded_chunk_count(&self) -> usize {
