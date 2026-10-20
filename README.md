@@ -100,6 +100,23 @@ and customizable experience. It prioritizes performance and player enjoyment whi
 
 <!-- Check out our [Github Project](https://github.com/orgs/Pumpkin-MC/projects/3) to see current progress. -->
 
+## Parity
+
+Tracker-derived completion against Java Edition 26.3. This is a coverage score, not a behavioral audit; see [PARITY.md](PARITY.md) for the methodology, per-category detail, and known gaps.
+
+| Category | Done | Total | Parity |
+| :--- | ---: | ---: | ---: |
+| Blocks | 163 | 196 | 83.2% |
+| Entities | 50 | 160 | 31.2% |
+| Commands | 92 | 94 | 97.9% |
+| Items | 51 | 55 | 92.7% |
+| Redstone | 24 | 27 | 88.9% |
+| World | 13 | 16 | 81.2% |
+| Combat | 13 | 14 | 92.9% |
+| **Total** | **406** | **562** | **72.2%** |
+
+Integrated-server-only commands such as `/publish` and `/unpublish` are excluded from the command total. The upstream public tracker reports about 71.5% on the same in-scope basis.
+
 ## How to run
 
 See the upstream [Quick Start](https://docs.pumpkinmc.org/#quick-start) guide to get PumpkinMC-AI running.
