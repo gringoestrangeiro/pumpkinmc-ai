@@ -1,7 +1,7 @@
 # Parity Tracking
 
 **Last updated:** 2026-10-20
-**Fork code commit:** `a227a7212`
+**Fork code commit:** `9bd87c478`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
@@ -76,6 +76,20 @@ Several rows improved without closing:
 - Chest boats: `77ef9dd4c` adds the inventory and container interaction; water-status/buoyancy physics is still missing, so the 11 chest-boat rows stay partial.
 - Fish: `863285f7a` fixes swimming, panic, and land flopping; schooling and drying out remain, so Cod, Salmon, and Tropical Fish stay partial.
 
+## Wave 1 (2026-10-20)
+
+Wave 1 targets one ported fix and a set of rows the tracker already lists as open. The table records implementation status against vanilla 26.3, not tracker count changes; the totals above stay pending until the Wave 1 worktrees merge. Checks marked **verify-only** need a live run, not more code reading.
+
+| Row | Status | Evidence | Still needed |
+| :--- | :--- | :--- | :--- |
+| Commands / `/locate` height bug | fixed, verify-only | Port of upstream PR `#4029` in `crates/pumpkin-world/src/generation/generator/structure_finder.rs`: located starts now use `NoiseHeightSampler` and the generator's biome supplier, matching `set_structure_starts` in `proto_chunk.rs` and vanilla `ChunkGenerator.getStructureGeneratingAt`. The existing regression test at `structure_finder.rs:439` compares locate-first and generation-first starts. | `/locate structure minecraft:village_snowy` on ungenerated chunks, teleport, confirm the village sits on the surface and not under water. |
+| Items / Name Tag | done, verify-only | `item/items/name_tag.rs:20-34` sets `CustomName`, sets `PersistenceRequired` for mobs and decrements unless creative, matching vanilla `NameTagItem.interactLivingEntity`; vanilla's creative path uses a copy of the stack in `Player.interactOn:806-808`, so the guard is equivalent. | Name a mob, relog, confirm the name and persistence survive, and the tag is consumed in survival but not creative. |
+| Blocks / Shulker Box | partial | `block/blocks/shulker_box.rs:73-100` opens the container, but there is no vanilla `canOpen` lid-space check and no `PiglinAi.angerNearbyPiglins` call (`ShulkerBoxBlock.java:68-82`). The tracker premise is inverted: vanilla returns `true` when the animation is not `CLOSED`, then checks for a clear lid. | Place a solid block in the lid space; vanilla refuses to open, Pumpkin currently opens. |
+| Blocks / Structure Block | done for the tracker gap, partial as a block | The tracker's "capture/save/load execution" gap is implemented: save and load actions work (`net/java/play/set_structure_block.rs:146-171`, helpers at `178-284`) and the block entity NBT round-trips. Still missing: corner-mode `ACTION_SCAN_AREA` and redstone-powered execution; `block/blocks/structure_block.rs:18-30` only opens the GUI. | Save a structure, load it elsewhere, then test corner DETECT and a powered structure block. |
+| Commands / `/locate` coverage | partial | Structure, biome and POI branches exist (`command/commands/locate.rs`). Datapack structure ids are rejected (`wanted_structures` requires `is_vanilla()`), structure sets disabled through `enabled_structure_sets` are not filtered, flat and custom generators return not found (`structure_finder.rs:143`), and biome sampling uses a different ring order than vanilla `BlockPos.spiralAround` (`biome_finder.rs:84-110`). | Live check of all three branches, plus a datapack structure and a superflat world. |
+| World / loading | done, verify-only | `level.rs:150-176` resolves canonical `dimensions/<namespace>/<name>` and falls back to `region`, `DIM-1`, `DIM1`; both paths have tests at `level.rs:1043-1096`. `world_info/anvil.rs:361-420` reads `level.dat`, checks data and level versions, and reads the seed. | Import a vanilla 26.3 world in both the canonical and legacy layouts. |
+| World / saving | partial, verify-only | `save_all` (`server/mod.rs:595-618`) writes world info, players and advancements, then calls `world.save()`. `stop` saves block entities and POI before `level.shutdown` (`world/mod.rs:599-624`). `save-all flush` uses the same executor as `save-all` and does not wait for chunk writes, and `add_block_entity_nbt` still drops writes for chunks that are no longer loaded (`world/mod.rs:6373-6389`). | A/B `#3902`: fresh area, chest with items, `stop` without `save-all`, restart, reopen the chest. |
+
 ## Command parity audit
 
 Vanilla 26.3 registers **87 root commands** for a dedicated server once the dev-only commands are excluded. Pumpkin registers **86** of them.
@@ -93,7 +107,7 @@ Root coverage is not subcommand coverage. A full subcommand and behavior audit a
 | :--- | :--- | :--- |
 | `/debug function` | missing subcommand | Pumpkin has `/debug start` and `/debug stop`; the vanilla function tracer is absent. |
 | `/version` | present, wrong behavior | `/version` is an alias of `/pumpkin`, which prints project and contributor info. Vanilla prints game version, data version, protocol, build time, and pack versions. Split it into a real `/version` or document the deviation. |
-| `/jfr start`, `/jfr stop`, `/jfr dump` | missing | JVM Flight Recorder tooling, not gameplay. Recommend a documented non-goal; operators can use JVM flags or `jcmd`. |
+| `/jfr start`, `/jfr stop` | missing | JVM Flight Recorder tooling, not gameplay. Vanilla 26.3 registers only `start` and `stop`; there is no `/jfr dump` subcommand. Recommend a documented non-goal; operators can use JVM flags or `jcmd`. |
 
 `/locate` is marked partial by the tracker, but the current code implements structure, biome, and POI searches. It needs a live verification before the row is moved to done.
 
@@ -128,4 +142,4 @@ The 143 partial and 4 planned rows are mapped to roadmap tasks in Appendix B. Th
 - **Items:** 4 partial rows.
 - **Commands:** 1 partial (`/locate`) and 1 planned (`/jfr`) row. `/jfr` is a recommended non-goal, so `/locate` is the only remaining command verification.
 
-Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 19.5 pp.
+Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 18.0 pp (101 / 562).
