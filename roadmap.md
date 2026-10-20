@@ -4,7 +4,7 @@
 
 **Snapshot date:** 2026-10-20.
 
-**Repository state:** fork `fork-ai-main` code tip `72cbc5eb3`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 3 is in progress; the remaining work is the rest of Wave 3 onward plus live checks. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` code tip `1b7fbeb90`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 3 is complete except for Beehive & Bee Nest; the remaining work is the 54 entity rows plus Beehive, then live checks. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -2731,7 +2731,7 @@ Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: W
 
 #### Wave 3 progress (2026-10-20)
 
-Wave 3 has started directly with the low-risk rows. Merged at `b5d232b02`: Chests (cat on lid blocks opening), Lily Pad (fluid-tag support), Infested Blocks (Silk Touch suppresses silverfish). Code-audited and closed theoretically: Conduit, Dragon Egg, Sea Pickles, Fire (the hardcoded biome list matches the eight 26.3 increased-burnout biomes). Merged at `72cbc5eb3`: Mace (piecewise fall damage, smash knockback, gliding exclusion). `/jfr` and 1.8 combat mode are documented non-goals. That is **10 rows** and moves the theoretical total to **497 / 65 / 0 = 88.4%**. Still open in Wave 3: Elytra, Beehive & Bee Nest, Sculk Catalyst, Dispenser, the piston cluster, `/locate`, and world saving.
+Wave 3 is complete except for Beehive & Bee Nest. Closed in this wave: Chests, Lily Pad, Infested Blocks, Conduit, Dragon Egg, Sea Pickles, Fire, Mace, Elytra, Dispenser, Sculk Catalyst, Pistons, Piston Head, Moving Piston, the redstone piston/block-swapping row, world moved-block persistence, `/locate`, world saving, plus the `/jfr` and 1.8 combat documented non-goals. That is **20 rows** and moves the theoretical total to **507 / 55 / 0 = 90.2%**. The remaining non-entity row is Beehive & Bee Nest, which depends on the Bee entity row.
 
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
@@ -3224,7 +3224,7 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 72 more rows, and the first Wave 3 rows closed 10, so the current open list is **65 partial + 0 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 72 more rows, and Wave 3 closed 20, so the current open list is **55 partial + 0 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |

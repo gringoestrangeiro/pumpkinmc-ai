@@ -1,23 +1,23 @@
 # Parity Tracking
 
 **Last updated:** 2026-10-20
-**Fork code commit:** `72cbc5eb3`
+**Fork code commit:** `1b7fbeb90`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
 
 The public PumpkinMC tracker had **564 entries: 402 done, 155 partial, 7 planned**. Two of those planned rows are `/publish` and `/unpublish`, which vanilla registers only for the integrated server. They are excluded from the dedicated-server target, so the in-scope baseline is **562 entries: 402 done, 155 partial, 5 planned**, or **71.5%**.
 
-This fork now has **497 done, 65 partial, 0 planned** in the **theoretical code-complete** count, or **88.4%**. That count includes Wave 1, Wave 2, and the first Wave 3 rows, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
+This fork now has **507 done, 55 partial, 0 planned** in the **theoretical code-complete** count, or **90.2%**. That count includes Wave 1, Wave 2, and Wave 3 code, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
 
 | Metric | Upstream | This fork (theoretical) | Delta |
 | :--- | ---: | ---: | ---: |
 | In-scope tracker entries | 562 | 562 | 0 |
-| Done | 402 | 497 | +95 |
-| Partial | 155 | 65 | -90 |
+| Done | 402 | 507 | +105 |
+| Partial | 155 | 55 | -100 |
 | Planned | 5 | 0 | -5 |
-| Strict completion, done only | 71.5% | 88.4% | +16.9 pp |
-| Weighted completion, partial = 0.5 | 85.3% | 94.2% | +8.9 pp |
+| Strict completion, done only | 71.5% | 90.2% | +18.7 pp |
+| Weighted completion, partial = 0.5 | 85.3% | 95.1% | +9.8 pp |
 
 ## What the percentage means
 
@@ -33,22 +33,22 @@ The tracker's green entries still mean only "an implementation source exists". T
 
 Commit `798734a3a` repairs both paths. They stay counted as done, but they now have code, game rules, and dispatch tests behind them.
 
-**65 tracker rows are still open** (all partial). The theoretical percentage is not a claim that those rows or the 497 done rows behave correctly in-game.
+**55 tracker rows are still open** (all partial). The theoretical percentage is not a claim that those rows or the 507 done rows behave correctly in-game.
 
 ## Per-category status
 
 | Category | Entries | Done | Partial | Planned | Done % |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Blocks | 196 | 190 | 6 | 0 | 96.9% |
+| Blocks | 196 | 195 | 1 | 0 | 99.5% |
 | Entities | 160 | 106 | 54 | 0 | 66.3% |
-| Commands | 94 | 93 | 1 | 0 | 98.9% |
-| Items | 55 | 54 | 1 | 0 | 98.2% |
-| Redstone | 27 | 26 | 1 | 0 | 96.3% |
-| World | 16 | 14 | 2 | 0 | 87.5% |
+| Commands | 94 | 94 | 0 | 0 | 100% |
+| Items | 55 | 55 | 0 | 0 | 100% |
+| Redstone | 27 | 27 | 0 | 0 | 100% |
+| World | 16 | 16 | 0 | 0 | 100% |
 | Combat | 14 | 14 | 0 | 0 | 100% |
-| **Total** | **562** | **497** | **65** | **0** | **88.4%** |
+| **Total** | **562** | **507** | **55** | **0** | **90.2%** |
 
-Entities are still the dominant gap. They are 54 of the 65 open rows, which is why mob AI work moves the tracker percentage much more than block edge cases do.
+Entities are still the dominant gap. They are 54 of the 55 open rows; the only non-entity row left is Beehive & Bee Nest.
 
 ## Rows closed or repaired by this fork
 
@@ -131,6 +131,12 @@ The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity F
 | Lily Pad | Placement now uses the fluid tag instead of testing a block against a fluid tag. | Place a lily pad on water and on a tagged support block. |
 | Infested Blocks | Silk Touch now suppresses the silverfish spawn; normal breaks still spawn it. | Break infested stone with and without Silk Touch. |
 | Mace | Piecewise fall-damage curve, 3.5-block smash knockback, gliding exclusion. | Hit a mob from 1.6/3/8/12 blocks of fall; check damage and nearby knockback. |
+| Elytra | Fall-flying movement, start/stop conditions, 1 durability per 20 ticks, glide flag/pose, firework boost. | Glide, land, break the elytra, toggle creative flight/water/vehicle, relog. |
+| Dispenser | Bone meal (crops and water plants), XP bottles, llama/donkey/mule chests, armadillo brushing, mob buckets. | Fire each dispenser case into its target. |
+| Sculk Catalyst | Mob-death listener, XP absorption, cursor NBT, bloom and sculk spreading. | Kill a mob near a catalyst, watch bloom/spread, relog. |
+| Pistons, Piston Head, Moving Piston, Pistons/block swapping, world Redstone | Vanilla movement checks, head/base drops and break propagation, moved-state NBT, waterlogged completion, stuck entities. | Push/pull, break head/base, quick toggle, save/restart mid-animation. |
+| `/locate` | Namespaced ids by path, enabled structure sets, flat/custom generator handling, vanilla biome spiral order. | Compare structure/biome/POI coordinates with vanilla in noise and flat worlds. |
+| World saving | `save-all flush` waits for writes; deferred block-entity NBT for unloaded chunks; shutdown ordering. | `#3902` chest 10k blocks out, `/stop`, restart; `/save-all flush` feedback timing. |
 | `/jfr`, 1.8 combat mode | Documented non-goals; see **Documented deviations**. | Documentation only. |
 
 ## Command parity audit
@@ -176,15 +182,11 @@ The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562
 
 ## Open gaps by workstream
 
-The 65 partial rows are mapped to roadmap tasks in Appendix B. The largest clusters are:
+The 55 partial rows are mapped to roadmap tasks in Appendix B. The largest cluster is:
 
 - **Entities:** 54 partial rows, mostly mob AI, pathfinding, and missing interactions.
-- **Blocks:** 6 partial rows (Beehive & Bee Nest, Sculk Catalyst, Moving Piston, Piston Head, Pistons, Dispenser).
-- **Redstone:** 1 partial row (pistons).
-- **World:** 2 partial rows (world saving and moved-block persistence).
-- **Items:** 1 partial row (Elytra).
-- **Commands:** 1 partial (`/locate`); `/jfr` is documented as a non-goal.
-- **Combat:** 0 open; 1.8 combat mode is documented as a non-goal.
+- **Blocks:** 1 partial row (Beehive & Bee Nest, which depends on the Bee entity row).
+- Commands, items, redstone, world and combat have no open rows; `/jfr` and 1.8 combat mode are documented non-goals.
 
 Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 9.6 pp (54 / 562).
 
