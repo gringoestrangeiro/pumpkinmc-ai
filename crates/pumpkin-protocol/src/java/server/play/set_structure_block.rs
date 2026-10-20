@@ -42,6 +42,7 @@ impl SSetStructureBlock<'_> {
     pub const FLAG_IGNORE_ENTITIES: u8 = 0x01;
     pub const FLAG_SHOW_AIR: u8 = 0x02;
     pub const FLAG_SHOW_BOUNDING_BOX: u8 = 0x04;
+    pub const FLAG_STRICT: u8 = 0x08;
 
     #[must_use]
     pub const fn ignore_entities(&self) -> bool {
@@ -56,6 +57,11 @@ impl SSetStructureBlock<'_> {
     #[must_use]
     pub const fn show_bounding_box(&self) -> bool {
         (self.flags & Self::FLAG_SHOW_BOUNDING_BOX) != 0
+    }
+
+    #[must_use]
+    pub const fn is_strict(&self) -> bool {
+        (self.flags & Self::FLAG_STRICT) != 0
     }
 }
 

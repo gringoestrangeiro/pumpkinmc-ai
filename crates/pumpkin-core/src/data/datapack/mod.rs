@@ -456,6 +456,11 @@ impl DatapackManager {
             &mut loaded_packs_vec,
         );
 
+        let generated_structures = structure_loader::load_generated_structures(world_path);
+        if generated_structures > 0 {
+            info!("Loaded {generated_structures} generated structure template(s)");
+        }
+
         let damage_type_registry = build_damage_type_registry(all_damage_type_defs);
 
         recipe_manager.set_recipes(all_recipes);

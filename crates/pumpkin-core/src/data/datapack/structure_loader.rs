@@ -65,6 +65,32 @@ fn visit_structure_dir(dir: &Path, namespace: &str, prefix: &str, count: &mut us
     }
 }
 
+/// Scans `<world_path>/generated/<namespace>/structure/` for templates saved by structure blocks.
+#[must_use]
+pub fn load_generated_structures(world_path: &Path) -> usize {
+    let generated_dir = world_path.join("generated");
+    let Ok(entries) = fs::read_dir(&generated_dir) else {
+        return 0;
+    };
+
+    let mut count = 0;
+    for entry in entries.flatten() {
+        let namespace_path = entry.path();
+        if !namespace_path.is_dir() {
+            continue;
+        }
+
+        let structure_dir = namespace_path.join("structure");
+        if !structure_dir.is_dir() {
+            continue;
+        }
+
+        let namespace = entry.file_name().to_string_lossy().to_string();
+        count += load_structures_from_dir(&namespace, &structure_dir);
+    }
+    count
+}
+
 /// Recursively scans `<namespace_dir>/worldgen/template_pool/` for `.json` template pool definitions.
 ///
 /// Registers them into [`pumpkin_world::generation::structure::structures::jigsaw::register_dynamic_template_pool_json`].

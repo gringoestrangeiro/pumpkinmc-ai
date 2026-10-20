@@ -50,8 +50,8 @@ pub use processor::{
 };
 pub use pumpkin_data::{BlockState, Mirror as BlockMirror, Rotation as BlockRotation};
 pub use structure_template::{
-    JigsawBlockInfo, Palette, PaletteEntry, SimplePalette, StructureBlockInfo, StructureEntityInfo,
-    StructurePlaceSettings, StructureTemplate, TemplateBlock, TemplateEntity,
+    BlockCapture, JigsawBlockInfo, Palette, PaletteEntry, SimplePalette, StructureBlockInfo,
+    StructureEntityInfo, StructurePlaceSettings, StructureTemplate, TemplateBlock, TemplateEntity,
 };
 pub use template_piece::TemplatePiece;
 
@@ -219,35 +219,141 @@ pub fn place_template_with_options(
 
         placer.set_block_state(&Vector3::new(wx, wy, wz), state);
 
-        // Create block entities for interactive blocks (furnaces, chests, etc.)
         let final_block = pumpkin_data::Block::from_id(state.id.to_block_id());
-        let block_entity_id = get_block_entity_id(final_block.name);
-        if block_entity_nbt.is_some() || block_entity_id.is_some() {
-            let fallback_id = block_entity_id.unwrap_or(final_block.name);
-            let mut placed_nbt = NbtCompound::new();
+        place_block_entity(
+            placer,
+            Vector3::new(wx, wy, wz),
+            final_block,
+            block_entity_nbt.as_ref(),
+        );
+    }
+}
 
-            placed_nbt.put_string("id", fallback_id.to_string());
-            placed_nbt.put_int("x", wx);
-            placed_nbt.put_int("y", wy);
-            placed_nbt.put_int("z", wz);
+/// Queues the block entity NBT for a placed block.
+fn place_block_entity(
+    placer: &mut impl BlockPlacer,
+    world_pos: Vector3<i32>,
+    block: &pumpkin_data::Block,
+    template_nbt: Option<&NbtCompound>,
+) {
+    // Create block entities for interactive blocks (furnaces, chests, etc.)
+    let block_entity_id = get_block_entity_id(block.name);
+    if template_nbt.is_none() && block_entity_id.is_none() {
+        return;
+    }
 
-            if let Some(template_nbt) = &block_entity_nbt {
-                for (key, value) in &template_nbt.child_tags {
-                    if key.as_ref() != "x" && key.as_ref() != "y" && key.as_ref() != "z" {
-                        placed_nbt.child_tags.insert(key.clone(), value.clone());
-                    }
-                }
+    let fallback_id = block_entity_id.unwrap_or(block.name);
+    let mut placed_nbt = NbtCompound::new();
+
+    placed_nbt.put_string("id", fallback_id.to_string());
+    placed_nbt.put_int("x", world_pos.x);
+    placed_nbt.put_int("y", world_pos.y);
+    placed_nbt.put_int("z", world_pos.z);
+
+    if let Some(template_nbt) = template_nbt {
+        for (key, value) in &template_nbt.child_tags {
+            if key.as_ref() != "x" && key.as_ref() != "y" && key.as_ref() != "z" {
+                placed_nbt.child_tags.insert(key.clone(), value.clone());
             }
-
-            if placed_nbt.get_string("LootTable").is_some()
-                && placed_nbt.get_long("LootTableSeed").is_none()
-            {
-                let mut random = LegacyRand::from_seed(hash_block_pos(wx, wy, wz) as u64);
-                placed_nbt.put_long("LootTableSeed", random.next_i64());
-            }
-
-            placer.add_block_entity(placed_nbt);
         }
+    }
+
+    if placed_nbt.get_string("LootTable").is_some()
+        && placed_nbt.get_long("LootTableSeed").is_none()
+    {
+        let mut random =
+            LegacyRand::from_seed(hash_block_pos(world_pos.x, world_pos.y, world_pos.z) as u64);
+        placed_nbt.put_long("LootTableSeed", random.next_i64());
+    }
+
+    placer.add_block_entity(placed_nbt);
+}
+
+/// Places a template around `position` with vanilla `StructureTemplate.placeInWorld` semantics.
+///
+/// Block positions are transformed with [`StructureTemplate::transform_block_pos`] around a zero
+/// pivot, so `position` is the block the structure block's offset points at, not the minimum
+/// corner of the placed region. Structure void blocks are never placed, and `integrity` below
+/// 1.0 drops blocks deterministically from `seed`.
+#[allow(clippy::too_many_arguments)]
+pub fn place_structure_template(
+    placer: &mut impl BlockPlacer,
+    template: &StructureTemplate,
+    position: Vector3<i32>,
+    rotation: Rotation,
+    mirror: Mirror,
+    integrity: f32,
+    seed: i64,
+) -> bool {
+    if template.palettes.is_empty()
+        || template.size.x < 1
+        || template.size.y < 1
+        || template.size.z < 1
+    {
+        return false;
+    }
+
+    let mut random = (integrity < 1.0).then(|| create_random(seed));
+    let palette = if template.palettes.len() == 1 {
+        &template.palettes[0]
+    } else {
+        // `StructurePlaceSettings.getRandomPalette` uses the placement random when integrity
+        // adds a processor, otherwise a random seeded from the template position.
+        let palette_count = template.palettes.len() as i32;
+        let index = random.as_mut().map_or_else(
+            || {
+                let mut random = LegacyRand::from_seed(hash_block_pos(
+                    position.x, position.y, position.z,
+                ) as u64);
+                random.next_bounded_i32(palette_count)
+            },
+            |random| random.next_bounded_i32(palette_count),
+        );
+        &template.palettes[index as usize]
+    };
+
+    for block in palette.blocks() {
+        // `BlockRotProcessor` runs for every template block, including structure voids.
+        if let Some(random) = &mut random
+            && random.next_f32() > integrity
+        {
+            continue;
+        }
+
+        let palette_entry = &block.state;
+        if palette_entry.name == "minecraft:structure_void" {
+            continue;
+        }
+
+        let Some(state) = BlockStateResolver::resolve(palette_entry, rotation, mirror) else {
+            continue;
+        };
+
+        let world_pos = position
+            + StructureTemplate::transform_block_pos(
+                block.pos,
+                mirror,
+                rotation,
+                Vector3::new(0, 0, 0),
+            );
+        placer.set_block_state(&world_pos, state);
+
+        let final_block = pumpkin_data::Block::from_id(state.id.to_block_id());
+        place_block_entity(placer, world_pos, final_block, block.nbt.as_ref());
+    }
+
+    true
+}
+
+/// Vanilla `StructureBlockEntity.createRandom`: a zero seed means "use the current time".
+fn create_random(seed: i64) -> LegacyRand {
+    if seed == 0 {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_millis() as u64);
+        LegacyRand::from_seed(millis)
+    } else {
+        LegacyRand::from_seed(seed as u64)
     }
 }
 
@@ -396,6 +502,66 @@ mod tests {
         }
 
         fn add_block_entity(&mut self, _nbt: NbtCompound) {}
+    }
+
+    struct RecordingPlacer(Vec<(Vector3<i32>, BlockStateId)>);
+
+    impl BlockPlacer for RecordingPlacer {
+        fn get_block_state(&self, _pos: &Vector3<i32>) -> BlockStateId {
+            Block::AIR.default_state.id
+        }
+
+        fn set_block_state(&mut self, pos: &Vector3<i32>, state: &BlockState) {
+            self.0.push((*pos, state.id));
+        }
+
+        fn add_block_entity(&mut self, _nbt: NbtCompound) {}
+    }
+
+    fn single_block_template(pos: Vector3<i32>, size: Vector3<i32>) -> StructureTemplate {
+        let mut template = StructureTemplate::default();
+        template.size = size;
+        template.palettes = vec![Palette::new(vec![StructureBlockInfo::new(
+            pos,
+            PaletteEntry::new("minecraft:stone".to_string()),
+            None,
+        )])];
+        template
+    }
+
+    #[test]
+    fn place_structure_template_rotates_and_mirrors_positions() {
+        let template = single_block_template(Vector3::new(1, 0, 1), Vector3::new(2, 1, 2));
+
+        let mut rotated = RecordingPlacer(Vec::new());
+        assert!(place_structure_template(
+            &mut rotated,
+            &template,
+            Vector3::new(10, 64, 10),
+            Rotation::Clockwise90,
+            Mirror::None,
+            1.0,
+            0,
+        ));
+        assert_eq!(
+            rotated.0,
+            vec![(Vector3::new(9, 64, 11), Block::STONE.default_state.id)]
+        );
+
+        let mut mirrored = RecordingPlacer(Vec::new());
+        assert!(place_structure_template(
+            &mut mirrored,
+            &template,
+            Vector3::new(10, 64, 10),
+            Rotation::None,
+            Mirror::LeftRight,
+            1.0,
+            0,
+        ));
+        assert_eq!(
+            mirrored.0,
+            vec![(Vector3::new(11, 64, 9), Block::STONE.default_state.id)]
+        );
     }
 
     #[test]

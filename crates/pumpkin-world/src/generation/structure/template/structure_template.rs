@@ -202,6 +202,16 @@ impl std::fmt::Debug for JigsawBlockCache {
     }
 }
 
+/// Read access to a live world while capturing a [`StructureTemplate`].
+pub trait BlockCapture {
+    fn get_block_state(&self, pos: &Vector3<i32>) -> pumpkin_data::BlockStateId;
+    fn get_block_entity_nbt(&self, pos: &Vector3<i32>) -> Option<NbtCompound>;
+    /// Captures the non-player entities inside the inclusive block bounds `min`..=`max`.
+    ///
+    /// Positions are relative to `min`, like vanilla `StructureTemplate.fillEntityList`.
+    fn capture_entities(&self, min: Vector3<i32>, max: Vector3<i32>) -> Vec<StructureEntityInfo>;
+}
+
 /// A loaded structure template from an NBT file matching vanilla `StructureTemplate`.
 #[derive(Debug, Clone, Default)]
 pub struct StructureTemplate {
@@ -1025,6 +1035,87 @@ impl StructureTemplate {
         Ok(template)
     }
 
+    /// Captures the blocks and entities of a world region into this template,
+    /// matching vanilla `StructureTemplate.fillFromWorld`.
+    pub fn fill_from_world(
+        &mut self,
+        position: Vector3<i32>,
+        size: Vector3<i32>,
+        include_entities: bool,
+        ignore_blocks: &[&str],
+        capture: &impl BlockCapture,
+    ) {
+        if size.x < 1 || size.y < 1 || size.z < 1 {
+            return;
+        }
+
+        let corner2 = position + size - Vector3::new(1, 1, 1);
+        let min_corner = Vector3::new(
+            position.x.min(corner2.x),
+            position.y.min(corner2.y),
+            position.z.min(corner2.z),
+        );
+        let max_corner = Vector3::new(
+            position.x.max(corner2.x),
+            position.y.max(corner2.y),
+            position.z.max(corner2.z),
+        );
+        self.size = size;
+
+        let mut full_block_list = Vec::new();
+        let mut block_entities_list = Vec::new();
+        let mut other_blocks_list = Vec::new();
+
+        for x in min_corner.x..=max_corner.x {
+            for y in min_corner.y..=max_corner.y {
+                for z in min_corner.z..=max_corner.z {
+                    let pos = Vector3::new(x, y, z);
+                    let state_id = capture.get_block_state(&pos);
+                    let block = pumpkin_data::Block::from_state_id(state_id);
+                    let resource_id = format!("minecraft:{}", block.name);
+                    if ignore_blocks.iter().any(|ignored| {
+                        *ignored == resource_id
+                            || ignored.strip_prefix("minecraft:") == Some(block.name)
+                    }) {
+                        continue;
+                    }
+
+                    let state = PaletteEntry::with_properties(
+                        resource_id,
+                        block
+                            .properties(state_id)
+                            .map_or_else(Vec::new, |props| props.to_props()),
+                    );
+                    let info = StructureBlockInfo::new(
+                        pos - min_corner,
+                        state,
+                        capture.get_block_entity_nbt(&pos),
+                    );
+                    Self::add_to_lists(
+                        info,
+                        &mut full_block_list,
+                        &mut block_entities_list,
+                        &mut other_blocks_list,
+                    );
+                }
+            }
+        }
+
+        let block_info_list =
+            Self::build_info_list(full_block_list, block_entities_list, other_blocks_list);
+        self.palettes.clear();
+        self.palettes.push(Palette::new(block_info_list));
+
+        if include_entities {
+            self.entity_info_list = capture.capture_entities(min_corner, max_corner);
+        } else {
+            self.entity_info_list.clear();
+        }
+
+        self.jigsaw_blocks_cache = OnceLock::new();
+        self.sync_legacy_fields();
+    }
+
     /// Loads the structure template from an NBT compound matching vanilla 1:1.
     pub fn load(&mut self, compound: &NbtCompound) -> Result<(), TemplateError> {
         self.palettes.clear();
@@ -1436,6 +1527,53 @@ mod tests {
             ],
         );
         assert_eq!(entry_with_props.properties.len(), 2);
+    }
+
+    struct TestCapture;
+
+    impl BlockCapture for TestCapture {
+        fn get_block_state(&self, pos: &Vector3<i32>) -> pumpkin_data::BlockStateId {
+            if pos.x == 0 {
+                pumpkin_data::Block::STONE.default_state.id
+            } else {
+                pumpkin_data::Block::AIR.default_state.id
+            }
+        }
+
+        fn get_block_entity_nbt(&self, _pos: &Vector3<i32>) -> Option<NbtCompound> {
+            None
+        }
+
+        fn capture_entities(
+            &self,
+            _min: Vector3<i32>,
+            _max: Vector3<i32>,
+        ) -> Vec<StructureEntityInfo> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn fill_from_world_round_trips_through_saved_nbt() {
+        let mut template = StructureTemplate::default();
+        template.fill_from_world(
+            Vector3::new(0, 0, 0),
+            Vector3::new(2, 1, 1),
+            false,
+            &["minecraft:structure_void"],
+            &TestCapture,
+        );
+
+        assert_eq!(template.size, Vector3::new(2, 1, 1));
+        let blocks = template.palettes[0].blocks();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].state.name, "minecraft:stone");
+        assert_eq!(blocks[1].state.name, "minecraft:air");
+
+        let reloaded = StructureTemplate::from_nbt_compound(&template.save())
+            .expect("saved template must round-trip");
+        assert_eq!(reloaded.size, template.size);
+        assert_eq!(reloaded.palettes[0].blocks().len(), 2);
     }
 
     /// Loads a real template from the shipped 26.3 datapack, which names the palette keys id and
