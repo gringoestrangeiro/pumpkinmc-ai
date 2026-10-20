@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use pumpkin_data::{Block, BlockState, BlockStateId, Property};
+use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::tag::NbtTag;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -31,6 +33,47 @@ fn block_to_string<S: Serializer>(block: &'static Block, serializer: S) -> Resul
 }
 
 impl BlockStateCodec {
+    /// Vanilla `BlockState.CODEC` NBT form: `{Name, Properties}`, with `Properties`
+    /// omitted for blocks that have none.
+    #[must_use]
+    pub fn to_nbt(state_id: BlockStateId) -> NbtCompound {
+        let block = Block::from_state_id(state_id);
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("Name", format!("minecraft:{}", block.name));
+
+        if let Some(properties) = block.properties(state_id) {
+            let properties = properties.to_props();
+            if !properties.is_empty() {
+                let mut compound = NbtCompound::new();
+                for property in properties {
+                    compound.put_string(property.key_str(), property.value_str().to_string());
+                }
+                nbt.put_compound("Properties", compound);
+            }
+        }
+        nbt
+    }
+
+    /// Inverse of [`Self::to_nbt`]. `None` for a missing or unknown `Name`; unknown or
+    /// absent properties fall back to the block's defaults.
+    #[must_use]
+    pub fn from_nbt(nbt: &NbtCompound) -> Option<BlockStateId> {
+        let block = Block::from_name(nbt.get_string("Name")?)?;
+        let Some(properties) = nbt.get_compound("Properties") else {
+            return Some(block.default_state.id);
+        };
+
+        let properties: Vec<Property> = properties
+            .child_tags
+            .iter()
+            .filter_map(|(key, tag)| match tag {
+                NbtTag::String(value) => Property::from_str_pair(key, value),
+                _ => None,
+            })
+            .collect();
+        Some(block.from_properties(&properties).to_state_id(block))
+    }
+
     #[must_use]
     pub fn get_state(&self) -> &'static BlockState {
         let state_id = self.get_state_id();
@@ -63,9 +106,40 @@ impl BlockStateCodec {
 
 #[cfg(test)]
 mod test {
-    use pumpkin_data::BlockStateId;
+    use pumpkin_data::{Block, BlockStateId};
+    use pumpkin_nbt::compound::NbtCompound;
 
+    use super::BlockStateCodec;
     use crate::chunk::palette::BLOCK_NETWORK_MAX_BITS;
+
+    #[test]
+    fn block_state_nbt_round_trips_name_and_properties() {
+        let wet_stairs = Block::OAK_STAIRS
+            .set_waterlogged(Block::OAK_STAIRS.default_state.id, true)
+            .expect("oak stairs support waterlogging");
+        let nbt = BlockStateCodec::to_nbt(wet_stairs);
+        assert_eq!(nbt.get_string("Name"), Some("minecraft:oak_stairs"));
+        let properties = nbt
+            .get_compound("Properties")
+            .expect("waterlogged state writes properties");
+        assert_eq!(properties.get_string("waterlogged"), Some("true"));
+        assert_eq!(BlockStateCodec::from_nbt(&nbt), Some(wet_stairs));
+
+        let stone = BlockStateCodec::to_nbt(Block::STONE.default_state.id);
+        assert!(stone.get_compound("Properties").is_none());
+        assert_eq!(
+            BlockStateCodec::from_nbt(&stone),
+            Some(Block::STONE.default_state.id)
+        );
+    }
+
+    #[test]
+    fn block_state_nbt_rejects_missing_or_unknown_name() {
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("Name", "minecraft:not_a_real_block".to_string());
+        assert_eq!(BlockStateCodec::from_nbt(&nbt), None);
+        assert_eq!(BlockStateCodec::from_nbt(&NbtCompound::new()), None);
+    }
 
     #[test]
     fn proper_network_bits_per_entry() {

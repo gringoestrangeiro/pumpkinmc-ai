@@ -1,7 +1,7 @@
 use piston::PistonBlock;
-use pumpkin_data::Block;
 use pumpkin_data::BlockDirection;
 use pumpkin_data::block_state::PistonBehavior;
+use pumpkin_data::{Block, BlockState};
 use pumpkin_util::math::position::BlockPos;
 
 use crate::world::World;
@@ -51,7 +51,8 @@ impl<'a> PistonHandler<'a> {
         self.broken_blocks.clear();
         let (block, block_state) = self.world.get_block_and_state(&self.pos_to);
 
-        if !PistonBlock::is_movable(
+        if !self.is_movable(
+            &self.pos_to,
             block,
             block_state,
             self.motion_direction,
@@ -75,6 +76,19 @@ impl<'a> PistonHandler<'a> {
             }
         }
         true
+    }
+
+    /// [`PistonBlock::is_movable`] with this handler's world filled in.
+    fn is_movable(
+        &self,
+        pos: &BlockPos,
+        block: &Block,
+        state: &BlockState,
+        dir: BlockDirection,
+        can_break: bool,
+        piston_dir: BlockDirection,
+    ) -> bool {
+        PistonBlock::is_movable(self.world, pos, block, state, dir, can_break, piston_dir)
     }
 
     fn is_block_sticky(block: &Block) -> bool {
@@ -101,7 +115,7 @@ impl<'a> PistonHandler<'a> {
         if block_state.is_air() {
             return true;
         }
-        if !PistonBlock::is_movable(block, block_state, self.motion_direction, false, dir) {
+        if !self.is_movable(&pos, block, block_state, self.motion_direction, false, dir) {
             return true;
         }
         if self.is_piston_head_or_base(pos) {
@@ -120,7 +134,8 @@ impl<'a> PistonHandler<'a> {
             let (next_block, next_state) = self.world.get_block_and_state(&block_pos);
             if next_state.is_air()
                 || !Self::is_adjacent_block_stuck(block2, next_block)
-                || !PistonBlock::is_movable(
+                || !self.is_movable(
+                    &block_pos,
                     next_block,
                     next_state,
                     self.motion_direction,
@@ -166,7 +181,8 @@ impl<'a> PistonHandler<'a> {
             {
                 return true;
             }
-            if !PistonBlock::is_movable(
+            if !self.is_movable(
+                &block_pos2,
                 block,
                 block_state,
                 self.motion_direction,
