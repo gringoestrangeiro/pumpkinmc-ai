@@ -1,17 +1,19 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
 use crate::entity::attributes::Modifier;
 use crate::entity::attributes::ModifierOperation;
-use pumpkin_data::{BlockStateId, attributes::Attributes};
+use pumpkin_data::{Block, BlockState, BlockStateId, Enchantment, attributes::Attributes};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{
     damage::DamageType,
     data_component_impl::EquipmentSlot,
     entity::EntityType,
+    item::Item,
+    item_stack::ItemStack,
     particle::Particle,
     sound::{Sound, SoundCategory},
     tag,
@@ -41,6 +43,7 @@ use crate::entity::{
     },
     player::Player,
 };
+use crate::world::loot::LootContextParameters;
 
 const SPEED_BOOST: f64 = 0.15;
 const ENDERMAN_SPEED_BOOST_ID: &str = "minecraft:attacking";
@@ -62,6 +65,8 @@ pub struct EndermanEntity {
     creepy: AtomicBool,
     provoked: AtomicBool,
     speed_boosted: AtomicBool,
+    /// Vanilla `Enderman.targetChangeTime`, gates the bright-day teleport.
+    target_change_time: AtomicI32,
 }
 
 impl EndermanEntity {
@@ -74,6 +79,7 @@ impl EndermanEntity {
             creepy: AtomicBool::new(false),
             provoked: AtomicBool::new(false),
             speed_boosted: AtomicBool::new(false),
+            target_change_time: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(entity);
         let mob_weak: Weak<dyn Mob> = {
@@ -257,6 +263,20 @@ impl EndermanEntity {
         *mob_target = target;
         drop(mob_target);
 
+        // Vanilla `Enderman.setTarget` resets the timer when the target is cleared.
+        self.target_change_time.store(
+            if is_some {
+                self.mob_entity
+                    .living_entity
+                    .entity
+                    .age
+                    .load(Ordering::Relaxed)
+            } else {
+                0
+            },
+            Ordering::Relaxed,
+        );
+
         if is_some {
             self.set_creepy(true);
             // Use attribute modifier instead of direct speed arithmetic
@@ -418,11 +438,54 @@ impl Mob for EndermanEntity {
         &self.mob_entity
     }
 
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(if self.is_creepy() {
+            Sound::EntityEndermanScream
+        } else {
+            Sound::EntityEndermanAmbient
+        })
+    }
+
+    fn drop_custom_death_loot(&self, params: &LootContextParameters) {
+        let Some(block_state_id) = self.get_carried_block() else {
+            return;
+        };
+        let entity = &self.mob_entity.living_entity.entity;
+        let world = entity.world.load();
+        let pos = entity.block_pos.load();
+        let block = Block::from_state_id(block_state_id);
+        let Some(loot_table) = block.loot_table.and_then(|key| world.get_loot_table(key)) else {
+            return;
+        };
+
+        // Vanilla hands the block a fake diamond axe from `enderman_loot_drop`, which is silk touch 1.
+        let mut tool = ItemStack::new(1, &Item::DIAMOND_AXE);
+        if let Some(silk_touch) = Enchantment::from_name("silk_touch") {
+            tool.enchant(silk_touch, 1);
+        }
+        let block_params = LootContextParameters {
+            block_state: Some(BlockState::from_id(block_state_id)),
+            position: Some(entity.pos.load()),
+            this_entity: Some(entity.entity_type),
+            world_time: params.world_time,
+            tool: Some(tool),
+            ..Default::default()
+        };
+
+        for stack in crate::world::loot::generate_loot_from_handle(
+            &loot_table,
+            rand::random(),
+            &block_params,
+        ) {
+            world.drop_stack(&pos, stack);
+        }
+    }
+
     fn set_mob_target(&self, target: Option<Arc<dyn EntityBase>>) {
         self.set_target(self.as_valid_target(target));
     }
 
-    // TODO: sunlight avoidance, carried block drop on death, angerable system, ambient sound override
+    // TODO: angerable system
     fn mob_tick(&self, caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         if !entity.is_alive() {
@@ -430,6 +493,23 @@ impl Mob for EndermanEntity {
         }
 
         let world = entity.world.load();
+
+        // Vanilla `Enderman.customServerAiStep`: bright daylight makes it drop its target and blink.
+        if world.is_bright_outside()
+            && entity.age.load(Ordering::Relaxed)
+                >= self.target_change_time.load(Ordering::Relaxed) + 600
+        {
+            let block_pos = entity.block_pos.load();
+            let brightness = world.get_light_level_dependent_magic_value(&block_pos);
+            if brightness > 0.5
+                && world.can_see_sky(&block_pos)
+                && self.get_random().random::<f32>() * 30.0 < (brightness - 0.4) * 2.0
+            {
+                self.set_target(None);
+                self.teleport_randomly();
+            }
+        }
+
         let raining_at_feet = world.is_raining_at(&entity.block_pos.load());
         let raining_at_head = world.is_raining_at(&entity.bounding_box.load().max_block_pos());
         if entity.touching_water.load(Ordering::SeqCst) || raining_at_feet || raining_at_head {

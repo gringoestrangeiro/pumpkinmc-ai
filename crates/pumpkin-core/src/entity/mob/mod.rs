@@ -12,6 +12,7 @@ use crate::entity::projectile::arrow::ArrowEntity;
 use crate::server::Server;
 use crate::world::World;
 use crate::world::brightness::DAYLIGHT_BRIGHTNESS;
+use crate::world::loot::LootContextParameters;
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
@@ -977,6 +978,9 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {}
+
+    /// Vanilla `Mob.dropCustomDeathLoot`: extra drops that are not part of the entity loot table.
+    fn drop_custom_death_loot(&self, _params: &LootContextParameters) {}
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 

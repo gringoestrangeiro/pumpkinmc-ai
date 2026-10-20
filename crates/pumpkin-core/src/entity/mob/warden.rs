@@ -4,15 +4,18 @@ use std::sync::{
 };
 
 use pumpkin_data::{
+    attributes::Attributes,
     damage::DamageType,
     effect::StatusEffect,
     entity::{EntityPose, EntityStatus, EntityType},
+    particle::Particle,
     potion::Effect,
     sound::{Sound, SoundCategory},
     tag::{self, Taggable},
     tracked_data,
 };
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_protocol::java::client::play::CEntityStatus;
 use pumpkin_util::{GameMode, math::vector3::Vector3};
 
 use crate::entity::{
@@ -37,12 +40,86 @@ const ANGERMANAGEMENT_TICK_DELAY: i32 = 20;
 const DEFAULT_ANGER: i32 = 35;
 const ON_HURT_ANGER_BOOST: i32 = 20;
 const TOUCH_COOLDOWN_TICKS: i32 = 20;
+/// Vanilla `WardenAi.SNIFFING_DURATION`: `Mth.ceil(83.2)`.
+const SNIFFING_DURATION: i32 = 84;
+const SNIFF_INTERVAL: i32 = 120;
+const SONIC_BOOM_DISTANCE_XZ: f64 = 15.0;
+const SONIC_BOOM_DISTANCE_Y: f64 = 20.0;
+const SONIC_BOOM_DAMAGE: f32 = 10.0;
+const SONIC_BOOM_DURATION: i32 = 60;
+/// Vanilla `SonicBoom.TICKS_BEFORE_PLAYING_SOUND`: `Mth.ceil(34.0)`.
+const SONIC_BOOM_SOUND_DELAY: i32 = 34;
+const SONIC_BOOM_COOLDOWN: i32 = 40;
+const SONIC_BOOM_KNOCKBACK_VERTICAL: f64 = 0.5;
+const SONIC_BOOM_KNOCKBACK_HORIZONTAL: f64 = 2.5;
 
 pub struct WardenEntity {
     pub mob_entity: MobEntity,
     emerge_ticks: Arc<AtomicI32>,
+    sniff_cooldown: Arc<AtomicI32>,
+    sonic_boom_cooldown: Arc<AtomicI32>,
     anger_management: std::sync::Mutex<AngerManagement>,
     touch_cooldown: AtomicI32,
+}
+
+/// Vanilla `TryToSniff` + `Sniffing`: hold the idle warden still while it sniffs.
+struct SniffGoal {
+    cooldown: Arc<AtomicI32>,
+    ticks: i32,
+}
+
+impl Goal for SniffGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.cooldown.load(Ordering::Relaxed) == 0
+            && !mob.get_mob_entity().is_no_ai()
+            && mob.get_mob_entity().get_target().is_none()
+            && mob.get_entity().pose.load() == EntityPose::Standing
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.ticks < SNIFFING_DURATION
+            && !mob.get_mob_entity().is_no_ai()
+            && mob.get_mob_entity().get_target().is_none()
+            && mob.get_entity().pose.load() == EntityPose::Sniffing
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.ticks = 0;
+        let entity = mob.get_entity();
+        entity.set_pose(EntityPose::Sniffing);
+        entity.world.load().play_sound_fine(
+            Sound::EntityWardenSniff,
+            SoundCategory::Hostile,
+            &entity.pos.load(),
+            5.0,
+            1.0,
+        );
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stop();
+        self.cooldown.store(SNIFF_INTERVAL, Ordering::Relaxed);
+    }
+
+    fn tick(&mut self, _mob: &dyn Mob) {
+        self.ticks += 1;
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        let entity = mob.get_entity();
+        if entity.pose.load() == EntityPose::Sniffing {
+            entity.set_pose(EntityPose::Standing);
+        }
+    }
+
+    fn should_run_every_tick(&self) -> bool {
+        true
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK
+    }
 }
 
 struct EmergeGoal {
@@ -86,13 +163,163 @@ impl Goal for EmergeGoal {
     }
 }
 
+/// Vanilla `SonicBoom`: a 60-tick charge that fires one 10-damage beam after 34 ticks.
+struct SonicBoomGoal {
+    cooldown: Arc<AtomicI32>,
+    ticks: i32,
+    blasted: bool,
+}
+
+impl SonicBoomGoal {
+    fn in_range(mob: &dyn Mob, target: &dyn EntityBase) -> bool {
+        closer_than(
+            mob.get_entity(),
+            target.get_entity(),
+            SONIC_BOOM_DISTANCE_XZ,
+            SONIC_BOOM_DISTANCE_Y,
+        )
+    }
+
+    fn blast(mob: &dyn Mob, target: &dyn EntityBase) {
+        let entity = mob.get_entity();
+        let source = entity.pos.load()
+            + Vector3::new(
+                0.0,
+                f64::from(entity.entity_dimension.load().height) / 2.0,
+                0.0,
+            );
+        let delta = target.get_entity().get_eye_pos() - source;
+        let distance = delta.length();
+        if distance <= 0.0 {
+            return;
+        }
+        let direction = delta / distance;
+        let world = entity.world.load();
+
+        for step in 1..distance.floor() as i32 + 7 {
+            world.spawn_particle(
+                source + direction * f64::from(step),
+                Vector3::new(0.0, 0.0, 0.0),
+                0.0,
+                1,
+                Particle::SonicBoom,
+            );
+        }
+
+        world.play_sound_fine(
+            Sound::EntityWardenSonicBoom,
+            SoundCategory::Hostile,
+            &entity.pos.load(),
+            3.0,
+            1.0,
+        );
+
+        let damaged = target.damage_with_context(
+            target,
+            SONIC_BOOM_DAMAGE,
+            DamageType::SONIC_BOOM,
+            None,
+            Some(mob as &dyn EntityBase),
+            Some(mob as &dyn EntityBase),
+        );
+        if damaged {
+            // Vanilla `SonicBoom` pushes directly; knockback resistance scales both axes.
+            let resistance = target.get_living_entity().map_or(0.0, |living| {
+                living.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE)
+            });
+            target.get_entity().add_velocity(Vector3::new(
+                direction.x * SONIC_BOOM_KNOCKBACK_HORIZONTAL * (1.0 - resistance),
+                direction.y * SONIC_BOOM_KNOCKBACK_VERTICAL * (1.0 - resistance),
+                direction.z * SONIC_BOOM_KNOCKBACK_HORIZONTAL * (1.0 - resistance),
+            ));
+        }
+    }
+}
+
+impl Goal for SonicBoomGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        if self.cooldown.load(Ordering::Relaxed) > 0 {
+            return false;
+        }
+        mob.get_mob_entity()
+            .get_target()
+            .is_some_and(|target| Self::in_range(mob, target.as_ref()))
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        self.ticks < SONIC_BOOM_DURATION
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.ticks = 0;
+        self.blasted = false;
+        let entity = mob.get_entity();
+        entity
+            .world
+            .load()
+            .send_to_tracking_players_and_self(entity, &CEntityStatus::new(entity.entity_id, 62));
+        entity.world.load().play_sound_fine(
+            Sound::EntityWardenSonicCharge,
+            SoundCategory::Hostile,
+            &entity.pos.load(),
+            3.0,
+            1.0,
+        );
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.ticks += 1;
+        if let Some(target) = mob.get_mob_entity().get_target() {
+            let target_pos = target.get_entity().pos.load();
+            mob.get_mob_entity()
+                .look_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .look_at(mob, target_pos.x, target_pos.y, target_pos.z);
+            if !self.blasted
+                && self.ticks >= SONIC_BOOM_SOUND_DELAY
+                && Self::in_range(mob, target.as_ref())
+            {
+                Self::blast(mob, target.as_ref());
+                self.blasted = true;
+            }
+        }
+    }
+
+    fn stop(&mut self, _mob: &dyn Mob) {
+        self.cooldown.store(SONIC_BOOM_COOLDOWN, Ordering::Relaxed);
+    }
+
+    fn should_run_every_tick(&self) -> bool {
+        true
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK
+    }
+}
+
+/// Vanilla `Entity.closerThan(other, distanceXZ, distanceY)`.
+fn closer_than(entity: &Entity, other: &Entity, distance_xz: f64, distance_y: f64) -> bool {
+    let a = entity.pos.load();
+    let b = other.pos.load();
+    let dx = b.x - a.x;
+    let dz = b.z - a.z;
+    let dy = b.y - a.y;
+    dx * dx + dz * dz < distance_xz * distance_xz && dy * dy < distance_y * distance_y
+}
+
 impl WardenEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let emerge_ticks = Arc::new(AtomicI32::new(0));
+        let sniff_cooldown = Arc::new(AtomicI32::new(SNIFF_INTERVAL));
+        let sonic_boom_cooldown = Arc::new(AtomicI32::new(0));
         let warden = Self {
             mob_entity,
             emerge_ticks: emerge_ticks.clone(),
+            sniff_cooldown: sniff_cooldown.clone(),
+            sonic_boom_cooldown: sonic_boom_cooldown.clone(),
             anger_management: std::sync::Mutex::new(AngerManagement::default()),
             touch_cooldown: AtomicI32::new(0),
         };
@@ -107,6 +334,21 @@ impl WardenEntity {
 
             goal_selector.add_goal(0, Box::new(EmergeGoal { emerge_ticks }));
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(
+                1,
+                Box::new(SniffGoal {
+                    cooldown: sniff_cooldown,
+                    ticks: 0,
+                }),
+            );
+            goal_selector.add_goal(
+                3,
+                Box::new(SonicBoomGoal {
+                    cooldown: sonic_boom_cooldown,
+                    ticks: 0,
+                    blasted: false,
+                }),
+            );
             goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(1.0, true)));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.5)));
             goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
@@ -435,6 +677,13 @@ impl Mob for WardenEntity {
         }
         let age = entity.age.load(Ordering::Relaxed);
         let world = entity.world.load();
+
+        if self.sonic_boom_cooldown.load(Ordering::Relaxed) > 0 {
+            self.sonic_boom_cooldown.fetch_sub(1, Ordering::Relaxed);
+        }
+        if self.sniff_cooldown.load(Ordering::Relaxed) > 0 {
+            self.sniff_cooldown.fetch_sub(1, Ordering::Relaxed);
+        }
 
         self.tick_touch();
 

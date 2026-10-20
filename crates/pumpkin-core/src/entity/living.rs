@@ -2133,6 +2133,11 @@ impl LivingEntity {
                 ..Default::default()
             };
 
+            // Vanilla drops custom loot before the entity loot table.
+            if let Some(mob) = dyn_self.get_mob() {
+                mob.drop_custom_death_loot(&params);
+            }
+
             // Drop loot
             self.drop_loot(&params);
 
