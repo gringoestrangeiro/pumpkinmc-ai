@@ -4,7 +4,7 @@
 
 **Snapshot date:** 2026-10-20.
 
-**Repository state:** fork `fork-ai-main` at `9bd87c478`, 31 commits ahead of `origin/master` at `fb7c8e223`. Wave 1 is in progress; the working tree has uncommitted Wave 1 edits in `PARITY.md`, `roadmap.md` and `crates/pumpkin-world/src/generation/generator/structure_finder.rs`.
+**Repository state:** fork `fork-ai-main` at `f0dec5e23`, 35 commits ahead of `origin/master` at `fb7c8e223`. Wave 1 code is merged; the docs and live checks are the remaining work. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -30,7 +30,7 @@ This file is a work plan, not a claim that upstream's tracker is correct. Every 
 
 Every claim below is one of:
 
-- **[code]** verified by reading the fork's source at `fb850f755`.
+- **[code]** verified by reading the fork's source at `f0dec5e23`.
 - **[issue]** reported by an open upstream issue; not independently reproduced.
 - **[tracker]** reported by the parity tracker; not independently verified.
 - **[pr]** an open pull request exists; not merged.
@@ -2713,14 +2713,17 @@ Owner roles here match the workstream that owns the file. "Code" means read agai
 
 | Task | Owner | Status | Verification |
 | :--- | :--- | :--- | :--- |
-| `W8` port upstream `#4029`: `/locate` must resolve structure starts with the generation height sampler | worldgen | code applied | `structure_finder.rs` now builds `NoiseHeightSampler` and uses `generator.biome_supplier`; regression test at `structure_finder.rs:439`. Live: locate an ungenerated village and teleport. |
+| `W3`/`C04` boats, chest boats and rafts (22 rows) | entity | code merged, live check pending | Port of `#4073`: boat status/float/movement/control, ejection, dismount, passengers, lily pads, chest-boat container fallback. Live checks: surface float, paddle, sink/eject, dismount, two riders, chest persistence. |
+| `W2` small mob parity batch (13 rows) | entity | code merged, live check pending | Zombie baby speed/XP, Zoglin living targets, Evoker/Vindicator/Pillager revenge, Vindicator Johnny, Husk hunger/sun immunity, Wolf sit/leap, Armadillo roll, Polar Bear cub defence, Stray/Parched arrows, Endermite persistence, Wither Skeleton equipment/targets. Bot checks per row. |
+| `W4` small block/redstone batch (12 rows) | block | code merged, live check pending | Note Block game event/custom head, rails dedupe and power boundary, stem support tag, Chiseled Bookshelf statistic, Bell/Jukebox events, Ender Chest piglin anger, Big Dripleaf tilt, Sugar Cane fluid support, Campfire ignition. |
+| `W8` port upstream `#4029`: `/locate` must resolve structure starts with the generation height sampler | worldgen | code applied, live check pending | `structure_finder.rs` now builds `NoiseHeightSampler` and uses `generator.biome_supplier`; regression test at `structure_finder.rs:439`. Live: locate an ungenerated village and teleport. |
 | `W5` Name Tag | Wave 1 verifier | done | `item/items/name_tag.rs:20-34` matches vanilla `NameTagItem` for name, persistence and decrement. Live: relog with a named mob. |
 | `W4` Shulker Box | Wave 1 verifier | partial | Missing vanilla `canOpen` lid-space check and piglin anger (`ShulkerBoxBlock.java:68-82`); the tracker premise is inverted. Live check after the fix. |
 | `W4` Structure Block | Wave 1 verifier | done for the stated gap | Save/load work and NBT round-trips, so "capture/save/load execution" is covered. Corner-mode scan and redstone execution remain as separate gaps; live check them before calling the block fully done. |
 | `W14` `/locate` coverage | Wave 1 verifier | partial | Datapack ids, flat/custom generators and biome ring order differ from vanilla; structure/biome/POI branches exist. Live check all three branches. |
 | `I01` world loading | Wave 1 verifier | done | `level.rs:150-176` canonical plus `DIM1`/`DIM-1` fallback with tests; `anvil.rs:361-420` reads `level.dat` and versions. Live: import a 26.3 world. |
 | `I01` world saving, `#3902` | Wave 1 verifier | verify | `stop` now saves block entities before `level.shutdown`; `save-all flush` still does not flush and `add_block_entity_nbt` can drop unloaded chunks. Live A/B in `#3902`. |
-| `T01`/`W14` parity bookkeeping | main agent | pending merge | Recompute PARITY counts and rerun the affected CI packages after the Wave 1 branches merge. |
+| `T01`/`W14` parity bookkeeping | main agent | code merged, live check pending | PARITY now projects 464 / 94 / 4 = 82.6% if all Wave 1 live checks pass; the verified headline stays 415 / 143 / 4 until then. CI is the compile/test gate for this push. |
 
 ### Wave 2 — Subsystem parity (weeks 3-8)
 

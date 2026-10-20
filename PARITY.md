@@ -1,7 +1,7 @@
 # Parity Tracking
 
 **Last updated:** 2026-10-20
-**Fork code commit:** `9bd87c478`
+**Fork code commit:** `f0dec5e23`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
@@ -89,6 +89,18 @@ Wave 1 targets one ported fix and a set of rows the tracker already lists as ope
 | Commands / `/locate` coverage | partial | Structure, biome and POI branches exist (`command/commands/locate.rs`). Datapack structure ids are rejected (`wanted_structures` requires `is_vanilla()`), structure sets disabled through `enabled_structure_sets` are not filtered, flat and custom generators return not found (`structure_finder.rs:143`), and biome sampling uses a different ring order than vanilla `BlockPos.spiralAround` (`biome_finder.rs:84-110`). | Live check of all three branches, plus a datapack structure and a superflat world. |
 | World / loading | done, verify-only | `level.rs:150-176` resolves canonical `dimensions/<namespace>/<name>` and falls back to `region`, `DIM-1`, `DIM1`; both paths have tests at `level.rs:1043-1096`. `world_info/anvil.rs:361-420` reads `level.dat`, checks data and level versions, and reads the seed. | Import a vanilla 26.3 world in both the canonical and legacy layouts. |
 | World / saving | partial, verify-only | `save_all` (`server/mod.rs:595-618`) writes world info, players and advancements, then calls `world.save()`. `stop` saves block entities and POI before `level.shutdown` (`world/mod.rs:599-624`). `save-all flush` uses the same executor as `save-all` and does not wait for chunk writes, and `add_block_entity_nbt` still drops writes for chunks that are no longer loaded (`world/mod.rs:6373-6389`). | A/B `#3902`: fresh area, chest with items, `stop` without `save-all`, restart, reopen the chest. |
+
+### Wave 1 code merged, live check pending
+
+The Wave 1 code merge (`f0dec5e23`) implements 49 tracker rows. They stay **partial** in the headline until the live checks pass. If every check below passes, the counts become **464 done / 94 partial / 4 planned = 82.6%**; the current verified headline stays 415 / 143 / 4.
+
+| Cluster | Rows | Evidence | Live check |
+| :--- | ---: | :--- | :--- |
+| Boats, chest boats, bamboo rafts | 22 | Port of upstream `#4073` in `entity/vehicle/boat/{physics,passengers,dismount,block_effects}.rs`; chest inventory preserved; chest-boat fallback to the container when riding fails. | Float at the surface, paddle forward/turn, sink and eject at 60 ticks, dismount on land/water, two riders in a boat, one in a chest boat, chest contents survive relog, lily-pad breakage. |
+| Zombie, Zoglin, Evoker, Vindicator, Pillager, Husk, Wolf, Armadillo, Polar Bear, Stray, Endermite, Wither Skeleton, Parched | 13 | Baby zombie speed/XP, living targets, illager revenge/Johnny, husk hunger and sun immunity, wolf sit/leap, armadillo roll, polar-bear cub defence, stray/parched arrow effects, endermite persistence, wither-skeleton equipment/targets. | Bot fights and summon checks listed in the Wave 1 handoff; compare against vanilla behavior in `PARITY.md` notes. |
+| Note Block (blocks + redstone), Powered Rail, Activator Rail, Pumpkin & Melon Stems, Chiseled Bookshelf, Bell, Jukebox, Ender Chest, Big Dripleaf, Sugar Cane, Campfire | 12 | Game events, rail dedupe, stem support tag, used-item statistic, bell/jukebox events, piglin anger, projectile tilt/ignition, fluid-aware cane support. | Note-block game event, 8-rail power boundary, fruit on podzol/moss/mud, bookshelf stat, bell/sculk event, comparator update, piglin anger, projectile tilt/ignition, cane beside water. |
+
+Name Tag and world loading are already listed as done/verify-only above. Structure Block was already counted done in the previous batch. The remaining Wave 1 checks are `/locate` live coverage and the `#3902` save A/B; both stay partial until they pass.
 
 ## Command parity audit
 
