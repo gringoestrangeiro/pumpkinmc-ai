@@ -118,6 +118,7 @@ Maintainers and CodeRabbit read every diff line by line, and they read ports nex
 
 ### Commits
 
+- The main agent commits. Subagents do not run state-changing git commands; they leave the edits in the worktree and report.
 - Use conventional commits with a scope, subject line only. Put details in the PR description, not in a commit body.
 - Features that need play testing land as ordered commits, one per stage, so each stage can be tested and reverted on its own.
 - Fold fixes into the commit they belong to (amend or fixup and rebase before handover). Don't stack "fix review comments" commits on top. Only rewrite your own commits, and only before anyone else has them. Never rewrite or force push work you didn't create or a branch someone else uses.
@@ -137,7 +138,33 @@ Change what the task needs and nothing else. If the task is ambiguous, pick the 
 
 ## Checking your work
 
-CI only runs on the affected packages (`.github/scripts/ci_packages.py`). Locally, run it on the crates you touched plus the crates that depend on them. `cargo-nextest` and `cargo-machete` install with `cargo install`, and `typos` is `typos-cli` on crates.io.
+### Fork parity sprint: light local checks only
+
+Fork work and subagent work use the light gate. Local Rust compilation is slow for this workspace and competes with the main agent's batch builds, so do not compile locally.
+
+Run only these before handover:
+
+```bash
+cargo fmt --check
+git diff --check
+typos
+```
+
+Also scan the changed files for conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+
+Do not run `cargo check`, `cargo clippy`, `cargo nextest`, `cargo build`, `cargo run`, `cargo machete`, a boot test, or a bot test. GitHub Actions runs the compile, lint, and test suite after the main agent pushes. The main agent reads the CI result and fixes forward.
+
+Run the full local ladder only when the human explicitly asks for it, or before an upstream PR submission. The upstream rules below still apply.
+
+### Subagent handoff
+
+A subagent edits files only. It may read `git status` and `git diff`, but it must not run state-changing git commands: no branch, worktree, add, commit, amend, rebase, cherry-pick, stash, reset, merge, or push. The main agent owns every git operation, including creating and removing worktrees, committing, merging, pushing, and updating parity tracking.
+
+A subagent reports changed files, the light-check output, conflicts it resolved, and anything the main agent must verify. It does not claim a compile, test, boot, or CI pass.
+
+### Full local ladder, only when explicitly requested or for upstream PRs
+
+CI only runs on the affected packages (`.github/scripts/ci_packages.py`). When the full ladder is requested, run it on the crates you touched plus the crates that depend on them. `cargo-nextest` and `cargo-machete` install with `cargo install`, and `typos` is `typos-cli` on crates.io.
 
 ```bash
 cargo fmt --check
@@ -149,7 +176,9 @@ typos
 
 ### Running the server yourself
 
-Passing clippy and tests doesn't show that a gameplay change works. Run the server and exercise the change before you call it done:
+Only run this when the human explicitly asks, or for an upstream PR submission. Fork parity work relies on CI for the compile and test gate.
+
+Passing clippy and tests doesn't show that a gameplay change works. When you do run the server, exercise the change before you call it done:
 
 - **Boot test.** Start the server in a scratch directory (`cargo run --manifest-path <repo>/Cargo.toml -p pumpkin` from that directory, because the server writes config and world files into the working directory). Wait for the "done" line in the log. Send console commands over stdin to reach the feature. Stop it with `stop`. Then read the log for panics, errors and warnings your change added. Use debug builds: the release profile uses fat LTO and takes many times longer to build.
 - **Bots.** Log a headless client in for anything that needs a player: movement, chunk loading, combat, inventories, packets. [Mineflayer](https://github.com/PrismarineJS/mineflayer) is scriptable and good for "walk here, use this item, check the block". [rust-mc-bot](https://github.com/Eoghanmc22/rust-mc-bot) is good for load tests with many players. Bot libraries often lag behind the newest protocol, so check which version the bot supports first. If no bot supports it, don't turn that into a side project: do the checks you can and list the rest for the human to test in-game.
@@ -192,7 +221,7 @@ AI agents may write code, write descriptions and open pull requests in this repo
 An AI-authored PR may only be opened when all of these are true:
 
 - A human has reviewed the change and explicitly confirmed it should be submitted.
-- The change has been verified the way this file requires: `cargo fmt --check`, `cargo clippy -p <crate> --all-targets --all-features`, `cargo nextest run -p <crate> --no-tests=pass`, `cargo machete`, `typos`, plus a boot test (and bot or in-game checks where they apply) for anything that runs.
+- For a fork PR, a green GitHub Actions run on the pushed commit satisfies the local compile and test requirement; link the run. For an upstream PR, the change has been verified with the full ladder: `cargo fmt --check`, `cargo clippy -p <crate> --all-targets --all-features`, `cargo nextest run -p <crate> --no-tests=pass`, `cargo machete`, `typos`, plus a boot test (and bot or in-game checks where they apply) for anything that runs.
 - For anything a player can see or feel in-game (blocks, items, mobs, combat, movement, particles, sounds, GUIs, world generation), a human has joined with a real client and play-tested it, and the screenshots or recordings are attached to the PR.
 - The description names the tool and model that wrote the code and/or the description, and names the human who reviewed, play-tested and submitted it.
 
