@@ -77,6 +77,7 @@ fn offline_server(root: &Path) -> Arc<Server> {
         aggregated_tick_times_nanos: AtomicI64::new(0),
         tick_count: AtomicI32::new(0),
         debug_profiler: debug_profiler::DebugProfiler::new(),
+        perf_profiler: perf_profiler::PerfProfiler::default(),
         server_guid: 0,
         player_idle_timeout: AtomicI32::new(0),
         scheduled_functions: Arc::new(scheduler::ScheduledFunctionQueue::new()),
