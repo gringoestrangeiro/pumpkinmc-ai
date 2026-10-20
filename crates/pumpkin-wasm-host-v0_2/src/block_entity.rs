@@ -525,15 +525,15 @@ impl HostMobSpawnerBlockEntity for PluginHostState {
     }
 
     fn get_spawn_count(&mut self, res: Resource<MobSpawnerBlockEntity>) -> wasmtime::Result<i32> {
-        Ok(self.get(&res)?.spawn_count)
+        Ok(self.get(&res)?.spawner.spawn_count.load(Ordering::Relaxed))
     }
 
     fn get_spawn_range(&mut self, res: Resource<MobSpawnerBlockEntity>) -> wasmtime::Result<i32> {
-        Ok(self.get(&res)?.spawn_range)
+        Ok(self.get(&res)?.spawner.spawn_range.load(Ordering::Relaxed))
     }
 
     fn get_delay(&mut self, res: Resource<MobSpawnerBlockEntity>) -> wasmtime::Result<i32> {
-        Ok(self.get(&res)?.delay.load(Ordering::Relaxed))
+        Ok(self.get(&res)?.spawner.delay.load(Ordering::Relaxed))
     }
 
     fn drop(&mut self, rep: Resource<MobSpawnerBlockEntity>) -> wasmtime::Result<()> {

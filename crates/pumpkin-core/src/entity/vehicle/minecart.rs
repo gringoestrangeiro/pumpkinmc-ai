@@ -1,8 +1,10 @@
 mod chest;
+mod command_block;
 mod container;
 mod furnace;
 mod hopper;
 mod rideable;
+mod spawner;
 mod tnt;
 
 use std::sync::Arc;
@@ -30,10 +32,12 @@ use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::vehicle::vehicle::VehicleEntity;
 use chest::ChestMinecart;
+use command_block::CommandBlockMinecart;
 use container::MinecartInventory;
 use furnace::FurnaceMinecart;
 use hopper::HopperMinecart;
 use rideable::RideableMinecart;
+use spawner::SpawnerMinecart;
 use tnt::TntMinecart;
 
 const fn get_exits(
@@ -68,6 +72,8 @@ enum MinecartKind {
     Furnace(FurnaceMinecart),
     Hopper(HopperMinecart),
     Tnt(TntMinecart),
+    CommandBlock(CommandBlockMinecart),
+    Spawner(SpawnerMinecart),
     Other,
 }
 
@@ -83,6 +89,12 @@ impl MinecartEntity {
                 MinecartKind::Hopper(HopperMinecart::new())
             }
             id if id == EntityType::TNT_MINECART.id => MinecartKind::Tnt(TntMinecart::new()),
+            id if id == EntityType::COMMAND_BLOCK_MINECART.id => {
+                MinecartKind::CommandBlock(CommandBlockMinecart::new(entity.block_pos.load()))
+            }
+            id if id == EntityType::SPAWNER_MINECART.id => {
+                MinecartKind::Spawner(SpawnerMinecart::new())
+            }
             _ => MinecartKind::Other,
         };
         Self {
@@ -105,7 +117,15 @@ impl MinecartEntity {
             MinecartKind::Furnace(_) => Some(&Item::FURNACE_MINECART),
             MinecartKind::Hopper(_) => Some(&Item::HOPPER_MINECART),
             MinecartKind::Tnt(_) => Some(&Item::TNT_MINECART),
+            MinecartKind::CommandBlock(_) | MinecartKind::Spawner(_) => Some(&Item::MINECART),
             _ => None,
+        }
+    }
+
+    /// Applies the command editor packet to a command block minecart.
+    pub fn set_command(&self, command: &str, track_output: bool) {
+        if let MinecartKind::CommandBlock(minecart) = &self.kind {
+            minecart.set_command(&self.vehicle.entity, command, track_output);
         }
     }
 }
@@ -117,6 +137,8 @@ impl EntityBase for MinecartEntity {
             MinecartKind::Furnace(minecart) => minecart.write_nbt(nbt),
             MinecartKind::Hopper(minecart) => minecart.write_nbt(nbt),
             MinecartKind::Tnt(minecart) => minecart.write_nbt(nbt),
+            MinecartKind::CommandBlock(minecart) => minecart.write_nbt(nbt),
+            MinecartKind::Spawner(minecart) => minecart.write_nbt(nbt),
             MinecartKind::Rideable(_) | MinecartKind::Other => {}
         }
     }
@@ -127,6 +149,8 @@ impl EntityBase for MinecartEntity {
             MinecartKind::Furnace(minecart) => minecart.read_nbt(nbt),
             MinecartKind::Hopper(minecart) => minecart.read_nbt(nbt),
             MinecartKind::Tnt(minecart) => minecart.read_nbt(nbt),
+            MinecartKind::CommandBlock(minecart) => minecart.read_nbt(nbt),
+            MinecartKind::Spawner(minecart) => minecart.read_nbt(nbt),
             MinecartKind::Rideable(_) | MinecartKind::Other => {}
         }
     }
@@ -134,8 +158,10 @@ impl EntityBase for MinecartEntity {
     #[allow(clippy::too_many_lines)]
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
         self.vehicle.tick();
-        if let MinecartKind::Furnace(minecart) = &self.kind {
-            minecart.tick(&self.vehicle.entity);
+        match &self.kind {
+            MinecartKind::Furnace(minecart) => minecart.tick(&self.vehicle.entity),
+            MinecartKind::CommandBlock(minecart) => minecart.tick(),
+            _ => {}
         }
 
         let world = self.vehicle.entity.world.load();
@@ -228,6 +254,9 @@ impl EntityBase for MinecartEntity {
                     match &self.kind {
                         MinecartKind::Tnt(minecart) => {
                             minecart.prime(&self.vehicle.entity, 80);
+                        }
+                        MinecartKind::CommandBlock(minecart) => {
+                            minecart.activate(&self.vehicle.entity);
                         }
                         MinecartKind::Rideable(_) => {
                             if let Ok(passengers) = self.vehicle.entity.passengers.try_lock() {
@@ -500,6 +529,10 @@ impl EntityBase for MinecartEntity {
         if let MinecartKind::Hopper(minecart) = &self.kind {
             minecart.tick(&self.vehicle.entity);
         }
+
+        if let MinecartKind::Spawner(minecart) = &self.kind {
+            minecart.tick(&self.vehicle.entity);
+        }
     }
 
     fn get_entity(&self) -> &Entity {
@@ -665,8 +698,14 @@ impl EntityBase for MinecartEntity {
 
     fn init_data_tracker(&self) {
         self.vehicle.send_wobble_metadata();
-        if let MinecartKind::Furnace(minecart) = &self.kind {
-            minecart.init_data_tracker(&self.vehicle.entity);
+        match &self.kind {
+            MinecartKind::Furnace(minecart) => {
+                minecart.init_data_tracker(&self.vehicle.entity);
+            }
+            MinecartKind::CommandBlock(minecart) => {
+                minecart.sync_data(&self.vehicle.entity);
+            }
+            _ => {}
         }
     }
 
@@ -771,7 +810,8 @@ impl EntityBase for MinecartEntity {
                 true
             }
             MinecartKind::Rideable(_) => RideableMinecart::interact(&self.vehicle.entity, player),
-            MinecartKind::Tnt(_) | MinecartKind::Other => false,
+            MinecartKind::CommandBlock(_) => player.can_use_game_master_blocks(),
+            MinecartKind::Tnt(_) | MinecartKind::Spawner(_) | MinecartKind::Other => false,
         }
     }
 
