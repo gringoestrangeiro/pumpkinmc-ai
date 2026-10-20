@@ -224,7 +224,7 @@ impl ActiveTargetGoal {
                 .map(|p: Arc<Player>| p as Arc<dyn EntityBase>)
         } else {
             let entity_types = self.target_type.map(|t| [t]);
-            world.get_nearest_entity(
+            let entity_candidate = world.get_nearest_entity(
                 search_pos,
                 follow_range,
                 entity_types.as_ref().map(<[&EntityType; 1]>::as_slice),
@@ -232,7 +232,39 @@ impl ActiveTargetGoal {
                     predicate.test(&world, Some(mob), entity.as_ref())
                         && condition.allows_target(mob, entity.as_ref(), &world)
                 },
-            )
+            );
+            // Players live outside `World::entities`, so an any-type search has to
+            // ask for them separately and keep whichever candidate is closest.
+            if self.target_type.is_some() {
+                entity_candidate
+            } else {
+                let player_candidate = world
+                    .get_nearest_player(search_pos, follow_range, |player| {
+                        predicate.test(&world, Some(mob), player.as_ref())
+                            && condition.allows_target(mob, player.as_ref(), &world)
+                    })
+                    .map(|player| player as Arc<dyn EntityBase>);
+                match (entity_candidate, player_candidate) {
+                    (Some(entity), Some(player)) => {
+                        let entity_distance = entity
+                            .get_entity()
+                            .pos
+                            .load()
+                            .squared_distance_to_vec(&search_pos);
+                        let player_distance = player
+                            .get_entity()
+                            .pos
+                            .load()
+                            .squared_distance_to_vec(&search_pos);
+                        Some(if player_distance < entity_distance {
+                            player
+                        } else {
+                            entity
+                        })
+                    }
+                    (entity, player) => entity.or(player),
+                }
+            }
         };
 
         self.target = found;

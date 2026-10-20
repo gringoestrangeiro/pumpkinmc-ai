@@ -1658,11 +1658,11 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     }
 
     fn get_experience_reward(&self, _killer: Option<&dyn EntityBase>) -> u32 {
+        // Vanilla `AgeableMob.getBaseExperienceReward`: ageable babies drop none.
+        // Other mobs with a baby flag (zombies, zoglins, piglins) keep their reward.
         if self
-            .get_entity()
-            .age
-            .load(std::sync::atomic::Ordering::Relaxed)
-            < 0
+            .as_ageable()
+            .is_some_and(crate::entity::ageable::AgeableMob::is_baby)
         {
             return 0;
         }

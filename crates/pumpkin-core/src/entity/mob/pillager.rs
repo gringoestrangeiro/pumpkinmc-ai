@@ -6,6 +6,7 @@ use std::sync::{
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
@@ -15,7 +16,7 @@ use crate::entity::{
     ai::goal::{
         active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, ranged_crossbow_attack::RangedCrossbowAttackGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        revenge::RevengeGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -81,10 +82,16 @@ impl PillagerEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+                Box::new(RevengeGoal::new(true).ignoring(|entity_type| {
+                    entity_type.has_tag(&tag::EntityType::MINECRAFT_RAIDERS)
+                })),
             );
             target_selector.add_goal(
                 2,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+            );
+            target_selector.add_goal(
+                3,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::VILLAGER, true),
             );
             target_selector.add_goal(

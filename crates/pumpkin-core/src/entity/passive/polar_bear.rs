@@ -35,6 +35,22 @@ fn is_baby(mob: &dyn Mob) -> bool {
     mob.as_ageable().is_some_and(AgeableMob::is_baby)
 }
 
+/// Vanilla `PolarBearAttackPlayersGoal.canUse`: an adult charges when a cub is nearby.
+fn protects_cub(mob: &dyn Mob) -> bool {
+    if is_baby(mob) {
+        return false;
+    }
+    let entity = mob.get_entity();
+    let search_box = entity.bounding_box.load().expand(8.0, 4.0, 8.0);
+    let world = entity.world.load();
+    world.get_entities_at_box(&search_box).iter().any(|other| {
+        let other_entity = other.get_entity();
+        other_entity.entity_id != entity.entity_id
+            && other_entity.entity_type == &EntityType::POLAR_BEAR
+            && other.get_mob().is_some_and(is_baby)
+    })
+}
+
 pub struct PolarBearEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
@@ -91,7 +107,13 @@ impl PolarBearEntity {
                         .alerting_only(|other| !is_baby(other)),
                 ),
             );
-            // TODO: PolarBearAttackPlayersGoal at 2 -> adults charge when a cub is near.
+            target_selector.add_goal(
+                2,
+                ActiveTargetGoal::predicated(&mob_arc.mob_entity, 20, true, |target, _world| {
+                    target.entity.entity_type == &EntityType::PLAYER
+                })
+                .gated_by(protects_cub),
+            );
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 3, 5, false);
             target_selector.add_goal(
                 4,

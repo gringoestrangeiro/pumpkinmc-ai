@@ -51,6 +51,10 @@ impl Mob for DrownedEntity {
         self.entity.spawn_as_baby()
     }
 
+    fn get_base_experience_reward(&self) -> u32 {
+        self.entity.get_base_experience_reward()
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         self.entity.mob_write_nbt(nbt);
     }

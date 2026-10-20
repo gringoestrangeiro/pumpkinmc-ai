@@ -99,17 +99,15 @@ impl ZoglinEntity {
             target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
             target_selector.add_goal(
                 2,
-                Box::new(ActiveTargetGoal::new(
+                ActiveTargetGoal::predicated(
                     &mob_arc.mob_entity,
-                    &EntityType::PLAYER,
                     10,
                     true,
-                    false,
-                    Some(|target: &LivingEntity, _world: &World| {
+                    |target: &LivingEntity, _world: &World| {
                         target.entity.entity_type != &EntityType::ZOGLIN
                             && target.entity.entity_type != &EntityType::CREEPER
-                    }),
-                )),
+                    },
+                ),
             );
         };
 

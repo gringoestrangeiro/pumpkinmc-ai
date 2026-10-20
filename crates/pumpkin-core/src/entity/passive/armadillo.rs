@@ -29,6 +29,8 @@ use crate::entity::{
 pub const ARMADILLO_FOOD: &[&Item] = &[&Item::SPIDER_EYE];
 pub const ARMADILLO_BABY_START_AGE: i32 = -48000;
 pub const SCARE_CHECK_INTERVAL: i32 = 80;
+/// Vanilla `ARMADILLO_SCARE_DETECTED` sensor scan rate.
+pub const SCARE_SCAN_INTERVAL: u64 = 5;
 pub const SCARE_DISTANCE_HORIZONTAL: f64 = 7.0;
 pub const SCARE_DISTANCE_VERTICAL: f64 = 2.0;
 
@@ -376,6 +378,28 @@ impl Mob for ArmadilloEntity {
                 );
                 self.scute_time
                     .store(pick_next_scute_drop_time(), Ordering::Relaxed);
+            }
+        }
+
+        if entity.is_alive()
+            && self.in_state_ticks.load(Ordering::Relaxed) % SCARE_SCAN_INTERVAL == 0
+        {
+            let search_box = entity.bounding_box.load().expand(
+                SCARE_DISTANCE_HORIZONTAL,
+                SCARE_DISTANCE_VERTICAL,
+                SCARE_DISTANCE_HORIZONTAL,
+            );
+            let scared = world
+                .get_entities_and_players_at_box(&search_box)
+                .iter()
+                .any(|other| {
+                    other.get_entity().entity_id != entity.entity_id
+                        && self.is_scared_by(other.as_ref())
+                });
+            if scared && self.can_stay_rolled_up() {
+                self.danger_detected_recently_ticks
+                    .store(SCARE_CHECK_INTERVAL, Ordering::Relaxed);
+                self.roll_up();
             }
         }
 

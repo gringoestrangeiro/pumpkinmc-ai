@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::vector3::Vector3;
 
@@ -12,7 +13,8 @@ use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
         Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, swim::SwimGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -106,10 +108,16 @@ impl EvokerEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+                Box::new(RevengeGoal::new(true).ignoring(|entity_type| {
+                    entity_type.has_tag(&tag::EntityType::MINECRAFT_RAIDERS)
+                })),
             );
             target_selector.add_goal(
                 2,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+            );
+            target_selector.add_goal(
+                3,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::VILLAGER, true),
             );
             target_selector.add_goal(

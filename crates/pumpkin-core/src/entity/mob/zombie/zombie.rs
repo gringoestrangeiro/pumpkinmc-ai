@@ -34,6 +34,10 @@ impl Mob for ZombieEntity {
         self.entity.spawn_as_baby()
     }
 
+    fn get_base_experience_reward(&self) -> u32 {
+        self.entity.get_base_experience_reward()
+    }
+
     fn populate_default_equipment_slots(
         &self,
         world: &Arc<World>,

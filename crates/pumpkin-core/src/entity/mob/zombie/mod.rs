@@ -6,12 +6,14 @@ use crate::entity::ai::goal::revenge::RevengeGoal;
 use crate::entity::ai::goal::swim::SwimGoal;
 use crate::entity::ai::goal::wander_around::WanderAroundGoal;
 use crate::entity::ai::goal::zombie_attack::ZombieAttackGoal;
+use crate::entity::attributes::{Modifier, ModifierOperation};
 use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::{
     Entity,
     ai::goal::{Goal, active_target::ActiveTargetGoal, look_at_entity::LookAtEntityGoal},
 };
 use crate::world::World;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
@@ -34,6 +36,8 @@ pub struct ZombieEntityBase {
 }
 
 impl ZombieEntityBase {
+    const SPEED_MODIFIER_BABY_ID: &str = "minecraft:baby";
+
     pub fn new(entity: Entity) -> Arc<Self> {
         Self::with_can_break_doors(entity, false)
     }
@@ -138,19 +142,46 @@ impl ZombieEntityBase {
 
 impl ZombieEntityBase {
     /// Vanilla `Zombie.setBaby`: the baby state is only the synced flag, it never ages up.
-    // TODO: vanilla baby zombies get the +50% SPEED_MODIFIER_BABY and 2.5x XP
-    // (`Zombie.getBaseExperienceReward`), unlike passive babies which drop none.
     pub fn set_baby(&self, baby: bool) {
         self.mob_entity.set_baby_flag(
             &self.is_baby,
             pumpkin_data::tracked_data::zombie::BABY,
             baby,
         );
+        // Vanilla `Zombie.setBaby` swaps the transient `SPEED_MODIFIER_BABY` modifier.
+        self.mob_entity
+            .living_entity
+            .update_attribute(&Attributes::MOVEMENT_SPEED, |speed| {
+                speed.remove_modifier(Self::SPEED_MODIFIER_BABY_ID);
+                if baby {
+                    speed.add_or_replace_modifier(Modifier {
+                        id: Self::SPEED_MODIFIER_BABY_ID.to_string(),
+                        amount: 0.5,
+                        operation: ModifierOperation::MultiplyBase,
+                    });
+                }
+            });
     }
 
     #[must_use]
     pub fn is_baby(&self) -> bool {
         self.is_baby.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn get_base_experience_reward(&self) -> u32 {
+        let xp = self
+            .mob_entity
+            .living_entity
+            .entity
+            .entity_type
+            .experience_reward;
+        if self.is_baby() {
+            // Vanilla `Zombie.getBaseExperienceReward`: babies are worth 2.5x.
+            (f64::from(xp) * 2.5) as u32
+        } else {
+            xp
+        }
     }
 }
 
