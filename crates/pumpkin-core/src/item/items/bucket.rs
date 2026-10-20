@@ -74,7 +74,7 @@ fn get_start_and_end_pos(player: &Player, yaw: f32, pitch: f32) -> (Vector3<f64>
     (start_pos, end_pos)
 }
 
-const fn get_mob_for_bucket(item: &Item) -> Option<(&'static EntityType, Sound)> {
+pub(crate) const fn get_mob_for_bucket(item: &Item) -> Option<(&'static EntityType, Sound)> {
     if item.id == Item::AXOLOTL_BUCKET.id {
         Some((&EntityType::AXOLOTL, Sound::ItemBucketEmptyAxolotl))
     } else if item.id == Item::COD_BUCKET.id {
@@ -94,7 +94,7 @@ const fn get_mob_for_bucket(item: &Item) -> Option<(&'static EntityType, Sound)>
     }
 }
 
-const fn get_empty_sound(item: &Item) -> Sound {
+pub(crate) const fn get_empty_sound(item: &Item) -> Sound {
     if let Some((_, sound)) = get_mob_for_bucket(item) {
         sound
     } else if item.id == Item::LAVA_BUCKET.id {
@@ -189,8 +189,12 @@ fn fill_mob_bucket_stack(
     give_filled_bucket_stack(stack, player, bucket_stack);
 }
 
-fn apply_mob_bucket_components(bucket_stack: &ItemStack, mob: &dyn EntityBase, player: &Player) {
-    crate::item::items::spawn_egg::apply_entity_variant(bucket_stack, mob, Some(player));
+pub(crate) fn apply_mob_bucket_components(
+    bucket_stack: &ItemStack,
+    mob: &dyn EntityBase,
+    player: Option<&Player>,
+) {
+    crate::item::items::spawn_egg::apply_entity_variant(bucket_stack, mob, player);
     if let Some(bucket_data) = bucket_stack.get_data_component::<BucketEntityDataImpl>()
         && let Some(ref raw_nbt) = bucket_data.nbt
         && !raw_nbt.is_empty()
@@ -325,6 +329,27 @@ fn try_place_powder_snow(world: &Arc<World>, pos: BlockPos, direction: BlockDire
         BlockFlags::NOTIFY_NEIGHBORS,
     );
     true
+}
+
+/// Vanilla `BucketItem.emptyContents` places the fluid either in the clicked
+/// block (waterlogged) or in the neighbouring block. Callers that spawn a
+/// stored mob need the same position.
+pub(crate) fn filled_bucket_place_pos(
+    world: &World,
+    item: &Item,
+    pos: BlockPos,
+    direction: BlockDirection,
+) -> BlockPos {
+    if item.id != Item::SULFUR_CUBE_BUCKET.id
+        && world
+            .get_block_and_state(&pos)
+            .0
+            .is_waterlogged(world.get_block_state_id(&pos))
+    {
+        pos
+    } else {
+        pos.offset(direction.to_offset())
+    }
 }
 
 pub(crate) fn try_place_filled_bucket(
@@ -511,16 +536,7 @@ impl ItemBehaviour for FilledBucketItem {
             server.plugin_manager.fire_blocking(&server, &mut event);
         }
 
-        let place_pos = if item.id != Item::SULFUR_CUBE_BUCKET.id
-            && world
-                .get_block_and_state(&pos)
-                .0
-                .is_waterlogged(world.get_block_state_id(&pos))
-        {
-            pos
-        } else {
-            pos.offset(direction.to_offset())
-        };
+        let place_pos = filled_bucket_place_pos(&world, item, pos, direction);
 
         let sound_category = if get_mob_for_bucket(item).is_some() {
             SoundCategory::Neutral
@@ -543,7 +559,7 @@ impl ItemBehaviour for FilledBucketItem {
                 f64::from(place_pos.0.z) + 0.5,
             );
             let mob = from_type(entity_type, spawn_coord, &world, Uuid::new_v4());
-            apply_mob_bucket_components(&bucket_stack, mob.as_ref(), player);
+            apply_mob_bucket_components(&bucket_stack, mob.as_ref(), Some(player));
             world.spawn_entity(mob);
         }
 

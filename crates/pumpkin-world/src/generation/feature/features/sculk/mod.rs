@@ -81,6 +81,28 @@ pub trait SculkLevel {
     /// Whether the block at `pos` is a full cube (collision-shape full block,
     /// used by `canSpreadFrom`).
     fn sculk_is_full_cube(&self, pos: BlockPos) -> bool;
+
+    /// Called after the spreader converts a support block into sculk, before
+    /// veins spread from it. World generation has nothing to do here.
+    fn sculk_on_sculk_placed(
+        &mut self,
+        _pos: BlockPos,
+        _old_state: BlockStateId,
+        _new_state: &'static BlockState,
+    ) {
+    }
+
+    /// Called when a cursor successfully spreads veins at `pos`.
+    fn sculk_on_vein_spread(&mut self, _pos: BlockPos) {}
+
+    /// Emits a level event, used by the live level for sculk charge particles.
+    fn sculk_level_event(&mut self, _pos: BlockPos, _data: i32) {}
+
+    /// Whether a cursor at `pos` may update. Live levels only tick loaded
+    /// chunks; world generation always updates.
+    fn sculk_should_update(&self, _pos: BlockPos) -> bool {
+        true
+    }
 }
 
 /// Returns `true` if the block id behaves like sculk for spreading.

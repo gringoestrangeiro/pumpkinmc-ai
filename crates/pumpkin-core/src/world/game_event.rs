@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use pumpkin_data::BlockId;
 use pumpkin_data::block_properties::{
@@ -14,18 +15,22 @@ use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
 
 use crate::block::blocks::redstone::sculk_sensor::SculkSensorBlock;
+use crate::block::blocks::sculk::sculk_catalyst::SculkCatalystBlock;
 use crate::block::blocks::sculk::sculk_shrieker::SculkShriekerBlock;
 use crate::block::entities::BlockEntity;
 use crate::block::entities::calibrated_sculk_sensor::CalibratedSculkSensorBlockEntity;
+use crate::block::entities::sculk_catalyst::SculkCatalystBlockEntity;
 use crate::block::entities::sculk_sensor::SculkSensorBlockEntity;
 use crate::block::entities::sculk_shrieker::SculkShriekerBlockEntity;
 use crate::entity::EntityBase;
 use crate::entity::mob::warden::WardenEntity;
+use crate::plugin::api::events::block::sculk_bloom::SculkBloomEvent;
 use crate::world::World;
 
 pub const SCULK_SENSOR_LISTENER_RADIUS: i32 = 8;
 pub const CALIBRATED_SCULK_SENSOR_LISTENER_RADIUS: i32 = 16;
 const SCULK_SHRIEKER_LISTENER_RADIUS: i32 = 8;
+const SCULK_CATALYST_LISTENER_RADIUS: i32 = 8;
 const WARDEN_LISTENER_RADIUS: i32 = 16;
 
 pub fn dispatch(
@@ -70,6 +75,11 @@ pub fn dispatch(
             .downcast_ref::<SculkShriekerBlockEntity>()
         {
             receive_shrieker_vibration(world, event, &origin, &shrieker.position, source);
+        } else if let Some(catalyst) = block_entity
+            .as_any()
+            .downcast_ref::<SculkCatalystBlockEntity>()
+        {
+            receive_catalyst_death(world, event, position, catalyst, source);
         }
     }
 
@@ -161,6 +171,58 @@ fn receive_shrieker_vibration(
         return;
     };
     SculkShriekerBlock::try_shriek(world, shrieker_pos, &player);
+}
+
+fn receive_catalyst_death(
+    world: &Arc<World>,
+    event: GameEvent,
+    position: Vector3<f64>,
+    catalyst: &SculkCatalystBlockEntity,
+    source: Option<&dyn EntityBase>,
+) {
+    if event != GameEvent::EntityDie {
+        return;
+    }
+    let Some(mob) = source else {
+        return;
+    };
+    let Some(living) = mob.get_living_entity() else {
+        return;
+    };
+    let origin = BlockPos::containing_vec(position);
+    if distance_between_in_blocks(&origin, &catalyst.position)
+        > SCULK_CATALYST_LISTENER_RADIUS as f32
+    {
+        return;
+    }
+    if living.was_experience_consumed() {
+        return;
+    }
+
+    let killer = world.get_entity_by_id(living.last_attacker_id.load(Ordering::Relaxed));
+    let experience = mob.get_experience_reward(killer.as_deref());
+    let should_drop_experience = !mob
+        .get_mob()
+        .and_then(|mob| mob.as_ageable())
+        .is_some_and(|ageable| ageable.is_baby());
+    if should_drop_experience && experience > 0 {
+        // Vanilla `sourcePosition.relative(Direction.UP, 0.5)`.
+        catalyst.add_cursors(
+            BlockPos::containing_vec(position.add(&Vector3::new(0.0, 0.5, 0.0))),
+            experience as i32,
+        );
+    }
+
+    living.skip_drop_experience();
+
+    if let Some(server) = world.server.upgrade() {
+        let mut event = SculkBloomEvent::new(catalyst.position, world.clone(), experience as i32);
+        server.plugin_manager.fire_blocking(&server, &mut event);
+        if event.cancelled {
+            return;
+        }
+    }
+    SculkCatalystBlock::bloom(world, &catalyst.position);
 }
 
 fn receive_warden_vibration(

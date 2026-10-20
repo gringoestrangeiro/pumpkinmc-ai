@@ -91,6 +91,9 @@ pub struct LivingEntity {
     pub death_time: AtomicU8,
     /// Indicates whether the entity is dead. (`on_death` called)
     pub dead: AtomicBool,
+    /// Vanilla `LivingEntity.skipDropExperience`: set by the sculk catalyst
+    /// listener when it absorbs the death experience.
+    pub skip_drop_experience: AtomicBool,
     /// The distance the entity has been falling.
     pub fall_distance: AtomicCell<f32>,
     /// Ticks spent fall flying, used for elytra durability and game events.
@@ -300,6 +303,7 @@ impl LivingEntity {
             fall_fly_ticks: AtomicI32::new(0),
             death_time: AtomicU8::new(0),
             dead: AtomicBool::new(false),
+            skip_drop_experience: AtomicBool::new(false),
             item_use_time: AtomicI32::new(0),
             item_in_use: std::sync::Mutex::new(None),
             active_hand: std::sync::Mutex::new(None),
@@ -2251,6 +2255,17 @@ impl LivingEntity {
         }
     }
 
+    /// Vanilla `LivingEntity.skipDropExperience`.
+    pub fn skip_drop_experience(&self) {
+        self.skip_drop_experience.store(true, Ordering::Relaxed);
+    }
+
+    /// Vanilla `LivingEntity.wasExperienceConsumed`.
+    #[must_use]
+    pub fn was_experience_consumed(&self) -> bool {
+        self.skip_drop_experience.load(Ordering::Relaxed)
+    }
+
     /// Marks the entity as dead exactly once and runs the server-side death
     /// flow: stop movement input, attribute the kill, drop loot, broadcast the
     /// `Death` (3) entity event, and hand out XP. Safe to call on every lethal
@@ -2322,6 +2337,14 @@ impl LivingEntity {
                     tracker.has_player_attacker()
                 };
 
+            // Vanilla emits `ENTITY_DIE` before `dropAllDeathLoot`, so the sculk
+            // catalyst listener can absorb the experience before it is awarded.
+            world.emit_game_event_with_source(
+                GameEvent::EntityDie,
+                self.entity.pos.load(),
+                Some(&*dyn_self),
+            );
+
             let params = LootContextParameters {
                 killed_by_player: Some(has_player_kill),
                 this_entity: Some(self.entity.entity_type),
@@ -2356,7 +2379,8 @@ impl LivingEntity {
             self.drop_loot(&params);
 
             // Award experience
-            if params.killed_by_player.unwrap_or(false)
+            if !self.was_experience_consumed()
+                && params.killed_by_player.unwrap_or(false)
                 && world.level_info.load().game_rules.mob_drops
             {
                 let amount = dyn_self.get_experience_reward(killer);

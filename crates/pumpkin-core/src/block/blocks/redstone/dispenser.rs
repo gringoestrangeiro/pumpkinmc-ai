@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
 
 use crate::block::blocks::carved_pumpkin::find_golem_pattern;
+use crate::block::blocks::coral::coral_fan::CoralWallFanLikeProperties;
 use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::blocks::tnt::TNTBlock;
 use crate::block::blocks::wither_skull::find_wither_pattern;
@@ -16,10 +17,16 @@ use crate::block::{
 use crate::entity::ageable::AgeableMob;
 use crate::entity::decoration::armor_stand::ArmorStandEntity;
 use crate::entity::item::ItemEntity;
+use crate::entity::passive::armadillo::ArmadilloEntity;
+use crate::entity::passive::donkey::DonkeyEntity;
+use crate::entity::passive::llama::LlamaEntity;
+use crate::entity::passive::mule::MuleEntity;
 use crate::entity::passive::sheep::SheepEntity;
+use crate::entity::passive::trader_llama::TraderLlamaEntity;
 use crate::entity::projectile::ThrownItemEntity;
 use crate::entity::projectile::arrow::{ArrowEntity, ArrowPickup};
 use crate::entity::projectile::egg::EggEntity;
+use crate::entity::projectile::experience_bottle::ExperienceBottleEntity;
 use crate::entity::projectile::firework_rocket::FireworkRocketEntity;
 use crate::entity::projectile::lingering_potion::LingeringPotionEntity;
 use crate::entity::projectile::small_fireball::SmallFireballEntity;
@@ -34,7 +41,8 @@ use crate::entity::{Entity, EntityBase};
 use crate::item::ItemMetadata;
 use crate::item::items::boat::BoatItem;
 use crate::item::items::bucket::{
-    FilledBucketItem, play_bucket_evaporation, should_evaporate_in_nether, try_pickup_fluid_at,
+    FilledBucketItem, apply_mob_bucket_components, filled_bucket_place_pos, get_empty_sound,
+    get_mob_for_bucket, play_bucket_evaporation, should_evaporate_in_nether, try_pickup_fluid_at,
     try_place_filled_bucket,
 };
 use crate::item::items::honeycomb::try_wax_block;
@@ -46,9 +54,9 @@ use crate::world::World;
 
 use crate::block::entities::dispenser::DispenserBlockEntity;
 use pumpkin_data::block_properties::{
-    BeeNestLikeProperties, BlockProperties, EndRodLikeProperties, Facing,
-    PoweredRailLikeProperties, RailLikeProperties, RespawnAnchorLikeProperties,
-    SkeletonSkullLikeProperties,
+    BeeNestLikeProperties, BlockProperties, DoubleBlockHalf, EndRodLikeProperties, Facing,
+    HorizontalFacing, PoweredRailLikeProperties, RailLikeProperties, RespawnAnchorLikeProperties,
+    SkeletonSkullLikeProperties, TallSeagrassLikeProperties,
 };
 use pumpkin_data::data_component::DataComponent;
 use pumpkin_data::data_component_impl::{EquippableImpl, IDSet, PotionContentsImpl};
@@ -63,7 +71,7 @@ use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::translation;
 use pumpkin_data::world::WorldEvent;
-use pumpkin_data::{Block, BlockStateId, FacingExt};
+use pumpkin_data::{Block, BlockId, BlockState, BlockStateId, FacingExt};
 use pumpkin_inventory::Inventory;
 use pumpkin_inventory::generic_container_screen_handler::create_generic_3x3;
 use pumpkin_inventory::player::player_inventory::PlayerInventory;
@@ -417,11 +425,30 @@ impl DispenserBlock {
             if !Self::dispense_shulker_box(ctx, item) {
                 Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserFail);
             }
+        } else if item.item.id == Item::BONE_MEAL.id {
+            // Bone meal fertilizes the block in front
+            Self::dispense_bone_meal(ctx, item);
+        } else if item.item.id == Item::EXPERIENCE_BOTTLE.id {
+            // Bottles o' enchanting are thrown like a projectile
+            Self::dispense_experience_bottle(ctx, item);
+        } else if item.item.id == Item::CHEST.id {
+            // Chests equip tamed, chestless horses
+            if Self::dispense_chest(ctx, item) {
+                Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+            } else {
+                Self::drop_item_with_sound(ctx, item, WorldEvent::SoundDispenserFail);
+            }
+        } else if item.item.id == Item::BRUSH.id {
+            // Brushes scrape scutes off armadillos
+            if Self::dispense_brush(ctx, item) {
+                Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+            } else {
+                Self::drop_item_with_sound(ctx, item, WorldEvent::SoundDispenserFail);
+            }
         } else if Self::dispense_equipment(ctx, item) {
             // Armor, elytra, heads, saddles, horse/wolf armor and llama carpets
             Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
         } else {
-            // TODO: Bone meal, bottles o' enchanting, chests onto llamas, brushes onto armadillos
             // Default / Drop
             Self::drop_item(ctx, item);
         }
@@ -833,9 +860,9 @@ impl DispenserBlock {
 
     fn dispense_filled_bucket(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
         let front = Self::target_position(ctx);
+        let evaporates = should_evaporate_in_nether(item.item, ctx.world);
 
-        // TODO: Spawn the stored entity for axolotl/fish/tadpole buckets, like the player path.
-        let emptied = if should_evaporate_in_nether(item.item, ctx.world) {
+        let emptied = if evaporates {
             play_bucket_evaporation(ctx.world, &front.to_f64());
             true
         } else {
@@ -848,11 +875,274 @@ impl DispenserBlock {
         };
 
         if emptied {
+            let place_pos = if evaporates {
+                front
+            } else {
+                filled_bucket_place_pos(
+                    ctx.world,
+                    item.item,
+                    *ctx.position,
+                    ctx.facing.to_block_direction(),
+                )
+            };
+            let mob = get_mob_for_bucket(item.item);
+            if let Some((entity_type, _)) = mob {
+                let spawn_pos = Vector3::new(
+                    f64::from(place_pos.0.x) + 0.5,
+                    f64::from(place_pos.0.y),
+                    f64::from(place_pos.0.z) + 0.5,
+                );
+                let mob = from_type(entity_type, spawn_pos, ctx.world, Uuid::new_v4());
+                apply_mob_bucket_components(item, mob.as_ref(), None);
+                ctx.world.spawn_entity(mob);
+                ctx.world
+                    .emit_game_event(GameEvent::EntityPlace, place_pos.to_centered_f64());
+            }
+            let category = if mob.is_some() {
+                SoundCategory::Neutral
+            } else {
+                SoundCategory::Blocks
+            };
+            ctx.world
+                .play_sound(get_empty_sound(item.item), category, &place_pos.to_f64());
             *item = ItemStack::new(1, &Item::BUCKET);
             Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
         } else {
             Self::drop_item(ctx, item);
         }
+    }
+
+    /// Vanilla bone meal dispenser behavior: `BoneMealItem.growCrop`, then
+    /// `growWaterPlant` when the target is not fertilizable.
+    fn dispense_bone_meal(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
+        let target = Self::target_position(ctx);
+        let (block, state_id) = ctx.world.get_block_and_state_id(&target);
+        let grew = ctx
+            .world
+            .block_registry
+            .bone_meal(block, ctx.world, &target, state_id)
+            || Self::grow_water_plant(ctx, &target);
+
+        if grew {
+            item.decrement(1);
+            ctx.world
+                .sync_world_event(WorldEvent::ParticlesAndSoundPlantGrowth, target, 15);
+            Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+        } else {
+            Self::drop_item_with_sound(ctx, item, WorldEvent::SoundDispenserFail);
+        }
+    }
+
+    /// Vanilla `BoneMealItem.growWaterPlant` with a null clicked face, which
+    /// skips the coral-wall placement branch.
+    fn grow_water_plant(ctx: &DispenseContext<'_>, position: &BlockPos) -> bool {
+        let (block, _) = ctx.world.get_block_and_state(position);
+        if block != &Block::WATER || !ctx.world.get_fluid_and_fluid_state(position).1.is_source {
+            return false;
+        }
+
+        let mut random = rng();
+        'attempts: for attempt in 0..128 {
+            let mut test_pos = *position;
+            let mut state_to_grow = Block::SEAGRASS.default_state;
+
+            for _ in 0..attempt / 16 {
+                test_pos = test_pos.add(
+                    random.random_range(-1..=1),
+                    (random.random_range(-1..=1) * random.random_range(0..=2)) / 2,
+                    random.random_range(-1..=1),
+                );
+                if ctx.world.get_block_state(&test_pos).is_full_cube() {
+                    continue 'attempts;
+                }
+            }
+
+            if ctx
+                .world
+                .get_biome(&test_pos)
+                .has_tag(&tag::WorldgenBiome::MINECRAFT_PRODUCES_CORALS_FROM_BONEMEAL)
+                && random.random_range(0..4) == 0
+                && let Some(coral) =
+                    random_block_from_tag(tag::Block::MINECRAFT_UNDERWATER_BONEMEALS, &mut random)
+            {
+                state_to_grow = coral.default_state;
+            }
+
+            if state_to_grow
+                .id
+                .to_block()
+                .has_tag(&tag::Block::MINECRAFT_WALL_CORALS)
+            {
+                let coral_block = state_to_grow.id.to_block();
+                let mut tries = 0;
+                while !Self::can_survive(ctx, &test_pos, coral_block, state_to_grow) && tries < 4 {
+                    let mut props = CoralWallFanLikeProperties::from_state_id(state_to_grow.id);
+                    props.facing = [
+                        HorizontalFacing::North,
+                        HorizontalFacing::South,
+                        HorizontalFacing::West,
+                        HorizontalFacing::East,
+                    ][random.random_range(0..4)];
+                    state_to_grow = BlockState::from_id(props.to_state_id(coral_block));
+                    tries += 1;
+                }
+            }
+
+            if !Self::can_survive(ctx, &test_pos, state_to_grow.id.to_block(), state_to_grow) {
+                continue;
+            }
+
+            let (test_block, _) = ctx.world.get_block_and_state(&test_pos);
+            if test_block == &Block::WATER
+                && ctx.world.get_fluid_and_fluid_state(&test_pos).1.is_source
+            {
+                ctx.world
+                    .set_block_state(&test_pos, state_to_grow.id, BlockFlags::NOTIFY_ALL);
+            } else if test_block == &Block::SEAGRASS
+                && ctx.world.get_block(&test_pos.up()) == &Block::WATER
+                && random.random_range(0..10) == 0
+            {
+                let mut lower = TallSeagrassLikeProperties::default(&Block::TALL_SEAGRASS);
+                lower.half = DoubleBlockHalf::Lower;
+                let mut upper = TallSeagrassLikeProperties::default(&Block::TALL_SEAGRASS);
+                upper.half = DoubleBlockHalf::Upper;
+                ctx.world.set_block_state(
+                    &test_pos,
+                    lower.to_state_id(&Block::TALL_SEAGRASS),
+                    BlockFlags::NOTIFY_LISTENERS,
+                );
+                ctx.world.set_block_state(
+                    &test_pos.up(),
+                    upper.to_state_id(&Block::TALL_SEAGRASS),
+                    BlockFlags::NOTIFY_LISTENERS,
+                );
+            }
+        }
+        // Vanilla returns true once the target is a full water source,
+        // whether or not a plant ended up being placed.
+        true
+    }
+
+    fn random_block_from_tag(tag: tag::Tag, random: &mut impl Rng) -> Option<&'static Block> {
+        let values = tag.1;
+        if values.is_empty() {
+            return None;
+        }
+        Some(BlockId::new_or_air(values[random.random_range(0..values.len())]).to_block())
+    }
+
+    fn can_survive(
+        ctx: &DispenseContext<'_>,
+        position: &BlockPos,
+        block: &'static Block,
+        state: &'static BlockState,
+    ) -> bool {
+        ctx.world.block_registry.can_place_at(
+            None,
+            Some(ctx.world.as_ref()),
+            ctx.world.as_ref(),
+            None,
+            block,
+            state,
+            position,
+            None,
+            None,
+        )
+    }
+
+    /// Vanilla `ProjectileDispenseBehavior` for `EXPERIENCE_BOTTLE`:
+    /// `DEFAULT.uncertainty * 0.5` and `DEFAULT.power * 1.25`.
+    fn dispense_experience_bottle(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
+        let projectile = item.split(1);
+        let entity = Entity::new(
+            ctx.world.clone(),
+            Self::projectile_spawn_position(ctx),
+            &EntityType::EXPERIENCE_BOTTLE,
+        );
+        let bottle = ExperienceBottleEntity::new(entity);
+        bottle.set_item_stack(projectile);
+        // Vanilla 26.3 `Projectile.shoot` uses the raw direction (no +0.1 y).
+        let facing = to_normal(ctx.facing);
+        bottle.thrown.set_velocity(
+            facing.x,
+            facing.y,
+            facing.z,
+            Self::DEFAULT_PROJECTILE_POWER * 1.25,
+            Self::DEFAULT_PROJECTILE_UNCERTAINTY * 0.5,
+        );
+        Self::finish_projectile_launch(
+            ctx,
+            Arc::new(bottle),
+            WorldEvent::SoundDispenserProjectileLaunch,
+        );
+    }
+
+    /// Vanilla chest dispenser behavior: equip a tamed, chestless
+    /// `AbstractChestedHorse` in the block in front.
+    fn dispense_chest(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
+        let target_box = BoundingBox::from_block(&Self::target_position(ctx));
+        for entity in ctx.world.get_entities_at_box(&target_box) {
+            if !entity.get_entity().is_alive() {
+                continue;
+            }
+            let any = entity.cast_any();
+            let equipped = if let Some(llama) = any.downcast_ref::<LlamaEntity>() {
+                llama.is_tame() && !llama.has_chest() && {
+                    llama.set_has_chest(true);
+                    true
+                }
+            } else if let Some(llama) = any.downcast_ref::<TraderLlamaEntity>() {
+                llama.is_tame() && !llama.has_chest() && {
+                    llama.set_has_chest(true);
+                    true
+                }
+            } else if let Some(donkey) = any.downcast_ref::<DonkeyEntity>() {
+                donkey.is_tame() && !donkey.has_chest() && {
+                    donkey.set_has_chest(true);
+                    true
+                }
+            } else if let Some(mule) = any.downcast_ref::<MuleEntity>() {
+                mule.is_tame() && !mule.has_chest() && {
+                    mule.set_has_chest(true);
+                    true
+                }
+            } else {
+                false
+            };
+            if equipped {
+                let _ = item.split(1);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Vanilla brush dispenser behavior: scrape a scute off an armadillo in
+    /// front and damage the brush by 16.
+    fn dispense_brush(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
+        let target_box = BoundingBox::from_block(&Self::target_position(ctx));
+        for entity in ctx.world.get_entities_at_box(&target_box) {
+            let Some(armadillo) = entity.cast_any().downcast_ref::<ArmadilloEntity>() else {
+                continue;
+            };
+            if armadillo.is_baby() || !entity.get_entity().is_alive() {
+                continue;
+            }
+            let position = entity.get_entity().pos.load();
+            Self::drop_at(
+                ctx.world,
+                position,
+                ItemStack::new(1, &Item::ARMADILLO_SCUTE),
+            );
+            ctx.world.play_sound(
+                Sound::EntityArmadilloBrush,
+                SoundCategory::Neutral,
+                &position,
+            );
+            let _ = item.damage_item(16);
+            return true;
+        }
+        false
     }
 
     fn dispense_flint_and_steel(ctx: &DispenseContext<'_>, item: &mut ItemStack) {

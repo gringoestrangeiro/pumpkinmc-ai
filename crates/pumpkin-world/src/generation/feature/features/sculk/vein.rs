@@ -88,6 +88,7 @@ impl VeinRules {
             }
             // Place sculk at the support position.
             level.sculk_set(support_pos, Block::SCULK.default_state);
+            level.sculk_on_sculk_placed(support_pos, support_state, Block::SCULK.default_state);
             // Spread veins from the new sculk block first, then discharge
             // the surrounding veins.
             Self::spread_all(level, support_pos);
