@@ -634,7 +634,11 @@ impl PluginManager {
                 Err(e) => {
                     // Handle initialization failure
                     let error_msg = format!("Initialization failed: {e}");
-                    let _ = instance.on_unload(context).await;
+                    let _ = instance.on_unload(context.clone()).await;
+                    // Clean up after the hook, unlike the normal unload path, so
+                    // registrations made while a failed plugin unloads are removed too.
+                    self_ref_clone.unregister_handlers(&plugin_name);
+                    context.unregister_commands();
 
                     // Get the loader data before removing the plugin
                     let loader_data: Option<Box<dyn Any + Send + Sync>> = {
@@ -1314,6 +1318,8 @@ impl PluginManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod failed_load_cleanup;
 
     #[tokio::test]
     async fn topological_sort() {

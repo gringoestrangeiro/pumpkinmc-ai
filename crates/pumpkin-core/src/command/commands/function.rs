@@ -6,11 +6,12 @@ use pumpkin_util::text::TextComponent;
 use crate::command::argument_builder::{ArgumentBuilder, argument, command};
 use crate::command::argument_types::function::FunctionArgumentType;
 use crate::command::context::command_context::CommandContext;
-use crate::command::errors::error_types::CommandErrorType;
+use crate::command::errors::error_types::{CommandErrorType, LiteralCommandErrorType};
 use crate::command::node::dispatcher::CommandDispatcher;
 use crate::command::node::{CommandExecutor, CommandExecutorResult};
 use crate::command::suggestion::provider::{SuggestionProvider, SuggestionProviderResult};
 use crate::command::suggestion::suggestions::SuggestionsBuilder;
+use crate::data::datapack::{DatapackManager, FunctionCallError};
 
 const DESCRIPTION: &str = "Runs commands found in the corresponding function files.";
 const PERMISSION: &str = "minecraft:command.function";
@@ -19,6 +20,12 @@ static ERROR_UNKNOWN_FUNCTION: CommandErrorType<1> = CommandErrorType::new(
     translation::java::ARGUMENTS_FUNCTION_UNKNOWN,
     translation::java::ARGUMENTS_FUNCTION_UNKNOWN,
 );
+
+/// Internal queue/execution failures are not user input errors; they are
+/// logged with detail and surfaced as a generic internal error instead of the
+/// "unknown function" message.
+static ERROR_FUNCTION_INTERNAL: LiteralCommandErrorType =
+    LiteralCommandErrorType::new("Internal error while running function");
 
 struct FunctionSuggestionProvider;
 
@@ -43,43 +50,57 @@ impl CommandExecutor for FunctionExecutor {
     fn execute(&self, context: &CommandContext) -> CommandExecutorResult {
         let name_str = FunctionArgumentType::get(context, "name")?;
         let server = context.server();
+        // A nested `function` line queues work into the active execution; only
+        // the top-level command reports how many commands ran.
+        let nested = DatapackManager::is_function_execution_active();
 
-        let Ok(executed_count) =
-            server
+        let executed_count =
+            match server
                 .datapack_manager
                 .execute_function(server, &context.source, name_str)
-        else {
-            return Err(ERROR_UNKNOWN_FUNCTION
-                .create_without_context(TextComponent::text(name_str.to_string())));
-        };
+            {
+                Ok(executed_count) => executed_count,
+                Err(FunctionCallError::Unknown(_)) => {
+                    return Err(ERROR_UNKNOWN_FUNCTION
+                        .create_without_context(TextComponent::text(name_str.to_string())));
+                }
+                Err(FunctionCallError::Internal(message)) => {
+                    tracing::error!("Internal error running function {name_str}: {message}");
+                    return Err(ERROR_FUNCTION_INTERNAL.create_without_context());
+                }
+            };
 
-        if name_str.starts_with('#') {
-            context.source.send_feedback(
-                TextComponent::translate_cross(
-                    translation::java::COMMANDS_FUNCTION_SUCCESS_MULTIPLE,
-                    translation::java::COMMANDS_FUNCTION_SUCCESS_MULTIPLE,
-                    [
-                        TextComponent::text(executed_count.to_string()),
-                        TextComponent::text(name_str.to_string()),
-                    ],
-                ),
-                true,
-            );
-        } else {
-            context.source.send_feedback(
-                TextComponent::translate_cross(
-                    translation::java::COMMANDS_FUNCTION_SUCCESS_SINGLE,
-                    translation::java::COMMANDS_FUNCTION_SUCCESS_SINGLE,
-                    [
-                        TextComponent::text(executed_count.to_string()),
-                        TextComponent::text(name_str.to_string()),
-                    ],
-                ),
-                true,
-            );
+        if !nested {
+            if name_str.starts_with('#') {
+                context.source.send_feedback(
+                    TextComponent::translate_cross(
+                        translation::java::COMMANDS_FUNCTION_SUCCESS_MULTIPLE,
+                        translation::java::COMMANDS_FUNCTION_SUCCESS_MULTIPLE,
+                        [
+                            TextComponent::text(executed_count.to_string()),
+                            TextComponent::text(name_str.to_string()),
+                        ],
+                    ),
+                    true,
+                );
+            } else {
+                context.source.send_feedback(
+                    TextComponent::translate_cross(
+                        translation::java::COMMANDS_FUNCTION_SUCCESS_SINGLE,
+                        translation::java::COMMANDS_FUNCTION_SUCCESS_SINGLE,
+                        [
+                            TextComponent::text(executed_count.to_string()),
+                            TextComponent::text(name_str.to_string()),
+                        ],
+                    ),
+                    true,
+                );
+            }
         }
 
-        Ok(executed_count as i32)
+        // The count is saturated rather than truncated: a saturated feedback
+        // beats a wrapped negative one for absurdly large queues.
+        Ok(i32::try_from(executed_count).unwrap_or(i32::MAX))
     }
 }
 
