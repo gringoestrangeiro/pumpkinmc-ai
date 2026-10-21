@@ -16,7 +16,6 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::optional_int::OptionalInt;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::world::BlockFlags;
 use rand::RngExt;
 
@@ -109,7 +108,7 @@ impl FrogEntity {
             navigator.set_pathfinding_malus(PathType::Water, 4.0);
             navigator.set_pathfinding_malus(PathType::Trapdoor, -1.0);
             navigator.set_can_float(true);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -120,9 +119,9 @@ impl FrogEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(TemptGoal::new(1.0, FROG_FOOD, false)));
-            goal_selector.add_goal(2, FrogBreedGoal::new(mob_arc.clone()));
-            goal_selector.add_goal(2, TongueGoal::new(mob_arc.clone()));
-            goal_selector.add_goal(2, LayFrogSpawnGoal::new(mob_arc.clone()));
+            goal_selector.add_goal(2, FrogBreedGoal::new(&mob_arc));
+            goal_selector.add_goal(2, TongueGoal::new(&mob_arc));
+            goal_selector.add_goal(2, LayFrogSpawnGoal::new(&mob_arc));
             goal_selector.add_goal(
                 2,
                 Box::new(LongJumpGoal::new(
@@ -172,7 +171,7 @@ impl FrogEntity {
                     Some(is_small_cube),
                 )),
             );
-        }
+        };
 
         mob_arc
     }
@@ -254,9 +253,13 @@ struct TongueGoal {
 }
 
 impl TongueGoal {
-    fn new(frog: Arc<FrogEntity>) -> Box<Self> {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
+    fn new(frog: &Arc<FrogEntity>) -> Box<Self> {
         Box::new(Self {
-            frog: Arc::downgrade(&frog),
+            frog: Arc::downgrade(frog),
             target: None,
             state: TongueState::Done,
             eat_timer: 0,
@@ -447,9 +450,13 @@ struct FrogBreedGoal {
 }
 
 impl FrogBreedGoal {
-    fn new(frog: Arc<FrogEntity>) -> Box<Self> {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
+    fn new(frog: &Arc<FrogEntity>) -> Box<Self> {
         Box::new(Self {
-            frog: Arc::downgrade(&frog),
+            frog: Arc::downgrade(frog),
             mate: None,
             timer: 0,
         })
@@ -605,9 +612,13 @@ struct LayFrogSpawnGoal {
 }
 
 impl LayFrogSpawnGoal {
-    fn new(frog: Arc<FrogEntity>) -> Box<Self> {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
+    fn new(frog: &Arc<FrogEntity>) -> Box<Self> {
         Box::new(Self {
-            frog: Arc::downgrade(&frog),
+            frog: Arc::downgrade(frog),
             target: None,
             scan_cooldown: 0,
         })

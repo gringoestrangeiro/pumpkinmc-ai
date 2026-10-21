@@ -58,7 +58,7 @@ impl DrownedEntity {
             searching_for_land: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(drowned);
-        let drowned_weak: Weak<DrownedEntity> = Arc::downgrade(&mob_arc);
+        let drowned_weak: Weak<Self> = Arc::downgrade(&mob_arc);
         let ranged_weak: Weak<dyn RangedAttackMob> = {
             let ranged_arc: Arc<dyn RangedAttackMob> = mob_arc.clone();
             Arc::downgrade(&ranged_arc)
@@ -73,7 +73,7 @@ impl DrownedEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             *navigator = Navigator::amphibious(false);
             navigator.set_pathfinding_malus(PathType::Water, 0.0);
-        }
+        };
 
         mob_arc.entity.mob_entity.living_entity.update_attribute(
             &Attributes::STEP_HEIGHT,
@@ -197,7 +197,7 @@ impl DrownedEntity {
     }
 
     /// Vanilla `Drowned.closeToNextPos`.
-    fn close_to_next_pos(&self, mob: &dyn Mob) -> bool {
+    fn close_to_next_pos(mob: &dyn Mob) -> bool {
         let navigator = mob
             .get_mob_entity()
             .navigator
@@ -319,7 +319,7 @@ impl RangedAttackMob for DrownedEntity {
     }
 }
 
-fn ranged_attack_uncertainty(difficulty: Difficulty) -> i32 {
+const fn ranged_attack_uncertainty(difficulty: Difficulty) -> i32 {
     match difficulty {
         Difficulty::Peaceful => 14,
         Difficulty::Easy => 10,
@@ -334,6 +334,10 @@ struct DrownedAttackGoal {
 }
 
 impl DrownedAttackGoal {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
     fn new(drowned: Weak<DrownedEntity>) -> Box<Self> {
         Box::new(Self {
             inner: ZombieAttackGoal::new(1.0, false),
@@ -511,6 +515,10 @@ struct DrownedGoToBeachGoal {
 }
 
 impl DrownedGoToBeachGoal {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
     fn new(speed: f64, drowned: Weak<DrownedEntity>) -> Box<Self> {
         let mut this = Box::new(Self {
             inner: MoveToTargetPosGoal::new(ParentHandle::none(), speed, 8, 2),
@@ -613,16 +621,13 @@ impl Goal for DrownedSwimUpGoal {
     }
 
     fn tick(&mut self, mob: &dyn Mob) {
-        let Some(drowned) = self.drowned.upgrade() else {
-            return;
-        };
         let entity = mob.get_entity();
         let world = entity.world.load();
         let sea_level = world.sea_level;
         let pos = entity.pos.load();
 
         if pos.y < f64::from(sea_level - 1)
-            && (mob.is_navigator_idle() || drowned.close_to_next_pos(mob))
+            && (mob.is_navigator_idle() || DrownedEntity::close_to_next_pos(mob))
         {
             let towards_pos = Vector3::new(pos.x, f64::from(sea_level - 1), pos.z);
             let Some(next_pos) = default_random_pos::get_pos_towards(

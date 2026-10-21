@@ -7,7 +7,7 @@ use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 
 use crate::entity::{
-    Entity, EntityBase,
+    Entity,
     ai::goal::{
         active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal,
@@ -104,7 +104,7 @@ impl VindicatorEntity {
     #[must_use]
     pub fn is_johnny(&self) -> bool {
         self.is_johnny.load(Ordering::Relaxed)
-            || (&**self.mob_entity.living_entity.entity.custom_name.load())
+            || (**self.mob_entity.living_entity.entity.custom_name.load())
                 .as_ref()
                 .is_some_and(|name| name.clone().get_text() == "Johnny")
     }

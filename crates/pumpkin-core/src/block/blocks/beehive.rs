@@ -9,6 +9,7 @@ use crate::entity::passive::bee::BeeEntity;
 use crate::entity::player::Player;
 use pumpkin_data::block_properties::BeeNestLikeProperties;
 use pumpkin_data::data_component_impl::{BlockStateImpl, EnchantmentsImpl};
+use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::Taggable;

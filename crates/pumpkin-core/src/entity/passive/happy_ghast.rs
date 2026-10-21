@@ -199,7 +199,7 @@ impl HappyGhastEntity {
             while let Some(vehicle) = root.get_entity().get_vehicle() {
                 root = vehicle;
             }
-            if root.cast_any().is::<HappyGhastEntity>() {
+            if root.cast_any().is::<Self>() {
                 continue;
             }
             let pos = root.get_entity().pos.load();

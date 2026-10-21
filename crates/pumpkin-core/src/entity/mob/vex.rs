@@ -51,7 +51,7 @@ impl VexEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             *move_control = Box::new(VexMoveControl::default());
-        }
+        };
 
         let vex = Self {
             mob_entity,
@@ -296,15 +296,18 @@ impl MoveControlTrait for VexMoveControl {
                 velocity.z + delta.z * scale,
             ));
 
-            let yaw = if let Some(target) = mob.get_mob_entity().get_target() {
-                let target_pos = target.get_entity().pos.load();
-                let tx = target_pos.x - pos.x;
-                let tz = target_pos.z - pos.z;
-                -(tx.atan2(tz).to_degrees() as f32)
-            } else {
-                let velocity = entity.velocity.load();
-                -(velocity.x.atan2(velocity.z).to_degrees() as f32)
-            };
+            let yaw = mob.get_mob_entity().get_target().map_or_else(
+                || {
+                    let velocity = entity.velocity.load();
+                    -(velocity.x.atan2(velocity.z).to_degrees() as f32)
+                },
+                |target| {
+                    let target_pos = target.get_entity().pos.load();
+                    let tx = target_pos.x - pos.x;
+                    let tz = target_pos.z - pos.z;
+                    -(tx.atan2(tz).to_degrees() as f32)
+                },
+            );
             entity.yaw.store(yaw);
             entity.body_yaw.store(yaw);
         }
@@ -457,6 +460,10 @@ struct VexCopyOwnerTargetGoal {
 }
 
 impl VexCopyOwnerTargetGoal {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
     fn new(vex: std::sync::Weak<VexEntity>) -> Box<Self> {
         Box::new(Self {
             vex,

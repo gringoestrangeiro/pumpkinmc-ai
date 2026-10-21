@@ -97,7 +97,7 @@ impl GoatEntity {
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.25)));
-            goal_selector.add_goal(5, RamGoal::new(mob_arc.clone()));
+            goal_selector.add_goal(5, RamGoal::new(&mob_arc));
             goal_selector.add_goal(
                 5,
                 Box::new(LongJumpGoal::new(
@@ -232,9 +232,13 @@ struct RamGoal {
 }
 
 impl RamGoal {
-    fn new(goat: Arc<GoatEntity>) -> Box<Self> {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
+    fn new(goat: &Arc<GoatEntity>) -> Box<Self> {
         Box::new(Self {
-            goat: Arc::downgrade(&goat),
+            goat: Arc::downgrade(goat),
             target: None,
             target_block: BlockPos::ZERO,
             preparing: false,
@@ -245,7 +249,7 @@ impl RamGoal {
         })
     }
 
-    fn find_target(&self, mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
+    fn find_target(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
         let entity = mob.get_entity();
         let world = entity.world.load();
         let mob_griefing = world.level_info.load().game_rules.mob_griefing;
@@ -297,7 +301,7 @@ impl RamGoal {
             .stop();
     }
 
-    fn ram_horn_breaking_block(&self, mob: &dyn Mob) -> bool {
+    fn ram_horn_breaking_block(mob: &dyn Mob) -> bool {
         let entity = mob.get_entity();
         let velocity = entity.velocity.load();
         let horizontal = Vector3::new(velocity.x, 0.0, velocity.z);
@@ -329,7 +333,7 @@ impl Goal for RamGoal {
             self.search_cooldown -= 1;
             return false;
         }
-        let Some(target) = self.find_target(mob) else {
+        let Some(target) = Self::find_target(mob) else {
             self.search_cooldown = 10;
             return false;
         };
@@ -341,7 +345,7 @@ impl Goal for RamGoal {
         true
     }
 
-    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
         let Some(target) = &self.target else {
             return false;
         };
@@ -361,6 +365,7 @@ impl Goal for RamGoal {
         self.finish(mob);
     }
 
+    #[expect(clippy::too_many_lines)]
     fn tick(&mut self, mob: &dyn Mob) {
         let Some(target) = self.target.clone() else {
             return;
@@ -435,7 +440,7 @@ impl Goal for RamGoal {
                         && candidate.get_living_entity().is_some()
                         && mob.can_attack(candidate.as_ref())
                 })
-                .map(|candidate| {
+                .inspect(|candidate| {
                     let damaged = mob.get_mob_entity().try_attack(entity, candidate.as_ref());
                     if damaged {
                         candidate.get_entity().knockback(
@@ -444,11 +449,10 @@ impl Goal for RamGoal {
                             self.ram_direction.z,
                         );
                     }
-                    candidate
                 })
         };
 
-        if rammed.is_some() || self.ram_horn_breaking_block(mob) {
+        if rammed.is_some() || Self::ram_horn_breaking_block(mob) {
             let sound = self
                 .goat
                 .upgrade()

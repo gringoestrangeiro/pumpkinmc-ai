@@ -13,6 +13,7 @@ const DESCRIPTION: &str = "Saves the server to disk.";
 
 const PERMISSION: &str = "minecraft:command.save-all";
 
+#[expect(clippy::unnecessary_wraps, reason = "command executor signature")]
 fn save_all(context: &CommandContext, flush: bool) -> CommandExecutorResult {
     context.source.send_feedback(
         TextComponent::translate_cross(

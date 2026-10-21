@@ -382,7 +382,10 @@ impl Mob for ArmadilloEntity {
         }
 
         if entity.is_alive()
-            && self.in_state_ticks.load(Ordering::Relaxed) % SCARE_SCAN_INTERVAL == 0
+            && self
+                .in_state_ticks
+                .load(Ordering::Relaxed)
+                .is_multiple_of(SCARE_SCAN_INTERVAL)
         {
             let search_box = entity.bounding_box.load().expand(
                 SCARE_DISTANCE_HORIZONTAL,

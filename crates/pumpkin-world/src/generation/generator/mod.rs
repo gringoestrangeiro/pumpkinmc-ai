@@ -137,15 +137,16 @@ impl WorldGenerator {
 pub(crate) fn parse_enabled_structure_sets(
     structure_overrides: Option<&[String]>,
 ) -> Option<rustc_hash::FxHashSet<usize>> {
-    structure_overrides.map(|overrides| {
+    let overrides = structure_overrides?;
+    Some(
         overrides
             .iter()
             .filter_map(|s| {
                 let clean = s.strip_prefix("minecraft:").unwrap_or(s);
                 StructureSet::NAMES.iter().position(|&name| name == clean)
             })
-            .collect()
-    })
+            .collect(),
+    )
 }
 
 pub struct VanillaGenerator {

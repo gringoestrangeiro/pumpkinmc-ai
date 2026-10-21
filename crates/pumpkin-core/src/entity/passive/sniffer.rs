@@ -108,7 +108,7 @@ impl SnifferEntity {
                 .navigator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = navigator;
-        }
+        };
         let sniffer = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -544,7 +544,7 @@ impl Animal for SnifferEntity {
     }
 
     fn can_breed_with(&self, partner: &dyn EntityBase) -> bool {
-        let Some(partner) = partner.cast_any().downcast_ref::<SnifferEntity>() else {
+        let Some(partner) = partner.cast_any().downcast_ref::<Self>() else {
             return false;
         };
         let is_ready = |state: SnifferState| {

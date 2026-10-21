@@ -37,6 +37,7 @@ use rand::RngExt;
 
 use crate::entity::EntityBase;
 use crate::entity::mob::{Mob, MobEntity};
+use pumpkin_inventory::Inventory;
 
 // ══════════════════════════════════════════════════════════════════
 // Global constants extracted from vanilla Minecraft 26.2

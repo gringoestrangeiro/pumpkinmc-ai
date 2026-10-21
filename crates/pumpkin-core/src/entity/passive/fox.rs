@@ -133,7 +133,7 @@ impl FoxEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             navigator.set_pathfinding_malus(PathType::DamageOther, 0.0);
             navigator.set_pathfinding_malus(PathType::DangerOther, 0.0);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -164,7 +164,7 @@ impl FoxEntity {
                 LookAtEntityGoal::with_default(weak_mob(&mob_arc), &EntityType::PLAYER, 24.0),
             );
             goal_selector.add_goal(13, Box::new(RandomLookAroundGoal::default()));
-        }
+        };
 
         {
             let mut target_selector = mob_arc
@@ -191,7 +191,7 @@ impl FoxEntity {
                 6,
                 ActiveTargetGoal::predicated(&mob_arc.mob_entity, 20, false, schooling_fish),
             );
-        }
+        };
 
         mob_arc
     }
@@ -314,7 +314,7 @@ impl FoxEntity {
         self.set_sleeping(false);
     }
 
-    fn can_eat(&self, item: &ItemStack) -> bool {
+    fn can_eat(item: &ItemStack) -> bool {
         item.get_data_component::<FoodImpl>().is_some()
             && item.get_data_component::<ConsumableImpl>().is_some()
     }
@@ -329,10 +329,6 @@ fn as_fox(mob: &dyn Mob) -> Option<&FoxEntity> {
     mob.cast_any().downcast_ref::<FoxEntity>()
 }
 
-#[expect(
-    clippy::float_cmp,
-    reason = "Vanilla compares the slope to exactly zero"
-)]
 fn is_path_clear(fox: &dyn EntityBase, target: &dyn EntityBase) -> bool {
     let fox_pos = fox.get_entity().pos.load();
     let target_pos = target.get_entity().pos.load();
@@ -486,7 +482,11 @@ impl Goal for StalkPreyGoal {
         if distance <= 36.0
             || fox.is_crouching()
             || fox.is_interested()
-            || mob.get_entity().jumping.load(Ordering::Relaxed)
+            || mob
+                .get_mob_entity()
+                .living_entity
+                .jumping
+                .load(Ordering::Relaxed)
         {
             return false;
         }
@@ -600,7 +600,9 @@ impl Goal for FoxPounceGoal {
             return false;
         }
         let clear = is_path_clear(mob.get_entity(), target.as_ref());
-        if !clear {
+        if clear {
+            self.target = Some(target);
+        } else {
             mob.get_mob_entity()
                 .navigator
                 .lock()
@@ -612,8 +614,6 @@ impl Goal for FoxPounceGoal {
                 ));
             fox.set_crouching(false);
             fox.set_interested(false);
-        } else {
-            self.target = Some(target);
         }
         clear
     }
@@ -640,7 +640,10 @@ impl Goal for FoxPounceGoal {
             return;
         };
         fox.set_sitting(false);
-        mob.get_entity().jumping.store(true, Ordering::SeqCst);
+        mob.get_mob_entity()
+            .living_entity
+            .jumping
+            .store(true, Ordering::SeqCst);
         fox.set_pouncing(true);
         fox.set_interested(false);
 
@@ -700,8 +703,10 @@ impl Goal for FoxPounceGoal {
             if movement.y * movement.y < 0.03 && entity.pitch.load().abs() > f32::EPSILON {
                 entity.set_pitch(entity.pitch.load() * 0.8);
             } else {
-                let direction = (movement.x * movement.x + movement.z * movement.z).sqrt();
-                let upwards_bias = if entity.jumping.load(Ordering::Relaxed) && movement.y > 0.0 {
+                let direction = movement.x.hypot(movement.z);
+                let upwards_bias = if fox.mob_entity.living_entity.jumping.load(Ordering::Relaxed)
+                    && movement.y > 0.0
+                {
                     6.5
                 } else {
                     1.0
@@ -798,7 +803,10 @@ impl Goal for SleepGoal {
         fox.set_sitting(false);
         fox.set_crouching(false);
         fox.set_interested(false);
-        mob.get_entity().jumping.store(false, Ordering::SeqCst);
+        mob.get_mob_entity()
+            .living_entity
+            .jumping
+            .store(false, Ordering::SeqCst);
         fox.set_sleeping(true);
         mob.get_mob_entity()
             .navigator
@@ -832,6 +840,10 @@ struct FoxEatBerriesGoal {
 }
 
 impl FoxEatBerriesGoal {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
     fn new() -> Box<Self> {
         let mut this = Box::new(Self {
             inner: MoveToTargetPosGoal::new(
@@ -945,7 +957,7 @@ fn has_berries(world: &World, pos: &BlockPos) -> bool {
 
 impl Goal for FoxEatBerriesGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if !as_fox(mob).is_some_and(|fox| !fox.is_sleeping()) {
+        if as_fox(mob).is_none_or(FoxEntity::is_sleeping) {
             return false;
         }
         self.inner.can_start(mob)
@@ -1090,7 +1102,7 @@ impl Mob for FoxEntity {
                 .get_target()
                 .is_none_or(|target| !target.get_entity().is_alive());
 
-            if self.can_eat(&mouth)
+            if Self::can_eat(&mouth)
                 && target_is_missing
                 && entity.on_ground.load(Ordering::Relaxed)
                 && !self.is_sleeping()
@@ -1121,7 +1133,10 @@ impl Mob for FoxEntity {
         }
 
         if self.is_sleeping() || !entity.is_alive() {
-            entity.jumping.store(false, Ordering::SeqCst);
+            self.mob_entity
+                .living_entity
+                .jumping
+                .store(false, Ordering::SeqCst);
             self.mob_entity
                 .living_entity
                 .movement_input

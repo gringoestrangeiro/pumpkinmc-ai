@@ -293,6 +293,7 @@ fn parse_condition_field(val: Option<&Value>) -> DynamicLootCondition {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn parse_condition(val: &Value) -> DynamicLootCondition {
     let cond_type = val
         .get("condition")
@@ -425,11 +426,10 @@ fn combine_conditions(conditions: Vec<DynamicLootCondition>) -> DynamicLootCondi
     }
 }
 
-/// Resolves `minecraft:loot_table` entries against the loaded datapacks first
-/// and the generated vanilla tables second, then stores the resolved tables
-/// back into `registry`. References are resolved eagerly, like the rest of the
-/// loader; nested tables are cloned so a table can be rolled without the
-/// registry lock.
+/// Resolves `minecraft:loot_table` references against datapacks and vanilla.
+///
+/// References are resolved eagerly, like the rest of the loader; nested tables
+/// are cloned so a table can be rolled without the registry lock.
 pub fn resolve_loot_table_references<S: std::hash::BuildHasher>(
     registry: &mut HashMap<String, Arc<DynamicLootTable>, S>,
 ) {

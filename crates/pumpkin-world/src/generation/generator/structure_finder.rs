@@ -279,9 +279,11 @@ pub fn find_nearest_structure_start(
     None
 }
 
-/// Vanilla `ChunkGenerator.findNearestMapStructure` for a set of structure
-/// types, such as the `minecraft:dolphin_located` tag. Every enabled set that
-/// holds one of `target_structures` is searched and the nearest start wins.
+/// Vanilla `ChunkGenerator.findNearestMapStructure` for a set of structure types.
+///
+/// Every enabled set that holds one of `target_structures` is searched and the
+/// nearest start wins. Used for tags such as `minecraft:dolphin_located`.
+#[must_use]
 pub fn find_nearest_structure_of_types(
     origin: BlockPos,
     target_structures: &[pumpkin_data::structures::StructureKeys],
@@ -591,7 +593,7 @@ mod configured_biome_regression {
     /// `createForFlat` structure state. A biome the structure cannot use must
     /// not produce a hit.
     #[test]
-    fn flat_world_locates_by_its_fixed_biome() -> TestResult<()> {
+    fn flat_world_locates_by_its_fixed_biome() {
         let overrides = ["minecraft:villages".to_owned()];
         let flat = |biome: &str| {
             WorldGenerator::Flat(Box::new(FlatGenerator::new_with_structures(
@@ -627,6 +629,5 @@ mod configured_biome_regression {
             )
             .is_none()
         );
-        Ok(())
     }
 }

@@ -126,9 +126,8 @@ impl MannequinEntity {
     }
 }
 
-fn pose_name(pose: EntityPose) -> &'static str {
+const fn pose_name(pose: EntityPose) -> &'static str {
     match pose {
-        EntityPose::Standing => "standing",
         EntityPose::Crouching => "crouching",
         EntityPose::Swimming => "swimming",
         EntityPose::FallFlying => "fall_flying",
@@ -230,7 +229,7 @@ impl EntityBase for MannequinEntity {
             if description != TextComponent::translate(DEFAULT_DESCRIPTION, []) {
                 nbt.put(
                     "description",
-                    NbtTag::Compound(description.to_nbt_compound()),
+                    NbtTag::Compound(description.0.to_nbt_compound()),
                 );
             }
         }
@@ -251,10 +250,10 @@ impl EntityBase for MannequinEntity {
         }
         self.set_immovable(nbt.get_bool("immovable").unwrap_or(false));
         self.set_hide_description(nbt.get_bool("hide_description").unwrap_or(false));
-        let description = nbt
-            .get("description")
-            .map(TextComponent::from_nbt)
-            .unwrap_or_else(|| TextComponent::translate(DEFAULT_DESCRIPTION, []));
+        let description = nbt.get("description").map_or_else(
+            || TextComponent::translate(DEFAULT_DESCRIPTION, []),
+            TextComponent::from_nbt,
+        );
         self.set_description(description);
     }
 

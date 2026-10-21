@@ -238,7 +238,10 @@ impl CreakingEntity {
             .living_entity
             .movement_input
             .store(Vector3::default());
-        entity.jumping.store(false, Ordering::Relaxed);
+        self.mob_entity
+            .living_entity
+            .jumping
+            .store(false, Ordering::Relaxed);
         if let Ok(mut navigator) = self.mob_entity.navigator.lock() {
             navigator.stop();
         }
@@ -475,7 +478,7 @@ impl Mob for CreakingEntity {
     }
 
     fn is_pushable(&self) -> bool {
-        self.mob_entity.living_entity.is_pushable() && CreakingEntity::can_move(self)
+        self.mob_entity.living_entity.is_pushable() && Self::can_move(self)
     }
 
     fn can_use_portal(&self) -> bool {
@@ -483,7 +486,7 @@ impl Mob for CreakingEntity {
     }
 
     fn can_move(&self) -> bool {
-        CreakingEntity::can_move(self)
+        Self::can_move(self)
     }
 
     fn on_attack(&self, _target: &dyn EntityBase) {
@@ -554,7 +557,7 @@ impl Mob for CreakingEntity {
             goals_selector.set_control_enabled(Controls::MOVE, now_can_move);
             goals_selector.set_control_enabled(Controls::LOOK, now_can_move);
             goals_selector.set_control_enabled(Controls::JUMP, now_can_move);
-        }
+        };
         if !now_can_move {
             self.stop_in_place();
         }

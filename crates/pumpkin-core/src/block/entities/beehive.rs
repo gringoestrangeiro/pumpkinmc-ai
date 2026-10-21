@@ -1,5 +1,4 @@
 use super::BlockEntity;
-use crate::entity::ageable::AgeableMob;
 use crate::entity::mob::Mob;
 use crate::entity::passive::bee::{BeeEntity, drop_off_nectar};
 use crate::entity::{EntityBase, r#type::from_type};
@@ -272,7 +271,7 @@ impl BeehiveBlockEntity {
                 return;
             }
             stored.push(NbtTag::Compound(occupant));
-        }
+        };
 
         if let Some(flower) = saved_flower {
             let mut stored = self
@@ -312,12 +311,12 @@ impl BeehiveBlockEntity {
         let player_pos = player.get_entity().pos.load();
         let sedated = is_sedated(world, &self.position);
         for entity in released {
-            if !entity
+            if entity
                 .get_entity()
                 .pos
                 .load()
                 .squared_distance_to_vec(&player_pos)
-                <= EMERGENCY_RELEASE_DISTANCE_SQ
+                > EMERGENCY_RELEASE_DISTANCE_SQ
             {
                 continue;
             }
@@ -368,7 +367,7 @@ impl BeehiveBlockEntity {
                     saved_flower,
                 )
             });
-        }
+        };
 
         released
     }
@@ -389,21 +388,19 @@ impl BeehiveBlockEntity {
 
         let mut index = 0;
         while index < stored.len() {
-            let (ticks, min_ticks, has_nectar) = match &stored[index] {
-                NbtTag::Compound(occupant) => {
-                    let ticks = occupant.get_int("ticks_in_hive").unwrap_or(0) + 1;
-                    let min_ticks = occupant
-                        .get_int("min_ticks_in_hive")
-                        .unwrap_or(MIN_OCCUPATION_TICKS_NECTARLESS);
-                    let has_nectar = occupant_entity_data(occupant)
-                        .and_then(|data| data.get_bool("HasNectar"))
-                        .unwrap_or(false);
-                    (ticks, min_ticks, has_nectar)
-                }
-                _ => {
-                    index += 1;
-                    continue;
-                }
+            let (ticks, min_ticks, has_nectar) = if let NbtTag::Compound(occupant) = &stored[index]
+            {
+                let ticks = occupant.get_int("ticks_in_hive").unwrap_or(0) + 1;
+                let min_ticks = occupant
+                    .get_int("min_ticks_in_hive")
+                    .unwrap_or(MIN_OCCUPATION_TICKS_NECTARLESS);
+                let has_nectar = occupant_entity_data(occupant)
+                    .and_then(|data| data.get_bool("HasNectar"))
+                    .unwrap_or(false);
+                (ticks, min_ticks, has_nectar)
+            } else {
+                index += 1;
+                continue;
             };
 
             if let NbtTag::Compound(occupant) = &mut stored[index] {
@@ -504,14 +501,14 @@ fn release_occupant(
     };
 
     let ticks_in_hive = occupant.get_int("ticks_in_hive").unwrap_or(0);
-    if let Some(ageable) = bee.as_ageable() {
-        if !ageable.is_age_locked() {
-            let age = ageable.get_age();
-            if age < 0 {
-                ageable.set_age(age.saturating_add(ticks_in_hive).min(0));
-            } else if age > 0 {
-                ageable.set_age(age.saturating_sub(ticks_in_hive).max(0));
-            }
+    if let Some(ageable) = bee.as_ageable()
+        && !ageable.is_age_locked()
+    {
+        let age = ageable.get_age();
+        if age < 0 {
+            ageable.set_age(age.saturating_add(ticks_in_hive).min(0));
+        } else if age > 0 {
+            ageable.set_age(age.saturating_sub(ticks_in_hive).max(0));
         }
     }
     bee.mob_entity.love_ticks.store(

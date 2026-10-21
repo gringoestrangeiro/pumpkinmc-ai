@@ -3322,7 +3322,7 @@ impl Player {
 
     /// Vanilla `ServerPlayer.setEntityOnShoulder`: stores a saved parrot NBT on an empty
     /// shoulder slot.
-    pub fn set_entity_on_shoulder(&self, tag: NbtCompound) -> bool {
+    pub fn set_entity_on_shoulder(&self, tag: &NbtCompound) -> bool {
         let entity = self.get_entity();
         if entity.has_vehicle()
             || !entity.on_ground.load(Ordering::Relaxed)
@@ -3340,7 +3340,7 @@ impl Player {
             if left.is_none() {
                 *left = Some(tag.clone());
                 drop(left);
-                self.update_shoulder_parrot(true, Some(&tag));
+                self.update_shoulder_parrot(true, Some(tag));
                 self.time_entity_sat_on_shoulder
                     .store(self.world().get_world_age() as u64, Ordering::Relaxed);
                 return true;
@@ -3354,7 +3354,7 @@ impl Player {
         if right.is_none() {
             *right = Some(tag.clone());
             drop(right);
-            self.update_shoulder_parrot(false, Some(&tag));
+            self.update_shoulder_parrot(false, Some(tag));
             self.time_entity_sat_on_shoulder
                 .store(self.world().get_world_age() as u64, Ordering::Relaxed);
             return true;
@@ -6082,7 +6082,7 @@ impl Player {
     pub fn open_mount_screen(
         &self,
         mount: &Arc<dyn EntityBase>,
-        container: Arc<dyn Inventory>,
+        container: &Arc<dyn Inventory>,
         inventory_columns: usize,
     ) -> Option<u8> {
         if !self
@@ -6139,7 +6139,7 @@ impl Player {
             entity.is_alive()
                 && inventory_player
                     .as_any()
-                    .downcast_ref::<Player>()
+                    .downcast_ref::<Self>()
                     .is_some_and(|player| {
                         player
                             .get_entity()
@@ -7393,6 +7393,7 @@ impl EntityBase for Player {
         self
     }
 
+    #[expect(clippy::too_many_lines)]
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
         nbt.put_int("DataVersion", DATA_VERSION);
         self.inventory.write_nbt(nbt);
@@ -7522,6 +7523,10 @@ impl EntityBase for Player {
     }
 
     #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::assigning_clones,
+        reason = "the values are reused by update_shoulder_parrot"
+    )]
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
         let left = nbt.get_compound("ShoulderEntityLeft").cloned();
         let right = nbt.get_compound("ShoulderEntityRight").cloned();

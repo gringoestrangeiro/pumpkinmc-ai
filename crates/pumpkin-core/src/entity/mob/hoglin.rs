@@ -97,7 +97,7 @@ impl HoglinEntity {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
-        let hoglin_weak: Weak<HoglinEntity> = Arc::downgrade(&mob_arc);
+        let hoglin_weak: Weak<Self> = Arc::downgrade(&mob_arc);
 
         {
             let mut goal_selector = mob_arc
@@ -276,7 +276,7 @@ impl HoglinEntity {
             if *candidate_entity.entity_type == EntityType::PIGLIN {
                 piglins += 1;
             } else if let Some(mob) = candidate.get_mob()
-                && let Some(hoglin) = mob.cast_any().downcast_ref::<HoglinEntity>()
+                && let Some(hoglin) = mob.cast_any().downcast_ref::<Self>()
                 && hoglin.is_adult()
             {
                 hoglins += 1;
@@ -303,7 +303,7 @@ impl HoglinEntity {
                 continue;
             }
             if let Some(mob) = candidate.get_mob()
-                && let Some(hoglin) = mob.cast_any().downcast_ref::<HoglinEntity>()
+                && let Some(hoglin) = mob.cast_any().downcast_ref::<Self>()
                 && hoglin.is_adult()
             {
                 hoglin.set_avoid_target(target.clone());

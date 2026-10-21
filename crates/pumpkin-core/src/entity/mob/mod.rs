@@ -993,10 +993,6 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 
-    /// Vanilla `Animal.getBreedOffspring`: a parent shapes the baby after the
-    /// generic `BreedGoal` has created it.
-    fn on_breed_offspring(&self, _partner: &dyn EntityBase, _baby: &dyn EntityBase) {}
-
     /// Set when a mob is released from a bucket; bucketable fish use it to keep
     /// themselves from despawning.
     fn set_from_bucket(&self, _from_bucket: bool) {}

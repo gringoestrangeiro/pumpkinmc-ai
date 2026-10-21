@@ -53,7 +53,7 @@ impl IllusionerEntity {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
-        let illusioner_weak: Weak<IllusionerEntity> = Arc::downgrade(&mob_arc);
+        let illusioner_weak: Weak<Self> = Arc::downgrade(&mob_arc);
 
         // Vanilla `Illusioner.finalizeSpawn` equips a bow before the entity is tracked.
         mob_arc

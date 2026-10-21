@@ -99,7 +99,7 @@ impl SpearUseGoal {
             .then_some(destination)
     }
 
-    fn move_to(&self, mob: &dyn Mob, destination: Vector3<f64>, speed: f64) {
+    fn move_to(mob: &dyn Mob, destination: Vector3<f64>, speed: f64) {
         let mob_pos = mob.get_entity().pos.load();
         mob.get_mob_entity()
             .navigator
@@ -174,11 +174,11 @@ impl Goal for SpearUseGoal {
             self.fleeing_ticks -= 1;
             if let Some(position) = self.flee_position {
                 if mob.is_navigator_idle() {
-                    self.move_to(mob, position, 1.0);
+                    Self::move_to(mob, position, 1.0);
                 }
             } else if let Some(position) = Self::pick_flee_position(mob, target.as_ref()) {
                 self.flee_position = Some(position);
-                self.move_to(mob, position, 1.0);
+                Self::move_to(mob, position, 1.0);
             }
             return;
         }
@@ -210,7 +210,7 @@ impl Goal for SpearUseGoal {
 
         if distance > APPROACH_DISTANCE {
             if mob.is_navigator_idle() {
-                self.move_to(mob, target_pos, 1.0);
+                Self::move_to(mob, target_pos, 1.0);
             }
             return;
         }
@@ -228,7 +228,7 @@ impl Goal for SpearUseGoal {
         }
 
         if mob.is_navigator_idle() {
-            self.move_to(mob, target_pos, 1.0);
+            Self::move_to(mob, target_pos, 1.0);
         }
     }
 

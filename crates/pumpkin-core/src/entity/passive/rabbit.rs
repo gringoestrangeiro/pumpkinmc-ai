@@ -195,7 +195,7 @@ impl RabbitEntity {
                     rabbit_is_not_evil,
                 )),
             );
-            goal_selector.add_goal(5, RaidGardenGoal::new(mob_arc.clone()));
+            goal_selector.add_goal(5, RaidGardenGoal::new(&mob_arc));
             goal_selector.add_goal(5, Box::new(FollowParentGoal::new(0.8)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.6)));
             goal_selector.add_goal(
@@ -270,7 +270,7 @@ impl RabbitEntity {
                     2,
                     ActiveTargetGoal::with_default(&self.mob_entity, &EntityType::FOX, true),
                 );
-            }
+            };
 
             if (**entity.custom_name.load()).is_none() {
                 entity.set_custom_name(TextComponent::translate(
@@ -304,7 +304,10 @@ impl RabbitEntity {
 
     fn start_jumping(&self) {
         let entity = self.get_entity();
-        entity.jumping.store(true, Ordering::SeqCst);
+        self.mob_entity
+            .living_entity
+            .jumping
+            .store(true, Ordering::SeqCst);
         self.jump_duration
             .store(JUMP_DURATION_IN_TICKS, Ordering::Relaxed);
         self.jump_ticks.store(0, Ordering::Relaxed);
@@ -342,7 +345,10 @@ impl RabbitEntity {
         } else if duration != 0 {
             self.jump_ticks.store(0, Ordering::Relaxed);
             self.jump_duration.store(0, Ordering::Relaxed);
-            self.get_entity().jumping.store(false, Ordering::SeqCst);
+            self.mob_entity
+                .living_entity
+                .jumping
+                .store(false, Ordering::SeqCst);
         }
     }
 
@@ -367,7 +373,10 @@ impl RabbitEntity {
         }
 
         if !self.was_on_ground.swap(true, Ordering::Relaxed) {
-            entity.jumping.store(false, Ordering::SeqCst);
+            self.mob_entity
+                .living_entity
+                .jumping
+                .store(false, Ordering::SeqCst);
             self.set_landing_delay();
         }
 
@@ -418,10 +427,14 @@ struct RaidGardenGoal {
 }
 
 impl RaidGardenGoal {
-    fn new(rabbit: Arc<RabbitEntity>) -> Box<Self> {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
+    fn new(rabbit: &Arc<RabbitEntity>) -> Box<Self> {
         let mut this = Box::new(Self {
             inner: MoveToTargetPosGoal::with_default(ParentHandle::none(), 0.7, 16),
-            rabbit: Arc::downgrade(&rabbit),
+            rabbit: Arc::downgrade(rabbit),
             wants_to_raid: AtomicBool::new(false),
             can_raid: AtomicBool::new(false),
         });
@@ -609,7 +622,7 @@ impl Mob for RabbitEntity {
     }
 
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
-        RabbitEntity::custom_server_ai_step(self);
+        Self::custom_server_ai_step(self);
     }
 
     fn finalize_spawn(

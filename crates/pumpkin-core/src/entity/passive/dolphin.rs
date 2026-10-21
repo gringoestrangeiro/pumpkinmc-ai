@@ -276,14 +276,12 @@ impl Mob for DolphinEntity {
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         if !item_stack.is_empty() && self.is_food(item_stack) {
+            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
             if self.can_age_up() {
-                item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                let seconds = <DolphinEntity as AgeableMob>::get_speed_up_seconds_when_feeding(
-                    -self.get_age(),
-                );
+                let seconds =
+                    <Self as AgeableMob>::get_speed_up_seconds_when_feeding(-self.get_age());
                 self.age_up(seconds, true);
             } else {
-                item_stack.decrement_unless_creative(player.gamemode.load(), 1);
                 self.set_got_fish(true);
             }
             let entity = self.get_entity();
@@ -531,7 +529,7 @@ impl crate::entity::ai::goal::Goal for DolphinSwimToTreasureGoal {
         let targets: Vec<StructureKeys> = tag::WorldgenStructure::MINECRAFT_DOLPHIN_LOCATED
             .0
             .iter()
-            .filter_map(|name| StructureKeys::from_name(*name))
+            .filter_map(|name| StructureKeys::from_name(name))
             .collect();
         let found = find_nearest_structure_of_types(
             entity.block_pos.load(),

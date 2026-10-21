@@ -49,7 +49,8 @@ impl BlockEntity for SculkCatalystBlockEntity {
 
     fn chunk_data_nbt(&self) -> Option<NbtCompound> {
         let mut nbt = NbtCompound::new();
-        write_cursors(&self.spreader.try_lock().ok()?, &mut nbt);
+        let spreader = self.spreader.try_lock().ok()?;
+        write_cursors(&spreader, &mut nbt);
         Some(nbt)
     }
 
@@ -74,7 +75,7 @@ impl BlockEntity for SculkCatalystBlockEntity {
 impl SculkCatalystBlockEntity {
     pub const ID: &'static str = "minecraft:sculk_catalyst";
     #[must_use]
-    pub fn new(position: BlockPos) -> Self {
+    pub const fn new(position: BlockPos) -> Self {
         Self {
             position,
             spreader: Mutex::new(SculkSpreader::new_level_spreader()),

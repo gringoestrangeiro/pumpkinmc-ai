@@ -77,7 +77,7 @@ impl MuleEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
-            goal_selector.add_goal(1, Box::new(EscapeDangerGoal::new(1.2)));
+            goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
@@ -230,11 +230,11 @@ impl Mob for MuleEntity {
     }
 
     fn is_saddled(&self) -> bool {
-        MuleEntity::is_saddled(self)
+        Self::is_saddled(self)
     }
 
     fn set_saddled(&self, saddled: bool) {
-        MuleEntity::set_saddled(self, saddled);
+        Self::set_saddled(self, saddled);
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {
@@ -318,29 +318,28 @@ impl Mob for MuleEntity {
         if !self.get_entity().has_passengers()
             && !should_open_inventory
             && (!self.is_baby() || !holding_golden_dandelion)
+            && !item_stack.is_empty()
         {
-            if !item_stack.is_empty() {
-                if self.is_food(item_stack) {
-                    if self.handle_horse_eating(player, item_stack) {
-                        item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    }
-                    return true;
-                }
-                if !self.is_tame() {
-                    self.make_mad();
-                    return true;
-                }
-                if !self.has_chest() && item == &Item::CHEST {
-                    self.set_has_chest(true);
+            if self.is_food(item_stack) {
+                if self.handle_horse_eating(player, item_stack) {
                     item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    let entity = self.get_entity();
-                    entity.world.load().play_sound(
-                        Sound::EntityMuleChest,
-                        SoundCategory::Neutral,
-                        &entity.pos.load(),
-                    );
-                    return true;
                 }
+                return true;
+            }
+            if !self.is_tame() {
+                self.make_mad();
+                return true;
+            }
+            if !self.has_chest() && item == &Item::CHEST {
+                self.set_has_chest(true);
+                item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+                let entity = self.get_entity();
+                entity.world.load().play_sound(
+                    Sound::EntityMuleChest,
+                    SoundCategory::Neutral,
+                    &entity.pos.load(),
+                );
+                return true;
             }
         }
 

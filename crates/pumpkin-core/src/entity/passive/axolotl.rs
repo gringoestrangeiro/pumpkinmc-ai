@@ -155,7 +155,7 @@ impl AxolotlEntity {
             *navigator = crate::entity::ai::pathfinder::Navigator::amphibious(false);
             navigator
                 .set_pathfinding_malus(crate::entity::ai::pathfinder::node::PathType::Water, 0.0);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -329,8 +329,8 @@ impl AxolotlEntity {
         }
         let partner_variant = partner
             .cast_any()
-            .downcast_ref::<AxolotlEntity>()
-            .map_or_else(|| self.get_variant(), AxolotlEntity::get_variant);
+            .downcast_ref::<Self>()
+            .map_or_else(|| self.get_variant(), Self::get_variant);
         if rand::random_range(0..2) == 0 {
             self.get_variant()
         } else {
@@ -340,10 +340,10 @@ impl AxolotlEntity {
 
     /// Vanilla `Axolotl.applySupportingEffects`: the player who helped an
     /// axolotl kill something gets regeneration and loses mining fatigue.
-    fn apply_supporting_effects(&self, player: &Player) {
+    fn apply_supporting_effects(player: &Player) {
         let current = player.get_effect(&StatusEffect::REGENERATION);
         let previous = current.as_ref().map_or(0, |effect| effect.duration);
-        if current.is_none() || previous <= REGEN_BUFF_MAX_DURATION - 1 {
+        if current.is_none() || previous < REGEN_BUFF_MAX_DURATION {
             let duration = (REGEN_BUFF_BASE_DURATION + previous).min(REGEN_BUFF_MAX_DURATION);
             player.add_effect(Effect {
                 effect_type: &StatusEffect::REGENERATION,
@@ -372,6 +372,16 @@ impl AgeableMob for AxolotlEntity {
 impl Animal for AxolotlEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_AXOLOTL_FOOD)
+    }
+
+    fn baby_spawned_from_breeding(&self, baby: &dyn EntityBase, partner: &dyn EntityBase) {
+        let Some(baby) = baby.cast_any().downcast_ref::<Self>() else {
+            return;
+        };
+        baby.set_variant(self.breed_variant(partner));
+        baby.mob_entity
+            .persistence_required
+            .store(true, Ordering::Relaxed);
     }
 }
 
@@ -468,7 +478,7 @@ impl Mob for AxolotlEntity {
 
     fn modify_incoming_damage(&self, amount: f32, _damage_type: DamageType) -> f32 {
         let living = &self.mob_entity.living_entity;
-        let health = living.health.load(Ordering::Relaxed);
+        let health = living.health.load();
         let max_health = living.get_max_health();
         if !self.mob_entity.is_no_ai()
             && rand::random_range(0..3) == 0
@@ -504,18 +514,8 @@ impl Mob for AxolotlEntity {
             .load()
             .squared_distance_to_vec(&player.get_entity().pos.load());
         if distance_sq <= PLAYER_REGEN_DETECTION_RANGE * PLAYER_REGEN_DETECTION_RANGE {
-            self.apply_supporting_effects(&player);
+            Self::apply_supporting_effects(&player);
         }
-    }
-
-    fn on_breed_offspring(&self, partner: &dyn EntityBase, baby: &dyn EntityBase) {
-        let Some(baby) = baby.cast_any().downcast_ref::<AxolotlEntity>() else {
-            return;
-        };
-        baby.set_variant(self.breed_variant(partner));
-        baby.mob_entity
-            .persistence_required
-            .store(true, Ordering::Relaxed);
     }
 
     fn mob_init_data_tracker(&self) {
@@ -583,7 +583,7 @@ impl Mob for AxolotlEntity {
     }
 
     fn set_from_bucket(&self, from_bucket: bool) {
-        AxolotlEntity::set_from_bucket(self, from_bucket);
+        Self::set_from_bucket(self, from_bucket);
     }
 
     fn requires_custom_persistence(&self) -> bool {

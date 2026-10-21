@@ -10,6 +10,7 @@ pub struct FunctionTrace {
 }
 
 impl FunctionTrace {
+    #[must_use]
     pub fn new(file: File) -> Self {
         Self {
             output: BufWriter::new(file),

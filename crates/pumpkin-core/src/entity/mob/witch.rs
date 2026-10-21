@@ -142,7 +142,7 @@ impl Goal for WitchHealRaidersGoal {
         }
         if !mob
             .as_raider()
-            .is_some_and(|raider| raider.has_active_raid())
+            .is_some_and(super::raider::Raider::has_active_raid)
         {
             return false;
         }
@@ -206,7 +206,7 @@ impl WitchEntity {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
-        let heal_weak: Weak<WitchEntity> = Arc::downgrade(&mob_arc);
+        let heal_weak: Weak<Self> = Arc::downgrade(&mob_arc);
         let ranged_weak: Weak<dyn RangedAttackMob> = {
             let ranged_arc: Arc<dyn RangedAttackMob> = mob_arc.clone();
             Arc::downgrade(&ranged_arc)

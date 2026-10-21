@@ -97,7 +97,7 @@ impl AllayEntity {
                 .navigator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = navigator;
-        }
+        };
         *mob_arc
             .mob_entity
             .move_control
@@ -440,9 +440,8 @@ impl AllayGoToWantedItemGoal {
     }
 
     fn refresh_target(&mut self, allay: &AllayEntity) -> bool {
-        let target = allay.nearest_wanted_item();
-        self.target = target.clone();
-        target.is_some()
+        self.target = allay.nearest_wanted_item();
+        self.target.is_some()
     }
 }
 
@@ -537,13 +536,7 @@ impl Goal for AllayGoToWantedItemGoal {
             .navigator
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if navigator.is_idle() {
-            navigator.set_progress(NavigatorGoal::new(
-                pos,
-                target_pos,
-                SPEED_MULTIPLIER_WHEN_RETRIEVING_ITEM,
-            ));
-        } else if navigator.get_target_pos() != Some(target_block) {
+        if navigator.is_idle() || navigator.get_target_pos() != Some(target_block) {
             navigator.set_progress(NavigatorGoal::new(
                 pos,
                 target_pos,

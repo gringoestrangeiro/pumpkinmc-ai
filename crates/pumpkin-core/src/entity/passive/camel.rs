@@ -390,7 +390,7 @@ impl CamelEntity {
         if !self.can_sit_automatically() {
             return;
         }
-        if rand::random::<u32>() % SIT_CHECK_INTERVAL != 0 {
+        if !rand::random::<u32>().is_multiple_of(SIT_CHECK_INTERVAL) {
             return;
         }
         if self.is_camel_sitting() {
@@ -555,11 +555,11 @@ impl Mob for CamelEntity {
     }
 
     fn is_saddled(&self) -> bool {
-        CamelEntity::is_saddled(self)
+        Self::is_saddled(self)
     }
 
     fn set_saddled(&self, saddled: bool) {
-        CamelEntity::set_saddled(self, saddled);
+        Self::set_saddled(self, saddled);
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {

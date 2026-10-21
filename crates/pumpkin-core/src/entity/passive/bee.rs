@@ -104,7 +104,6 @@ pub struct BeeEntity {
 }
 
 impl BeeEntity {
-    #[expect(clippy::too_many_lines)]
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let bee = Self {
@@ -148,7 +147,7 @@ impl BeeEntity {
                 .navigator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = navigator;
-        }
+        };
         *mob_arc
             .mob_entity
             .move_control
@@ -836,7 +835,7 @@ impl BeeGoToHiveGoal {
             <= HIVE_CLOSE_ENOUGH_DISTANCE * HIVE_CLOSE_ENOUGH_DISTANCE
     }
 
-    fn drop_and_blacklist(&mut self, bee: &BeeEntity) {
+    fn drop_and_blacklist(bee: &BeeEntity) {
         if let Some(hive) = bee.get_hive_pos() {
             bee.blacklist_hive(hive);
         }
@@ -884,7 +883,7 @@ impl Goal for BeeGoToHiveGoal {
         };
         self.travelling_ticks += 1;
         if self.travelling_ticks > MAX_TRAVELLING_TICKS {
-            self.drop_and_blacklist(&bee);
+            Self::drop_and_blacklist(&bee);
             return;
         }
 

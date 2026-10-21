@@ -103,7 +103,7 @@ impl ParrotEntity {
                 .navigator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = navigator;
-        }
+        };
         let parrot = Self {
             mob_entity,
             tamable_data: TamableData::default(),
@@ -139,7 +139,7 @@ impl ParrotEntity {
             goal_selector.add_goal(2, FollowOwnerGoal::new(1.0, 5.0, 1.0));
             goal_selector.add_goal(2, Box::new(WaterAvoidingRandomFlyingGoal::new(1.0)));
             goal_selector.add_goal(3, Box::new(LandOnOwnersShoulderGoal::new(shoulder_weak)));
-            goal_selector.add_goal(3, FollowMobGoal::new(1.0, 3.0, 7.0));
+            goal_selector.add_goal(3, Box::new(FollowMobGoal::new(1.0, 3.0, 7.0)));
         };
 
         mob_arc
@@ -186,7 +186,7 @@ impl ParrotEntity {
         let mut tag = NbtCompound::new();
         entity.write_nbt(&mut tag);
 
-        if player.set_entity_on_shoulder(tag) {
+        if player.set_entity_on_shoulder(&tag) {
             entity.remove();
             true
         } else {
@@ -225,7 +225,7 @@ impl ParrotEntity {
             SoundCategory::Neutral,
             &candidate_pos,
             0.7,
-            get_pitch(),
+            Self::get_pitch(),
         );
         true
     }
@@ -263,7 +263,7 @@ impl ParrotEntity {
         let entity = self.get_entity();
         let world = entity.world.load();
         if rand::random_range(0..10) == 0 {
-            self.tame(player.gameprofile.id);
+            TamableAnimal::tame(self, player.gameprofile.id);
             world.send_entity_status(
                 entity,
                 EntityStatus::TamingSucceeded,
@@ -554,7 +554,7 @@ const IMITATED_SOUNDS: &[Sound] = &[
     Sound::EntityParrotImitateZombieVillager,
 ];
 
-fn imitated_sound(entity_type: &EntityType) -> Option<Sound> {
+const fn imitated_sound(entity_type: &EntityType) -> Option<Sound> {
     match entity_type.id {
         id if id == EntityType::BLAZE.id => Some(Sound::EntityParrotImitateBlaze),
         id if id == EntityType::BOGGED.id => Some(Sound::EntityParrotImitateBogged),

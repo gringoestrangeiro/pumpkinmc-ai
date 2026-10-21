@@ -77,7 +77,7 @@ impl StriderEntity {
             navigator.set_pathfinding_malus(PathType::Lava, 0.0);
             navigator.set_pathfinding_malus(PathType::DangerFire, 0.0);
             navigator.set_pathfinding_malus(PathType::DamageFire, 0.0);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -163,7 +163,7 @@ impl StriderEntity {
         let on_warm_strider = entity.get_vehicle().is_some_and(|vehicle| {
             vehicle
                 .cast_any()
-                .downcast_ref::<StriderEntity>()
+                .downcast_ref::<Self>()
                 .is_some_and(|strider| !strider.is_suffocating())
         });
         self.set_suffocating(!in_warm_blocks && !on_warm_strider);
@@ -232,6 +232,10 @@ struct StriderGoToLavaGoal {
 }
 
 impl StriderGoToLavaGoal {
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "GoalSelector takes boxed goals"
+    )]
     fn new() -> Box<Self> {
         let mut inner = MoveToTargetPosGoal::with_default(ParentHandle::none(), 1.0, 8);
         inner.max_y_difference = 2;

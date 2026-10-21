@@ -184,10 +184,8 @@ pub trait AbstractHorse: Animal + AgeableMob {
 
     /// Vanilla `AbstractHorse.onPlayerJump`: the server side of a charged jump.
     fn on_player_jump(&self, jump_amount: i32) {
-        if Mob::is_saddled(self) {
-            if jump_amount > 0 {
-                self.stand_if_possible();
-            }
+        if Mob::is_saddled(self) && jump_amount > 0 {
+            self.stand_if_possible();
         }
     }
 
@@ -263,10 +261,8 @@ pub trait AbstractHorse: Animal + AgeableMob {
             item_used = true;
         }
 
-        if item_used {
-            if let Some(sound) = self.get_horse_eating_sound() {
-                world.play_sound(sound, SoundCategory::Neutral, &entity.pos.load());
-            }
+        if item_used && let Some(sound) = self.get_horse_eating_sound() {
+            world.play_sound(sound, SoundCategory::Neutral, &entity.pos.load());
         }
 
         item_used
@@ -351,6 +347,10 @@ pub(crate) fn empty_mount_inventory() -> Arc<dyn Inventory> {
 }
 
 /// Vanilla `AbstractHorse.openCustomInventoryScreen`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a coerced trait object"
+)]
 pub(crate) fn open_mount_screen(
     entity: &Entity,
     player: &Arc<Player>,
@@ -364,7 +364,7 @@ pub(crate) fn open_mount_screen(
         return false;
     };
     player
-        .open_mount_screen(&mount, inventory, inventory_columns)
+        .open_mount_screen(&mount, &inventory, inventory_columns)
         .is_some()
 }
 
@@ -416,7 +416,7 @@ impl HorseEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
-            goal_selector.add_goal(1, Box::new(EscapeDangerGoal::new(1.2)));
+            goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
@@ -553,11 +553,11 @@ impl Mob for HorseEntity {
     }
 
     fn is_saddled(&self) -> bool {
-        HorseEntity::is_saddled(self)
+        Self::is_saddled(self)
     }
 
     fn set_saddled(&self, saddled: bool) {
-        HorseEntity::set_saddled(self, saddled);
+        Self::set_saddled(self, saddled);
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {
@@ -628,18 +628,17 @@ impl Mob for HorseEntity {
         if !self.get_entity().has_passengers()
             && !should_open_inventory
             && (!self.is_baby() || !holding_golden_dandelion)
+            && !item_stack.is_empty()
         {
-            if !item_stack.is_empty() {
-                if self.is_food(item_stack) {
-                    if self.handle_horse_eating(player, item_stack) {
-                        item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    }
-                    return true;
+            if self.is_food(item_stack) {
+                if self.handle_horse_eating(player, item_stack) {
+                    item_stack.decrement_unless_creative(player.gamemode.load(), 1);
                 }
-                if !self.is_tame() {
-                    self.make_mad();
-                    return true;
-                }
+                return true;
+            }
+            if !self.is_tame() {
+                self.make_mad();
+                return true;
             }
         }
 

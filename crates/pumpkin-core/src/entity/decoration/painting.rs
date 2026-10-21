@@ -275,7 +275,9 @@ impl PaintingEntity {
 
         entity.remove();
     }
+}
 
+impl EntityBase for PaintingEntity {
     fn tick(&self, _caller: &dyn EntityBase, _server: &crate::server::Server) {
         if self.ticks_since_last_check.fetch_add(1, Ordering::Relaxed) < 100 {
             return;
@@ -286,9 +288,7 @@ impl PaintingEntity {
             self.drop_and_remove(None);
         }
     }
-}
 
-impl EntityBase for PaintingEntity {
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
         let index = self.entity.data.load(Ordering::Relaxed) as u8;
         let direction = BlockDirection::from_index(index).unwrap_or(BlockDirection::South);

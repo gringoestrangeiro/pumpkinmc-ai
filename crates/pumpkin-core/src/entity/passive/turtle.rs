@@ -45,34 +45,6 @@ const TRAVEL_HORIZONTAL_RANGE: i32 = 512;
 const TRAVEL_VERTICAL_RANGE: i32 = 4;
 const TRAVEL_CHUNK_RADIUS: i32 = 34;
 
-/// Vanilla `MoveToBlockGoal.findNearestBlock`: walk outward in rings so the nearest valid
-/// position wins, then the vertical offsets in the order the goal declares them.
-fn find_nearest_block(
-    world: &World,
-    origin: BlockPos,
-    vertical_offsets: &[i32],
-    range: i32,
-    mut valid: impl FnMut(&BlockPos) -> bool,
-) -> Option<BlockPos> {
-    for y in vertical_offsets {
-        for r in 0..range {
-            let mut x = 0;
-            while x <= r {
-                let mut z = if x < r && x > -r { r } else { 0 };
-                while z <= r {
-                    let pos = BlockPos::new(origin.0.x + x, origin.0.y + y, origin.0.z + z);
-                    if valid(&pos) {
-                        return Some(pos);
-                    }
-                    z = if z > 0 { -z } else { 1 - z };
-                }
-                x = if x > 0 { -x } else { 1 - x };
-            }
-        }
-    }
-    None
-}
-
 /// Vanilla `Turtle.BABY_ON_LAND_SELECTOR`: only targets that are babies on land.
 ///
 /// The cat and ocelot prey target goals share this one predicate, like vanilla.
@@ -163,7 +135,7 @@ impl TurtleEntity {
     pub fn set_laying_egg(&self, laying_egg: bool) {
         self.laying_egg.store(laying_egg, Ordering::Relaxed);
         self.lay_egg_counter
-            .store(if laying_egg { 1 } else { 0 }, Ordering::Relaxed);
+            .store(i32::from(laying_egg), Ordering::Relaxed);
         let entity = self.get_entity();
         entity.set_synced_data(pumpkin_data::tracked_data::turtle::LAYING_EGG, laying_egg);
     }
@@ -529,7 +501,7 @@ impl TurtleGoToWaterGoal {
         }
     }
 
-    fn find_water(&self, mob: &dyn Mob) -> Option<BlockPos> {
+    fn find_water(mob: &dyn Mob) -> Option<BlockPos> {
         let world = mob.get_entity().world.load();
         let origin = mob.get_entity().block_pos.load();
         for dx in -24..=24 {
@@ -555,7 +527,6 @@ impl Goal for TurtleGoToWaterGoal {
         let Some(turtle) = self.turtle.upgrade() else {
             return false;
         };
-        let entity = turtle.get_entity();
         let in_water = turtle.mob_entity.living_entity.is_in_water();
         let can_look = if turtle.is_baby() {
             !in_water
@@ -565,7 +536,7 @@ impl Goal for TurtleGoToWaterGoal {
         if !can_look {
             return false;
         }
-        if let Some(pos) = self.find_water(mob) {
+        if let Some(pos) = Self::find_water(mob) {
             self.block_pos = pos;
             return true;
         }
@@ -653,7 +624,7 @@ impl TurtleLayEggGoal {
         }
     }
 
-    fn find_sand(&self, mob: &dyn Mob) -> Option<BlockPos> {
+    fn find_sand(mob: &dyn Mob) -> Option<BlockPos> {
         let world = mob.get_entity().world.load_full();
         let origin = mob.get_entity().block_pos.load();
         for y in [0, 1, -1] {
@@ -686,7 +657,7 @@ impl Goal for TurtleLayEggGoal {
         if !turtle.has_egg() || !turtle.is_near_home(9.0) {
             return false;
         }
-        if let Some(pos) = self.find_sand(mob) {
+        if let Some(pos) = Self::find_sand(mob) {
             self.block_pos = pos;
             return true;
         }

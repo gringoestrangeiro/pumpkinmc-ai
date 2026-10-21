@@ -67,7 +67,7 @@ impl ZombieHorseEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
-            goal_selector.add_goal(1, Box::new(EscapeDangerGoal::new(1.2)));
+            goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
@@ -189,11 +189,11 @@ impl Mob for ZombieHorseEntity {
     }
 
     fn is_saddled(&self) -> bool {
-        ZombieHorseEntity::is_saddled(self)
+        Self::is_saddled(self)
     }
 
     fn set_saddled(&self, saddled: bool) {
-        ZombieHorseEntity::set_saddled(self, saddled);
+        Self::set_saddled(self, saddled);
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {
@@ -272,18 +272,16 @@ impl Mob for ZombieHorseEntity {
         let should_open_inventory =
             !self.is_baby() && self.is_tame() && player.get_entity().is_sneaking();
 
-        if !self.get_entity().has_passengers() && !should_open_inventory {
-            if !item_stack.is_empty() {
-                if self.is_food(item_stack) {
-                    if self.handle_horse_eating(player, item_stack) {
-                        item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    }
-                    return true;
+        if !self.get_entity().has_passengers() && !should_open_inventory && !item_stack.is_empty() {
+            if self.is_food(item_stack) {
+                if self.handle_horse_eating(player, item_stack) {
+                    item_stack.decrement_unless_creative(player.gamemode.load(), 1);
                 }
-                if !self.is_tame() {
-                    self.make_mad();
-                    return true;
-                }
+                return true;
+            }
+            if !self.is_tame() {
+                self.make_mad();
+                return true;
             }
         }
 

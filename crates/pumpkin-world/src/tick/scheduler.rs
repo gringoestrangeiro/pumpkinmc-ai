@@ -222,12 +222,12 @@ mod tests {
 
     #[test]
     fn long_delay_tick_fires_after_requested_ticks() {
-        let scheduler: ChunkTickScheduler<&'static str> = ChunkTickScheduler::default();
+        let scheduler: ChunkTickScheduler<&'static u32> = ChunkTickScheduler::default();
         let tick = ScheduledTick {
             delay: 300,
             priority: TickPriority::Normal,
             position: BlockPos::new(0, 0, 0),
-            value: "test",
+            value: &7,
         };
         scheduler.schedule_tick(&tick, 0);
 

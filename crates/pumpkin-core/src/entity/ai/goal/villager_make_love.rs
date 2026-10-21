@@ -239,7 +239,7 @@ impl Goal for VillagerMakeLoveGoal {
         } else if rand::random_range(0..35) == 0 {
             Self::send_event(villager, EntityStatus::LoveHearts, ActorEventID::LoveHearts);
             Self::send_event(other, EntityStatus::LoveHearts, ActorEventID::LoveHearts);
-        };
+        }
     }
 
     fn controls(&self) -> Controls {

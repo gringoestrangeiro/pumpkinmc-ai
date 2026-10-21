@@ -134,15 +134,15 @@ impl BlockBehaviour for TripwireBlock {
                 .get_players_at_box(&aabb)
                 .iter()
                 .any(|player| !player.is_ignoring_block_triggers());
-        if !pressed {
+        if pressed {
+            args.world
+                .schedule_block_tick(args.block, *args.position, 10, TickPriority::Normal);
+        } else {
             props.powered = false;
             let state_id = props.to_state_id(args.block);
             args.world
                 .set_block_state(args.position, state_id, BlockFlags::NOTIFY_ALL);
             Self::update(args.world, args.position, state_id);
-        } else {
-            args.world
-                .schedule_block_tick(args.block, *args.position, 10, TickPriority::Normal);
         }
     }
 

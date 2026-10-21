@@ -522,7 +522,7 @@ impl MetadataSerializer for ProfileImpl {
         _version: &JavaMinecraftVersion,
     ) -> Result<(), WritingError> {
         let mut bytes = Vec::new();
-        <ProfileImpl as crate::codec::data_component::DataComponentCodec<ProfileImpl>>::serialize(
+        <Self as crate::codec::data_component::DataComponentCodec<Self>>::serialize(
             self, &mut bytes,
         )?;
         writer.write_slice(&bytes)?;

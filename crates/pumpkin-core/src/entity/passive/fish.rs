@@ -90,7 +90,7 @@ impl FishData {
                 return;
             }
             *slot = Some(leader.clone());
-        }
+        };
         if let Some(data) = leader.get_mob().and_then(Mob::get_fish_data) {
             data.add_follower();
         }
@@ -113,7 +113,7 @@ impl FishData {
     }
 
     #[must_use]
-    pub fn max_school_size(&self) -> i32 {
+    pub const fn max_school_size(&self) -> i32 {
         self.max_school_size
     }
 
@@ -291,11 +291,11 @@ impl Goal for FollowFlockLeaderGoal {
             return true;
         }
 
-        if let Some(ticks) = self.next_start_tick {
-            if ticks > 0 {
-                self.next_start_tick = Some(ticks - 1);
-                return false;
-            }
+        if let Some(ticks) = self.next_start_tick
+            && ticks > 0
+        {
+            self.next_start_tick = Some(ticks - 1);
+            return false;
         }
         self.next_start_tick = Some(Self::next_start_tick(mob));
 

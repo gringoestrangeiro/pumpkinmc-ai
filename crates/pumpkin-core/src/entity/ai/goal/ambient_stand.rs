@@ -1,6 +1,5 @@
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::mob::Mob;
-use crate::entity::passive::horse::AbstractHorse;
 use rand::RngExt;
 
 /// Vanilla `RandomStandGoal`: periodically rear and play the ambient stand sound.

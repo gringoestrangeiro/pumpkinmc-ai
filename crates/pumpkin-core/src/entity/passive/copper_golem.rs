@@ -19,7 +19,6 @@ use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::world::BlockFlags;
 
-use crate::block::entities::BlockEntity;
 use crate::block::entities::chest::ChestBlockEntity;
 use crate::block::entities::copper_golem_statue::CopperGolemStatueBlockEntity;
 use crate::entity::ai::goal::{Controls, Goal};
@@ -166,7 +165,7 @@ impl CopperGolemEntity {
             navigator.set_pathfinding_malus(PathType::DangerFire, 16.0);
             navigator.set_pathfinding_malus(PathType::DangerOther, 16.0);
             navigator.set_pathfinding_malus(PathType::DamageFire, -1.0);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -329,6 +328,10 @@ enum TransportItemState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "names mirror vanilla container interaction states"
+)]
 enum ContainerInteractionState {
     PickupItem,
     PickupNoItem,
@@ -508,7 +511,7 @@ impl TransportItemsBetweenContainersGoal {
             .world
             .load()
             .get_block_entity(&pos)
-            .and_then(|be| be.get_inventory())
+            .and_then(crate::block::entities::BlockEntity::get_inventory)
         {
             inventory.on_close();
         }
@@ -598,7 +601,7 @@ impl TransportItemsBetweenContainersGoal {
         let world = golem.get_entity().world.load();
         let Some(inventory) = world
             .get_block_entity(&target)
-            .and_then(|block_entity| block_entity.get_inventory())
+            .and_then(crate::block::entities::BlockEntity::get_inventory)
         else {
             self.mark_unreachable(golem, target);
             return;
@@ -824,7 +827,7 @@ impl Goal for TransportItemsBetweenContainersGoal {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             navigator.stop();
             navigator.set_can_path_to_targets_below_surface(false);
-        }
+        };
         self.target = None;
         self.state = TransportItemState::Travelling;
         self.interaction = None;

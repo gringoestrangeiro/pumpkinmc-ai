@@ -67,7 +67,7 @@ impl LongJumpGoal {
         self.cooldown = rand::rng().random_range(self.cooldown_min..=self.cooldown_max);
     }
 
-    fn find_jump(mob: &dyn Mob, goal: &LongJumpGoal) -> Option<(BlockPos, Vector3<f64>)> {
+    fn find_jump(mob: &dyn Mob, goal: &Self) -> Option<(BlockPos, Vector3<f64>)> {
         let entity = mob.get_entity();
         let world = entity.world.load_full();
         let origin = entity.block_pos.load();
@@ -124,7 +124,7 @@ fn calculate_jump_vector(
     let max_velocity =
         living.get_attribute_value(&Attributes::JUMP_STRENGTH) * f64::from(max_velocity_multiplier);
 
-    let mut angles = [65.0_f64, 70.0, 75.0, 80.0];
+    let mut angles = [65.0f64, 70.0, 75.0, 80.0];
     let mut rng = rand::rng();
     angles.shuffle(&mut rng);
 

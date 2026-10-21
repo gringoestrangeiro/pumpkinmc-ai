@@ -180,7 +180,7 @@ impl SkeletonHorseEntity {
         let mut rng = rand::rng();
         for _ in 0..3 {
             let other = from_type(&EntityType::SKELETON_HORSE, pos, &world, Uuid::new_v4());
-            if let Some(horse) = other.cast_any().downcast_ref::<SkeletonHorseEntity>() {
+            if let Some(horse) = other.cast_any().downcast_ref::<Self>() {
                 horse.set_tame(true);
                 horse.set_age(0);
                 horse
@@ -296,11 +296,11 @@ impl Mob for SkeletonHorseEntity {
     }
 
     fn is_saddled(&self) -> bool {
-        SkeletonHorseEntity::is_saddled(self)
+        Self::is_saddled(self)
     }
 
     fn set_saddled(&self, saddled: bool) {
-        SkeletonHorseEntity::set_saddled(self, saddled);
+        Self::set_saddled(self, saddled);
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {

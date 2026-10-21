@@ -171,12 +171,12 @@ impl LlamaEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
             goal_selector.add_goal(2, Box::new(LlamaFollowCaravanGoal::new(2.1)));
-            goal_selector.add_goal(3, Box::new(EscapeDangerGoal::new(1.2)));
+            goal_selector.add_goal(3, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(
                 3,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.25, 40, 20.0)),
             );
-            goal_selector.add_goal(4, Box::new(BreedGoal::new(1.0)));
+            goal_selector.add_goal(4, BreedGoal::new(1.0));
             goal_selector.add_goal(5, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(6, Box::new(FollowParentGoal::new(1.0)));
             goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(0.7)));
@@ -578,29 +578,28 @@ impl Mob for LlamaEntity {
         if !self.get_entity().has_passengers()
             && !should_open_inventory
             && (!self.is_baby() || !holding_golden_dandelion)
+            && !item_stack.is_empty()
         {
-            if !item_stack.is_empty() {
-                if self.is_food(item_stack) {
-                    if self.handle_horse_eating(player, item_stack) {
-                        item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    }
-                    return true;
-                }
-                if !self.is_tame() {
-                    self.make_mad();
-                    return true;
-                }
-                if !self.has_chest() && item == &Item::CHEST {
-                    self.set_has_chest(true);
+            if self.is_food(item_stack) {
+                if self.handle_horse_eating(player, item_stack) {
                     item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    let entity = self.get_entity();
-                    entity.world.load().play_sound(
-                        Sound::EntityLlamaChest,
-                        SoundCategory::Neutral,
-                        &entity.pos.load(),
-                    );
-                    return true;
                 }
+                return true;
+            }
+            if !self.is_tame() {
+                self.make_mad();
+                return true;
+            }
+            if !self.has_chest() && item == &Item::CHEST {
+                self.set_has_chest(true);
+                item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+                let entity = self.get_entity();
+                entity.world.load().play_sound(
+                    Sound::EntityLlamaChest,
+                    SoundCategory::Neutral,
+                    &entity.pos.load(),
+                );
+                return true;
             }
         }
 

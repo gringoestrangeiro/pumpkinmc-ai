@@ -110,7 +110,7 @@ impl BreezeCombatGoal {
             .and_then(|breeze| breeze.mob_entity.get_target())
     }
 
-    fn tick_cooldowns(&mut self) {
+    const fn tick_cooldowns(&mut self) {
         self.shoot_cooldown = self.shoot_cooldown.saturating_sub(1);
         self.jump_cooldown = self.jump_cooldown.saturating_sub(1);
     }
@@ -155,7 +155,6 @@ impl BreezeCombatGoal {
     }
 
     fn tick_shooting(&mut self, breeze: &BreezeEntity, mob: &dyn Mob, target: &ArcTarget) {
-        let entity = &breeze.mob_entity.living_entity.entity;
         let target_pos = target.get_entity().pos.load();
         breeze
             .mob_entity

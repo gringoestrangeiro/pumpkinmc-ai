@@ -90,10 +90,9 @@ impl BaseSpawner {
             return false;
         }
 
-        let mut delay_reset = false;
-        if self.delay.load(Ordering::Relaxed) == -1 {
+        let delay_reset = self.delay.load(Ordering::Relaxed) == -1;
+        if delay_reset {
             self.update_spawns();
-            delay_reset = true;
         }
 
         let delay = self.delay.load(Ordering::Relaxed);

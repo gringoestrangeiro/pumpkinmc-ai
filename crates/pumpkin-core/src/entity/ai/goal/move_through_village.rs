@@ -53,7 +53,7 @@ impl MoveThroughVillageGoal {
         (!self.visited.contains(&poi)).then_some(poi)
     }
 
-    fn distance_to(&self, mob: &dyn Mob, target: BlockPos) -> f64 {
+    fn distance_to(mob: &dyn Mob, target: BlockPos) -> f64 {
         mob.get_entity()
             .pos
             .load()
@@ -86,7 +86,7 @@ impl Goal for MoveThroughVillageGoal {
         let Some(poi) = self.find_poi(mob) else {
             return false;
         };
-        if self.distance_to(mob, poi) <= self.distance_to_poi * self.distance_to_poi {
+        if Self::distance_to(mob, poi) <= self.distance_to_poi * self.distance_to_poi {
             return false;
         }
         self.target = Some(poi);
@@ -98,7 +98,7 @@ impl Goal for MoveThroughVillageGoal {
             return false;
         };
         !mob.is_navigator_idle()
-            && self.distance_to(mob, target) > self.distance_to_poi * self.distance_to_poi
+            && Self::distance_to(mob, target) > self.distance_to_poi * self.distance_to_poi
     }
 
     fn start(&mut self, mob: &dyn Mob) {

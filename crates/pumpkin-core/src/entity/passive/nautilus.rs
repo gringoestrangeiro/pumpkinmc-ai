@@ -48,7 +48,7 @@ use crate::entity::{
         animal,
         animal::Animal,
         fish,
-        horse::AbstractHorse,
+        horse::{AbstractHorse, empty_mount_inventory, open_mount_screen},
         tamable::{TamableAnimal, TamableData},
     },
     player::Player,
@@ -140,7 +140,7 @@ impl NautilusEntity {
             *navigator = crate::entity::ai::pathfinder::Navigator::water_bound(false);
             navigator
                 .set_pathfinding_malus(crate::entity::ai::pathfinder::node::PathType::Water, 0.0);
-        }
+        };
 
         {
             let mut goal_selector = mob_arc
@@ -171,7 +171,7 @@ impl NautilusEntity {
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
-        }
+        };
 
         {
             let mut target_selector = mob_arc
@@ -186,7 +186,7 @@ impl NautilusEntity {
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PUFFERFISH, false)
                     .when(TargetCondition::Adult),
             );
-        }
+        };
 
         mob_arc.refresh_dimensions();
         mob_arc
@@ -329,7 +329,7 @@ impl NautilusEntity {
         let entity = self.get_entity();
         let world = entity.world.load();
         if rand::random_range(0..3) == 0 {
-            self.tame(player.gameprofile.id);
+            TamableAnimal::tame(self, player.gameprofile.id);
             self.mob_entity
                 .navigator
                 .lock()
@@ -382,10 +382,11 @@ impl NautilusEntity {
         ) {
             return false;
         }
+        let equip_sound = equippable.equip_sound.clone();
         let stack = item_stack.split_unless_creative(player.gamemode.load(), 1);
         let entity = self.get_entity();
         entity.world.load().play_sound_event(
-            &equippable.equip_sound,
+            &equip_sound,
             SoundCategory::Neutral,
             &entity.pos.load(),
         );
@@ -403,7 +404,7 @@ impl NautilusEntity {
     }
 
     fn try_feed(&self, player: &Player, item_stack: &mut ItemStack) -> bool {
-        let health = self.mob_entity.living_entity.health.load(Ordering::Relaxed);
+        let health = self.mob_entity.living_entity.health.load();
         let max_health = self.mob_entity.living_entity.get_max_health();
         if health >= max_health {
             return false;
@@ -479,6 +480,16 @@ impl Animal for NautilusEntity {
                 .has_tag(&tag::Item::MINECRAFT_NAUTILUS_TAMING_ITEMS)
         } else {
             item_stack.item.has_tag(&tag::Item::MINECRAFT_NAUTILUS_FOOD)
+        }
+    }
+
+    fn baby_spawned_from_breeding(&self, baby: &dyn EntityBase, _partner: &dyn EntityBase) {
+        let Some(baby) = baby.cast_any().downcast_ref::<Self>() else {
+            return;
+        };
+        if self.is_tame() {
+            baby.set_tame(true);
+            baby.set_owner(self.get_owner());
         }
     }
 }
@@ -793,7 +804,7 @@ impl Mob for NautilusEntity {
             return self.animal_interact(player, item_stack, self.eat_sound());
         }
         if self.is_tame() && player.get_entity().is_sneaking() {
-            // Vanilla opens the nautilus inventory here; Pumpkin has no screen for it yet.
+            open_mount_screen(self.get_entity(), player, empty_mount_inventory(), 0);
             return true;
         }
 
@@ -865,16 +876,6 @@ impl Mob for NautilusEntity {
 
     fn set_saddled(&self, saddled: bool) {
         self.is_saddled.store(saddled, Ordering::Relaxed);
-    }
-
-    fn on_breed_offspring(&self, _partner: &dyn EntityBase, baby: &dyn EntityBase) {
-        let Some(baby) = baby.cast_any().downcast_ref::<NautilusEntity>() else {
-            return;
-        };
-        if self.is_tame() {
-            baby.set_tame(true);
-            baby.set_owner(self.get_owner());
-        }
     }
 
     fn requires_custom_persistence(&self) -> bool {

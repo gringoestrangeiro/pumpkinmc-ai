@@ -320,6 +320,7 @@ impl DispenserBlock {
     const FIREWORK_PROJECTILE_POWER: f64 = 0.5;
     const FIREWORK_PROJECTILE_UNCERTAINTY: f64 = 1.0;
 
+    #[expect(clippy::too_many_lines)]
     fn dispense(ctx: &DispenseContext<'_>, dispenser: &DispenserBlockEntity, item: &mut ItemStack) {
         let mut event = crate::plugin::api::events::block::block_dispense::BlockDispenseEvent::new(
             *ctx.position,
@@ -962,8 +963,10 @@ impl DispenserBlock {
                 .get_biome(&test_pos)
                 .has_tag(&tag::WorldgenBiome::MINECRAFT_PRODUCES_CORALS_FROM_BONEMEAL)
                 && random.random_range(0..4) == 0
-                && let Some(coral) =
-                    random_block_from_tag(tag::Block::MINECRAFT_UNDERWATER_BONEMEALS, &mut random)
+                && let Some(coral) = Self::random_block_from_tag(
+                    tag::Block::MINECRAFT_UNDERWATER_BONEMEALS,
+                    &mut random,
+                )
             {
                 state_to_grow = coral.default_state;
             }
@@ -1079,6 +1082,10 @@ impl DispenserBlock {
 
     /// Vanilla chest dispenser behavior: equip a tamed, chestless
     /// `AbstractChestedHorse` in the block in front.
+    #[expect(
+        clippy::option_if_let_else,
+        reason = "type dispatch is clearer than nested map_or_else"
+    )]
     fn dispense_chest(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
         let target_box = BoundingBox::from_block(&Self::target_position(ctx));
         for entity in ctx.world.get_entities_at_box(&target_box) {

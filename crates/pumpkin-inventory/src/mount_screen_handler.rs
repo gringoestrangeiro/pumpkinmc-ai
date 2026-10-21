@@ -34,7 +34,7 @@ impl MountScreenHandler {
     pub fn new(
         sync_id: u8,
         player_inventory: &Arc<PlayerInventory>,
-        mount_inventory: Arc<dyn Inventory>,
+        mount_inventory: &Arc<dyn Inventory>,
         saddle_inventory: Arc<dyn Inventory>,
         armor_inventory: Arc<dyn Inventory>,
         inventory_columns: usize,
@@ -191,7 +191,7 @@ impl NautilusInventoryScreenHandler {
     pub fn new(
         sync_id: u8,
         player_inventory: &Arc<PlayerInventory>,
-        nautilus_inventory: Arc<dyn Inventory>,
+        nautilus_inventory: &Arc<dyn Inventory>,
         saddle_inventory: Arc<dyn Inventory>,
         armor_inventory: Arc<dyn Inventory>,
         inventory_columns: usize,

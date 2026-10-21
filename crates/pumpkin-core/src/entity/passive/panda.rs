@@ -230,7 +230,7 @@ impl PandaEntity {
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(10, Box::new(RandomLookAroundGoal::default()));
-            goal_selector.add_goal(12, Box::new(PandaRollGoal::new(panda_weak.clone())));
+            goal_selector.add_goal(12, Box::new(PandaRollGoal::new(panda_weak)));
             goal_selector.add_goal(13, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(14, Box::new(WanderAroundGoal::new(1.0)));
         };
@@ -243,12 +243,14 @@ impl PandaEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             target_selector.add_goal(
                 1,
-                RevengeGoal::new(true)
-                    .alerting_others()
-                    .alerting_only(panda_is_aggressive)
-                    .continuing_while(panda_has_not_bitten),
+                Box::new(
+                    RevengeGoal::new(true)
+                        .alerting_others()
+                        .alerting_only(panda_is_aggressive)
+                        .continuing_while(panda_has_not_bitten),
+                ),
             );
-        }
+        };
 
         mob_arc
     }
@@ -345,7 +347,7 @@ impl PandaEntity {
     }
 
     /// Vanilla `Panda.setGeneFromParents`.
-    fn set_gene_from_parents(&self, parent1: &PandaEntity, parent2: &PandaEntity) {
+    fn set_gene_from_parents(&self, parent1: &Self, parent2: &Self) {
         if rand::random::<bool>() {
             self.set_main_gene(parent1.get_one_of_genes_randomly());
             self.set_hidden_gene(parent2.get_one_of_genes_randomly());
@@ -430,7 +432,7 @@ impl PandaEntity {
     }
 
     fn set_eating(&self, eating: bool) {
-        let value = if eating { 1 } else { 0 };
+        let value = i32::from(eating);
         self.eat_counter.store(value, Ordering::Relaxed);
         self.get_entity().set_synced_data(
             pumpkin_data::tracked_data::panda::EAT_COUNTER,
@@ -448,11 +450,11 @@ impl PandaEntity {
 
     #[must_use]
     pub fn can_perform_action(&self) -> bool {
-        !self.is_on_back()
-            && !(self.is_worried() && self.get_entity().world.load().is_thundering())
-            && !self.is_eating()
-            && !self.is_rolling()
-            && !self.is_sitting()
+        !(self.is_on_back()
+            || self.is_eating()
+            || self.is_rolling()
+            || self.is_sitting()
+            || self.is_worried() && self.get_entity().world.load().is_thundering())
     }
 
     #[must_use]
@@ -467,7 +469,6 @@ impl PandaEntity {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&pumpkin_data::data_component_impl::EquipmentSlot::MAIN_HAND)
-            .clone()
     }
 
     fn set_held_item(&self, stack: ItemStack) {
@@ -513,7 +514,7 @@ impl PandaEntity {
                 Sound::EntityPandaEat,
                 SoundCategory::Neutral,
                 &entity.pos.load(),
-                0.5 + 0.5 * f32::from(rand::random_range(0..2)),
+                0.5 + 0.5 * rand::random_range(0..2) as f32,
                 1.0 + (rand::random::<f32>() - rand::random::<f32>()) * 0.2,
             );
         }
@@ -597,9 +598,9 @@ impl PandaEntity {
         let body_yaw = f64::from(entity.head_yaw.load()).to_radians();
         let width = f64::from(entity.width());
         let sneeze_pos = Vector3::new(
-            pos.x - (width + 1.0) * 0.5 * body_yaw.sin(),
+            pos.x - f64::midpoint(width, 1.0) * body_yaw.sin(),
             pos.y + entity.get_eye_height() - 0.1,
-            pos.z + (width + 1.0) * 0.5 * body_yaw.cos(),
+            pos.z + f64::midpoint(width, 1.0) * body_yaw.cos(),
         );
         world.spawn_particle(
             sneeze_pos,
@@ -616,7 +617,7 @@ impl PandaEntity {
 
         let nearby = world.get_nearby_entities(pos, 10.0);
         for other in nearby.values() {
-            let Some(panda) = other.cast_any().downcast_ref::<PandaEntity>() else {
+            let Some(panda) = other.cast_any().downcast_ref::<Self>() else {
                 continue;
             };
             if !panda.is_baby()
@@ -748,10 +749,10 @@ impl Animal for PandaEntity {
     }
 
     fn baby_spawned_from_breeding(&self, baby: &dyn EntityBase, partner: &dyn EntityBase) {
-        let Some(baby) = baby.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(baby) = baby.cast_any().downcast_ref::<Self>() else {
             return;
         };
-        let Some(partner) = partner.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(partner) = partner.cast_any().downcast_ref::<Self>() else {
             return;
         };
         baby.set_gene_from_parents(self, partner);

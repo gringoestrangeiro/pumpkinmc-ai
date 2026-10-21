@@ -99,8 +99,9 @@ impl FishingBobberEntity {
                 ..Default::default()
             };
             let server = world.server.upgrade();
-            let items = match server.as_ref() {
-                Some(server) => match server
+            let items = server.as_ref().map_or_else(
+                || generate_dynamic_loot_with_context(&fishing_loot_table(None), 0, &params),
+                |server| match server
                     .datapack_manager
                     .get_loot_table("minecraft:gameplay/fishing")
                 {
@@ -111,13 +112,12 @@ impl FishingBobberEntity {
                     // tables and loses their weights and quality, so rebuild
                     // the vanilla distribution from the sub-tables instead.
                     _ => generate_dynamic_loot_with_context(
-                        &fishing_loot_table(Some(server.as_ref())),
+                        &fishing_loot_table(Some(server)),
                         0,
                         &params,
                     ),
                 },
-                None => generate_dynamic_loot_with_context(&fishing_loot_table(None), 0, &params),
-            };
+            );
             let delta = player_pos - bobber_pos;
             let vy = delta.y * 0.1 + delta.length().sqrt() * 0.08;
 

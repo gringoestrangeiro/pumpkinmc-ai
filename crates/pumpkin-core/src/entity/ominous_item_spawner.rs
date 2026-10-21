@@ -87,12 +87,13 @@ impl OminousItemSpawnerEntity {
 
         let world = self.entity.world.load();
         let pos = self.entity.pos.load();
-        let spawned: Arc<dyn EntityBase> = if let Some(projectile) = self.spawn_projectile(&item) {
-            projectile
-        } else {
-            let entity = Entity::new(world.clone(), pos, &EntityType::ITEM);
-            Arc::new(ItemEntity::new(entity, item))
-        };
+        let spawned: Arc<dyn EntityBase> = self.spawn_projectile(&item).map_or_else(
+            || -> Arc<dyn EntityBase> {
+                let entity = Entity::new(world.clone(), pos, &EntityType::ITEM);
+                Arc::new(ItemEntity::new(entity, item))
+            },
+            |projectile| projectile,
+        );
 
         world.spawn_entity(spawned.clone());
         world.sync_world_event(
@@ -120,7 +121,11 @@ impl OminousItemSpawnerEntity {
                 || id == Item::TIPPED_ARROW.id
                 || id == Item::SPECTRAL_ARROW.id =>
             {
-                let entity = Entity::new(world, pos, ArrowEntity::entity_type_for_item(item.item));
+                let entity = Entity::new(
+                    world.clone(),
+                    pos,
+                    ArrowEntity::entity_type_for_item(item.item),
+                );
                 let arrow =
                     ArrowEntity::new_with_item(entity, Some(owner_id), item, ArrowPickup::Allowed);
                 arrow.apply_on_projectile_spawned(item);
@@ -128,7 +133,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(arrow)
             }
             id if id == Item::SNOWBALL.id => {
-                let entity = Entity::new(world, pos, &EntityType::SNOWBALL);
+                let entity = Entity::new(world.clone(), pos, &EntityType::SNOWBALL);
                 let mut snowball = SnowballEntity::new(entity);
                 snowball.thrown.owner_id = Some(owner_id);
                 snowball
@@ -137,7 +142,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(snowball)
             }
             id if id == Item::EGG.id => {
-                let entity = Entity::new(world, pos, &EntityType::EGG);
+                let entity = Entity::new(world.clone(), pos, &EntityType::EGG);
                 let mut egg = EggEntity::new(entity);
                 egg.thrown.owner_id = Some(owner_id);
                 egg.set_item_stack(item.clone());
@@ -145,7 +150,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(egg)
             }
             id if id == Item::EXPERIENCE_BOTTLE.id => {
-                let entity = Entity::new(world, pos, &EntityType::EXPERIENCE_BOTTLE);
+                let entity = Entity::new(world.clone(), pos, &EntityType::EXPERIENCE_BOTTLE);
                 let mut bottle = ExperienceBottleEntity::new(entity);
                 bottle.thrown.owner_id = Some(owner_id);
                 bottle.set_item_stack(item.clone());
@@ -155,7 +160,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(bottle)
             }
             id if id == Item::SPLASH_POTION.id => {
-                let entity = Entity::new(world, pos, &EntityType::SPLASH_POTION);
+                let entity = Entity::new(world.clone(), pos, &EntityType::SPLASH_POTION);
                 let mut potion = SplashPotionEntity::new(entity);
                 potion.thrown.owner_id = Some(owner_id);
                 potion.set_item_stack(item.clone());
@@ -165,7 +170,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(potion)
             }
             id if id == Item::LINGERING_POTION.id => {
-                let entity = Entity::new(world, pos, &EntityType::LINGERING_POTION);
+                let entity = Entity::new(world.clone(), pos, &EntityType::LINGERING_POTION);
                 let mut potion = LingeringPotionEntity::new(entity);
                 potion.thrown.owner_id = Some(owner_id);
                 potion.set_item_stack(item.clone());
@@ -175,7 +180,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(potion)
             }
             id if id == Item::FIRE_CHARGE.id => {
-                let entity = Entity::new(world, pos, &EntityType::SMALL_FIREBALL);
+                let entity = Entity::new(world.clone(), pos, &EntityType::SMALL_FIREBALL);
                 let mut fireball = SmallFireballEntity::new(entity);
                 fireball.thrown.owner_id = Some(owner_id);
                 fireball
@@ -184,7 +189,7 @@ impl OminousItemSpawnerEntity {
                 Arc::new(fireball)
             }
             id if id == Item::WIND_CHARGE.id => {
-                let entity = Entity::new(world, pos, &EntityType::WIND_CHARGE);
+                let entity = Entity::new(world.clone(), pos, &EntityType::WIND_CHARGE);
                 let thrown = ThrownItemEntity {
                     entity,
                     owner_id: Some(owner_id),

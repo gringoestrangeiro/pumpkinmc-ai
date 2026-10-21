@@ -155,8 +155,9 @@ impl From<LootCondition> for DynamicLootCondition {
     }
 }
 
-/// Guards against a datapack whose loot tables reference each other in a
-/// cycle. Vanilla resolves references lazily at roll time and has no explicit
+/// Guards against cycles in datapack loot-table references.
+///
+/// Vanilla resolves references lazily at roll time and has no explicit
 /// cap, so this only needs to be deep enough for real tables.
 pub const MAX_NESTED_LOOT_TABLE_DEPTH: usize = 10;
 
@@ -267,7 +268,7 @@ impl From<&LootTable> for DynamicLootTable {
 
 #[cfg(test)]
 mod tests {
-    use super::DynamicLootEntry;
+    use super::{DynamicLootCondition, DynamicLootEntry};
 
     fn entry(weight: i32, quality: i32) -> DynamicLootEntry {
         DynamicLootEntry {
@@ -276,7 +277,7 @@ mod tests {
             quality,
             min_count: 1,
             max_count: 1,
-            condition: Default::default(),
+            condition: DynamicLootCondition::default(),
             bonus_formula: None,
             damage: None,
             potion: None,

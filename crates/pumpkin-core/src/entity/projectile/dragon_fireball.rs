@@ -32,7 +32,7 @@ impl DragonFireballEntity {
     const MAX_RADIUS: f32 = 7.0;
 
     #[must_use]
-    pub fn new(entity: Entity) -> Self {
+    pub const fn new(entity: Entity) -> Self {
         Self {
             thrown: ThrownItemEntity {
                 entity,
@@ -55,7 +55,7 @@ impl DragonFireballEntity {
         Self { thrown }
     }
 
-    fn spawn_cloud(&self, hit: ProjectileHit) {
+    fn spawn_cloud(&self, hit: &ProjectileHit) {
         let entity = self.get_entity();
         let world = entity.world.load();
         let hit_pos = hit.hit_pos();
@@ -168,7 +168,7 @@ impl EntityBase for DragonFireballEntity {
         {
             return;
         }
-        self.spawn_cloud(hit);
+        self.spawn_cloud(&hit);
     }
 
     fn cast_any(&self) -> &dyn std::any::Any {

@@ -222,7 +222,7 @@ fn receive_catalyst_death(
     let should_drop_experience = !mob
         .get_mob()
         .and_then(|mob| mob.as_ageable())
-        .is_some_and(|ageable| ageable.is_baby());
+        .is_some_and(super::super::entity::ageable::AgeableMob::is_baby);
     if should_drop_experience && experience > 0 {
         // Vanilla `sourcePosition.relative(Direction.UP, 0.5)`.
         catalyst.add_cursors(

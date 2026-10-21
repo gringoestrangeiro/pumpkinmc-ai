@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::entity::{
-    Entity,
+    Entity, EntityBase,
     mob::{Mob, MobEntity, equipment::RegionalDifficulty, skeleton::SkeletonEntityBase},
 };
 use crate::world::World;
@@ -181,12 +181,12 @@ impl Mob for SkeletonEntity {
         self.freezing_time
             .store(nbt.get_int("FreezingTime").unwrap_or(0), Ordering::Relaxed);
         let conversion_time = nbt.get_int("StrayConversionTime").unwrap_or(-1);
-        if conversion_time != -1 {
+        if conversion_time == -1 {
+            self.set_converting(false);
+        } else {
             self.conversion_time
                 .store(conversion_time, Ordering::Relaxed);
             self.set_converting(true);
-        } else {
-            self.set_converting(false);
         }
     }
 }

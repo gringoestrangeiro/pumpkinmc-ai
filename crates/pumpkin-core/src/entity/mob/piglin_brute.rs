@@ -181,9 +181,13 @@ impl PiglinBruteEntity {
             && home.dimension.id == world.dimension.id
         {
             self.mob_entity.position_target.store(home.pos);
-            self.mob_entity.position_target_range.store(5);
+            self.mob_entity
+                .position_target_range
+                .store(5, Ordering::Relaxed);
         } else {
-            self.mob_entity.position_target_range.store(-1);
+            self.mob_entity
+                .position_target_range
+                .store(-1, Ordering::Relaxed);
         }
     }
 

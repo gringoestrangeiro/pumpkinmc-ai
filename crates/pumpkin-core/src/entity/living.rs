@@ -1592,7 +1592,9 @@ impl LivingEntity {
         if self.entity.on_ground.load(Relaxed)
             || self.entity.has_vehicle()
             || self.has_effect(&StatusEffect::LEVITATION)
-            || caller.get_player().is_some_and(|player| player.is_flying())
+            || caller
+                .get_player()
+                .is_some_and(super::player::Player::is_flying)
         {
             return false;
         }
@@ -4534,11 +4536,11 @@ mod tests {
     #[test]
     fn fall_flying_movement_matches_vanilla_dive() {
         // Hand-computed from `LivingEntity#updateFallFlyingMovement` for a 45
-        // degree dive at rest, gravity 0.08.
+        // degree dive with 0.1 forward speed, gravity 0.08.
         let movement = LivingEntity::fall_flying_movement(
             Vector3::new(0.0, 0.0, 1.0),
             std::f64::consts::FRAC_PI_4,
-            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 0.1),
             0.08,
         );
 
