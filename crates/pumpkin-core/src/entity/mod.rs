@@ -560,6 +560,17 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         self.get_entity().has_passengers()
     }
 
+    /// Vanilla `Entity.getControllingPassenger`: the first passenger, subject to each
+    /// vehicle's own rules.
+    fn get_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
+        self.get_entity()
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first()
+            .cloned()
+    }
+
     fn has_passenger(&self, other: &dyn EntityBase) -> bool {
         self.get_entity()
             .has_passenger(other.get_entity().entity_id)
@@ -3831,6 +3842,11 @@ impl Entity {
         if mount_event.cancelled || vehicle_enter.cancelled {
             return;
         }
+        if let Some(mob) = vehicle.get_mob()
+            && !mob.can_add_passenger(passenger.as_ref())
+        {
+            return;
+        }
 
         let mounted_passenger = passenger.clone();
         let passenger_entity = mounted_passenger.get_entity();
@@ -3844,6 +3860,20 @@ impl Entity {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         passengers.push(passenger);
+        // Vanilla puts a player at the front so the first rider controls the vehicle.
+        if passengers.len() > 1
+            && passengers
+                .last()
+                .is_some_and(|passenger| passenger.get_player().is_some())
+            && passengers
+                .first()
+                .is_some_and(|passenger| passenger.get_player().is_none())
+        {
+            let player = passengers.pop();
+            if let Some(player) = player {
+                passengers.insert(0, player);
+            }
+        }
 
         let passenger_ids: Vec<VarInt> = passengers
             .iter()

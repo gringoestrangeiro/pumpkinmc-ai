@@ -1106,6 +1106,21 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
+    /// Vanilla `Entity.canAddPassenger`: vehicles that carry more than one rider override it.
+    fn can_add_passenger(&self, _passenger: &dyn EntityBase) -> bool {
+        true
+    }
+
+    /// Vanilla `Entity.getControllingPassenger`; overridden by vehicles with their own rules.
+    fn get_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
+        self.get_entity()
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first()
+            .cloned()
+    }
+
     fn as_patrolling_monster(&self) -> Option<&dyn patrol::PatrollingMonster> {
         None
     }
@@ -1459,6 +1474,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn is_pushable(&self) -> bool {
         Mob::is_pushable(self)
+    }
+
+    fn get_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
+        Mob::get_controlling_passenger(self)
     }
 
     fn on_lightning_strike(

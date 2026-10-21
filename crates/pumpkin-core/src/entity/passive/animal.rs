@@ -1,15 +1,91 @@
 use std::sync::Arc;
 
+use pumpkin_data::entity::EntityStatus;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::particle::Particle;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use uuid::Uuid;
 
-use crate::entity::{mob::Mob, player::Player};
+use crate::entity::ageable::{AgeableMob, BABY_START_AGE};
+use crate::entity::{EntityBase, mob::Mob, player::Player};
+use crate::entity::{experience_orb::ExperienceOrbEntity, r#type::from_type};
 use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 pub trait Animal: Mob {
     fn is_food(&self, item_stack: &ItemStack) -> bool;
+
+    /// Vanilla `Animal.canMate` restrictions beyond both animals being in love.
+    fn can_breed_with(&self, _partner: &dyn EntityBase) -> bool {
+        true
+    }
+
+    /// Vanilla `Animal.spawnChildFromBreeding`. Overrides replace the live child with an
+    /// egg or set the mother's egg flag.
+    fn spawn_child_from_breeding(&self, partner: &dyn EntityBase) {
+        let entity = &self.get_mob_entity().living_entity.entity;
+        let world = entity.world.load_full();
+        let baby = from_type(
+            entity.entity_type,
+            entity.pos.load(),
+            &world,
+            Uuid::new_v4(),
+        );
+        baby.get_entity().set_age(
+            self.as_ageable()
+                .map_or(BABY_START_AGE, AgeableMob::get_baby_start_age),
+        );
+        self.baby_spawned_from_breeding(baby.as_ref(), partner);
+        world.spawn_entity(baby);
+        self.finalize_spawn_child_from_breeding(partner);
+    }
+
+    /// Vanilla `Animal.getBreedOffspring` post-processing, used by pandas for gene inheritance.
+    fn baby_spawned_from_breeding(&self, _baby: &dyn EntityBase, _partner: &dyn EntityBase) {}
+
+    /// Vanilla `Animal.finalizeSpawnChildFromBreeding`: stats, love reset and the XP orb.
+    fn finalize_spawn_child_from_breeding(&self, partner: &dyn EntityBase) {
+        let mob_entity = self.get_mob_entity();
+        let entity = &mob_entity.living_entity.entity;
+        let world = entity.world.load_full();
+        let love_cause = mob_entity.breeder.load().or_else(|| {
+            partner
+                .get_mob()
+                .and_then(|mob| mob.get_mob_entity().breeder.load())
+        });
+        if let Some(player) = love_cause.and_then(|uuid| world.get_player_by_uuid(uuid)) {
+            player.increment_stat(
+                pumpkin_data::statistic::StatisticCategory::Custom,
+                pumpkin_data::statistic::CustomStatistic::AnimalsBred as i32,
+                1,
+            );
+            player.trigger_advancement_criterion(
+                pumpkin_data::advancement::Advancement::HUSBANDRY_BREED_AN_ANIMAL,
+                "bred",
+            );
+            player.trigger_advancement_criterion(
+                pumpkin_data::advancement::Advancement::HUSBANDRY_BRED_ALL_ANIMALS,
+                &format!("minecraft:{}", entity.entity_type.resource_name),
+            );
+        }
+
+        mob_entity.reset_love_ticks();
+        mob_entity
+            .breeding_cooldown
+            .store(6000, std::sync::atomic::Ordering::Relaxed);
+        partner.reset_love();
+        partner.set_breeding_cooldown(6000);
+
+        world.send_entity_status(entity, EntityStatus::InLoveHearts, None);
+        if world.level_info.load().game_rules.mob_drops {
+            ExperienceOrbEntity::spawn(
+                &world,
+                entity.pos.load(),
+                self.get_random().random_range(1..8),
+            );
+        }
+    }
 
     /// Animals prefer grass, then bright spots.
     fn animal_walk_target_value(&self, pos: &pumpkin_util::math::position::BlockPos) -> f32 {

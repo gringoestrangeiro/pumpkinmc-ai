@@ -6,7 +6,9 @@ use std::collections::{HashMap, VecDeque};
 use std::f64::consts::TAU;
 use std::num::NonZero;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicI8, AtomicI32, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI8, AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering,
+};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -431,6 +433,12 @@ pub struct Player {
     pub sleeping_since: AtomicCell<Option<u8>>,
     /// Head position of the bed the player is currently sleeping in.
     pub sleeping_bed_pos: AtomicCell<Option<BlockPos>>,
+    /// Vanilla `ServerPlayer.shoulderEntityLeft`; an unspawned parrot saved as NBT.
+    pub shoulder_entity_left: std::sync::Mutex<Option<NbtCompound>>,
+    /// Vanilla `ServerPlayer.shoulderEntityRight`; an unspawned parrot saved as NBT.
+    pub shoulder_entity_right: std::sync::Mutex<Option<NbtCompound>>,
+    /// Vanilla `ServerPlayer.timeEntitySatOnShoulder`, in world ticks.
+    pub time_entity_sat_on_shoulder: AtomicU64,
     /// Manages the player's breath level
     pub breath_manager: BreathManager,
     /// Manages the player's hunger level.
@@ -768,6 +776,9 @@ impl Player {
             respawn_point: std::sync::Mutex::new(None),
             sleeping_since: AtomicCell::new(None),
             sleeping_bed_pos: AtomicCell::new(None),
+            shoulder_entity_left: std::sync::Mutex::new(None),
+            shoulder_entity_right: std::sync::Mutex::new(None),
+            time_entity_sat_on_shoulder: AtomicU64::new(0),
             // We want this to be an impossible watched section so that `chunker::update_position`
             // will mark chunks as watched for a new join rather than a respawn.
             // (We left shift by one so we can search around that chunk)
@@ -3044,6 +3055,8 @@ impl Player {
 
         self.living_entity.tick(self, server);
 
+        self.handle_shoulder_entities();
+
         self.breath_manager.tick(self);
 
         let level_info = self.world().level_info.load();
@@ -3305,6 +3318,165 @@ impl Player {
 
     pub fn world(&self) -> Arc<World> {
         self.living_entity.entity.world.load_full()
+    }
+
+    /// Vanilla `ServerPlayer.setEntityOnShoulder`: stores a saved parrot NBT on an empty
+    /// shoulder slot.
+    pub fn set_entity_on_shoulder(&self, tag: NbtCompound) -> bool {
+        let entity = self.get_entity();
+        if entity.has_vehicle()
+            || !entity.on_ground.load(Ordering::Relaxed)
+            || self.living_entity.is_in_water()
+            || self.living_entity.is_in_powder_snow()
+        {
+            return false;
+        }
+
+        {
+            let mut left = self
+                .shoulder_entity_left
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if left.is_none() {
+                *left = Some(tag.clone());
+                drop(left);
+                self.update_shoulder_parrot(true, Some(&tag));
+                self.time_entity_sat_on_shoulder
+                    .store(self.world().get_world_age() as u64, Ordering::Relaxed);
+                return true;
+            }
+        }
+
+        let mut right = self
+            .shoulder_entity_right
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if right.is_none() {
+            *right = Some(tag.clone());
+            drop(right);
+            self.update_shoulder_parrot(false, Some(&tag));
+            self.time_entity_sat_on_shoulder
+                .store(self.world().get_world_age() as u64, Ordering::Relaxed);
+            return true;
+        }
+
+        false
+    }
+
+    /// Vanilla `Player.handleShoulderEntities`, called after the living tick.
+    pub fn handle_shoulder_entities(&self) {
+        let left = self
+            .shoulder_entity_left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.play_shoulder_entity_ambient_sound(left.as_ref());
+        let right = self
+            .shoulder_entity_right
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.play_shoulder_entity_ambient_sound(right.as_ref());
+
+        if self.living_entity.fall_distance.load() > 0.5
+            || self.living_entity.is_in_water()
+            || self.is_flying()
+            || self.sleeping_since.load().is_some()
+            || self.living_entity.is_in_powder_snow()
+        {
+            self.remove_entities_on_shoulder();
+        }
+    }
+
+    fn play_shoulder_entity_ambient_sound(&self, tag: Option<&NbtCompound>) {
+        let Some(tag) = tag else {
+            return;
+        };
+        if tag.get_bool("Silent").unwrap_or(false) || rand::random_range(0..200) != 0 {
+            return;
+        }
+        let Some(id) = tag.get_string("id") else {
+            return;
+        };
+        if id.strip_prefix("minecraft:").unwrap_or(id) != "parrot" {
+            return;
+        }
+
+        let world = self.world();
+        if !crate::entity::passive::parrot::ParrotEntity::imitate_nearby_mobs(&world, self) {
+            let sound = crate::entity::passive::parrot::ParrotEntity::get_ambient(&world);
+            world.play_sound_fine(
+                sound,
+                pumpkin_data::sound::SoundCategory::Neutral,
+                &self.position(),
+                1.0,
+                crate::entity::passive::parrot::ParrotEntity::get_pitch(),
+            );
+        }
+    }
+
+    fn remove_entities_on_shoulder(&self) {
+        if self.time_entity_sat_on_shoulder.load(Ordering::Relaxed) + 20
+            > self.world().get_world_age() as u64
+        {
+            return;
+        }
+
+        let left = self
+            .shoulder_entity_left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let right = self
+            .shoulder_entity_right
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        self.update_shoulder_parrot(true, None);
+        self.update_shoulder_parrot(false, None);
+
+        if let Some(tag) = left {
+            self.respawn_entity_on_shoulder(&tag);
+        }
+        if let Some(tag) = right {
+            self.respawn_entity_on_shoulder(&tag);
+        }
+    }
+
+    fn respawn_entity_on_shoulder(&self, tag: &NbtCompound) {
+        let Some(id) = tag.get_string("id") else {
+            return;
+        };
+        let Some(entity_type) = pumpkin_data::entity::EntityType::from_name(
+            id.strip_prefix("minecraft:").unwrap_or(id),
+        ) else {
+            return;
+        };
+        let world = self.world();
+        let uuid = tag.get_uuid("UUID").unwrap_or_else(Uuid::new_v4);
+        let entity = crate::entity::r#type::from_type(entity_type, self.position(), &world, uuid);
+        entity.read_nbt_non_mut(tag);
+        entity.get_entity().set_pos(self.position());
+        world.spawn_entity(entity);
+    }
+
+    fn update_shoulder_parrot(&self, left: bool, tag: Option<&NbtCompound>) {
+        let variant = tag.and_then(|tag| {
+            let id = tag.get_string("id")?;
+            if id.strip_prefix("minecraft:").unwrap_or(id) != "parrot" {
+                return None;
+            }
+            Some(tag.get_int("Variant").unwrap_or(0).clamp(0, 4))
+        });
+        let tracked = if left {
+            pumpkin_data::tracked_data::player::DATA_SHOULDER_PARROT_LEFT
+        } else {
+            pumpkin_data::tracked_data::player::DATA_SHOULDER_PARROT_RIGHT
+        };
+        self.get_entity().set_synced_data(
+            tracked,
+            pumpkin_protocol::codec::optional_int::OptionalInt(variant),
+        );
     }
 
     pub fn position(&self) -> Vector3<f64> {
@@ -7327,6 +7499,22 @@ impl EntityBase for Player {
         if let Some(vehicle_uuid) = vehicle_uuid {
             write_root_vehicle(nbt, vehicle_uuid);
         }
+        if let Some(tag) = self
+            .shoulder_entity_left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            nbt.put_compound("ShoulderEntityLeft", tag);
+        }
+        if let Some(tag) = self
+            .shoulder_entity_right
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            nbt.put_compound("ShoulderEntityRight", tag);
+        }
         self.stats
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -7335,6 +7523,19 @@ impl EntityBase for Player {
 
     #[expect(clippy::too_many_lines)]
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
+        let left = nbt.get_compound("ShoulderEntityLeft").cloned();
+        let right = nbt.get_compound("ShoulderEntityRight").cloned();
+        *self
+            .shoulder_entity_left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = left.clone();
+        *self
+            .shoulder_entity_right
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = right.clone();
+        self.update_shoulder_parrot(true, left.as_ref());
+        self.update_shoulder_parrot(false, right.as_ref());
+
         self.inventory.read_nbt_non_mut(nbt);
         self.ender_chest_inventory.read_nbt_non_mut(nbt);
         self.living_entity

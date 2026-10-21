@@ -1,19 +1,17 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
-use pumpkin_data::entity::EntityStatus;
-use rand::RngExt;
-
-use crate::entity::experience_orb::ExperienceOrbEntity;
-use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob, r#type::from_type};
+use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
 
 use super::{Controls, Goal};
+
+type BreedGate = dyn Fn(&dyn Mob) -> bool + Send + Sync;
 
 pub struct BreedGoal {
     speed: f64,
     mate: Option<Arc<dyn EntityBase>>,
     timer: i32,
+    /// Vanilla subclass `canUse` conditions that depend on the mob's state.
+    can_use_gate: Option<Box<BreedGate>>,
 }
 
 impl BreedGoal {
@@ -23,7 +21,17 @@ impl BreedGoal {
             speed,
             mate: None,
             timer: 0,
+            can_use_gate: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_can_use_gate<F>(mut self: Box<Self>, gate: F) -> Box<Self>
+    where
+        F: Fn(&dyn Mob) -> bool + Send + Sync + 'static,
+    {
+        self.can_use_gate = Some(Box::new(gate));
+        self
     }
 
     fn find_mate(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
@@ -37,6 +45,7 @@ impl BreedGoal {
         let world = entity.world.load();
         let my_type = entity.entity_type;
         let my_uuid = entity.entity_uuid;
+        let animal = mob.as_animal();
 
         let nearby = world.get_nearby_entities(pos, 8.0);
         let mut closest: Option<(f64, Arc<dyn EntityBase>)> = None;
@@ -53,6 +62,9 @@ impl BreedGoal {
             {
                 continue;
             }
+            if !animal.is_some_and(|animal| animal.can_breed_with(candidate.as_ref())) {
+                continue;
+            }
 
             let dist = pos.squared_distance_to_vec(&c_entity.pos.load());
             match &closest {
@@ -65,49 +77,9 @@ impl BreedGoal {
     }
 
     fn breed(mob: &dyn Mob, mate: &dyn EntityBase) {
-        let mob_entity = mob.get_mob_entity();
-        let entity = mob.get_entity();
-        let world = entity.world.load();
-
-        let player_opt = mob_entity
-            .breeder
-            .load()
-            .and_then(|uuid| world.get_player_by_uuid(uuid));
-        if let Some(player) = player_opt {
-            let entity_type_name = entity.entity_type.resource_name;
-            player.increment_stat(
-                pumpkin_data::statistic::StatisticCategory::Custom,
-                pumpkin_data::statistic::CustomStatistic::AnimalsBred as i32,
-                1,
-            );
-
-            player.trigger_advancement_criterion(
-                pumpkin_data::advancement::Advancement::HUSBANDRY_BREED_AN_ANIMAL,
-                "bred",
-            );
-            player.trigger_advancement_criterion(
-                pumpkin_data::advancement::Advancement::HUSBANDRY_BRED_ALL_ANIMALS,
-                &format!("minecraft:{entity_type_name}"),
-            );
+        if let Some(animal) = mob.as_animal() {
+            animal.spawn_child_from_breeding(mate);
         }
-
-        mob_entity.reset_love_ticks();
-        mob_entity
-            .breeding_cooldown
-            .store(6000, std::sync::atomic::Ordering::Relaxed);
-
-        mate.reset_love();
-        mate.set_breeding_cooldown(6000);
-
-        let parent_pos = entity.pos.load();
-        let baby = from_type(entity.entity_type, parent_pos, &world, Uuid::new_v4());
-        baby.get_entity().set_age(-24000);
-        let world_full = entity.world.load_full();
-        world_full.spawn_entity(baby);
-
-        world_full.send_entity_status(entity, EntityStatus::InLoveHearts, None);
-        // TODO: gate on the `animalBreedingDropsXp` game rule once it exists.
-        ExperienceOrbEntity::spawn(&world_full, parent_pos, mob.get_random().random_range(1..8));
     }
 }
 
@@ -119,7 +91,14 @@ impl Goal for BreedGoal {
         }
 
         self.mate = Self::find_mate(mob);
-        self.mate.is_some()
+        if self.mate.is_none() {
+            return false;
+        }
+        if self.can_use_gate.as_ref().is_some_and(|gate| !gate(mob)) {
+            self.mate = None;
+            return false;
+        }
+        true
     }
 
     fn should_continue(&mut self, _mob: &dyn Mob) -> bool {

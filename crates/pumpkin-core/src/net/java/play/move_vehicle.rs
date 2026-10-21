@@ -32,11 +32,8 @@ impl JavaClient {
             return;
         };
         let vehicle_entity = vehicle.get_entity();
-        let is_controller = vehicle_entity
-            .passengers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .first()
+        let is_controller = vehicle
+            .get_controlling_passenger()
             .is_some_and(|passenger| passenger.get_entity().entity_id == entity.entity_id);
         if !is_controller {
             return;

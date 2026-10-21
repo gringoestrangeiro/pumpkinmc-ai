@@ -8,6 +8,7 @@ use crate::block::{
 };
 use crate::entity::Entity;
 use crate::entity::item::ItemEntity;
+use crate::entity::passive::parrot::ParrotEntity;
 use crate::world::World;
 use pumpkin_data::data_component_impl::JukeboxPlayableImpl;
 use pumpkin_data::entity::EntityType;
@@ -68,11 +69,23 @@ impl JukeboxBlock {
     fn stop_playing(block: &Block, position: &BlockPos, world: &Arc<World>) {
         Self::set_record_state(false, block, position, world);
         world.sync_world_event(WorldEvent::SoundStopJukeboxSong, *position, 0);
+        Self::notify_nearby_parrots(world, position, false);
     }
 
     /// Starts playing music
     fn start_playing(position: &BlockPos, world: &Arc<World>, song_id: u32) {
         world.sync_world_event(WorldEvent::SoundPlayJukeboxSong, *position, song_id as i32);
+        Self::notify_nearby_parrots(world, position, true);
+    }
+
+    /// Vanilla `Level.setRecordPlayingNearby`.
+    fn notify_nearby_parrots(world: &Arc<World>, position: &BlockPos, is_playing: bool) {
+        let search_box = crate::entity::passive::parrot::jukebox_parrot_box(*position);
+        for entity in world.get_entities_at_box(&search_box) {
+            if let Some(parrot) = entity.cast_any().downcast_ref::<ParrotEntity>() {
+                parrot.set_record_playing_nearby(*position, is_playing);
+            }
+        }
     }
 }
 
@@ -171,6 +184,7 @@ impl BlockBehaviour for JukeboxBlock {
         // Stop the music
         args.world
             .sync_world_event(WorldEvent::SoundStopJukeboxSong, *args.position, 0);
+        Self::notify_nearby_parrots(args.world, args.position, false);
     }
 
     /// Vanilla: `JukeboxBlock.affectNeighborsAfterRemoval()` -> `Containers.updateNeighboursAfterDestroy()`,
