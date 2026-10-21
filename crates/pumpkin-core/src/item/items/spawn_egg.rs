@@ -149,10 +149,23 @@ fn apply_variant(item: &ItemStack, mob: &dyn EntityBase) {
         ZombieNautilusVariantImpl,
         SalmonSizeImpl,
         ParrotVariantImpl,
-        TropicalFishPatternImpl,
-        TropicalFishBaseColorImpl,
-        TropicalFishPatternColorImpl,
     );
+
+    // Tropical fish carry three components that have to be applied in order.
+    if let Some(tropical) = mob
+        .cast_any()
+        .downcast_ref::<crate::entity::passive::tropical_fish::TropicalFishEntity>()
+    {
+        if let Some(comp) = item.get_data_component::<TropicalFishPatternImpl>() {
+            tropical.set_pattern_name(&comp.value);
+        }
+        if let Some(comp) = item.get_data_component::<TropicalFishBaseColorImpl>() {
+            tropical.set_base_color_name(&comp.value);
+        }
+        if let Some(comp) = item.get_data_component::<TropicalFishPatternColorImpl>() {
+            tropical.set_pattern_color_name(&comp.value);
+        }
+    }
 
     macro_rules! apply_sound_variant {
         ($($ty:ty),+ $(,)?) => {

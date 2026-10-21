@@ -993,6 +993,18 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 
+    /// Vanilla `Animal.getBreedOffspring`: a parent shapes the baby after the
+    /// generic `BreedGoal` has created it.
+    fn on_breed_offspring(&self, _partner: &dyn EntityBase, _baby: &dyn EntityBase) {}
+
+    /// Set when a mob is released from a bucket; bucketable fish use it to keep
+    /// themselves from despawning.
+    fn set_from_bucket(&self, _from_bucket: bool) {}
+
+    fn get_fish_data(&self) -> Option<&crate::entity::passive::fish::FishData> {
+        None
+    }
+
     /// Vanilla `LivingEntity.blockedByItem`: the attacker reacts to a shield block.
     fn blocked_by_item(&self, _defender: &dyn EntityBase) {}
 

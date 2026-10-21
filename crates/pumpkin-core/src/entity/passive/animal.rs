@@ -183,6 +183,22 @@ pub trait Animal: Mob {
     }
 }
 
+/// Vanilla `ItemUtils.createFilledResult` for the bucket of water an animal
+/// leaves behind when it eats a fish bucket.
+pub fn give_bucket_food_remainder(player: &Player, item_stack: &mut ItemStack) {
+    let mut water_bucket = ItemStack::new(1, &pumpkin_data::item::Item::WATER_BUCKET);
+    if player.gamemode.load() == pumpkin_util::GameMode::Creative {
+        let added = player.inventory.insert_stack_anywhere(&mut water_bucket);
+        if !added && !water_bucket.is_empty() {
+            player
+                .world()
+                .drop_stack(&player.get_entity().block_pos.load(), water_bucket);
+        }
+    } else {
+        *item_stack = water_bucket;
+    }
+}
+
 #[must_use]
 pub fn get_dye_color_from_item(item: &pumpkin_data::item::Item) -> Option<u8> {
     use pumpkin_data::data_component::DataComponent;

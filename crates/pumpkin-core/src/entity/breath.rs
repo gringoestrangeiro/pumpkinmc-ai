@@ -11,6 +11,29 @@ pub const AIR_RECOVERY_RATE: i32 = 4;
 pub const AIR_DEPLETION_RATE: i32 = 1;
 pub const DROWNING_INTERVAL: i32 = 20;
 pub const DROWNING_DAMAGE: f32 = 2.0;
+pub const MOB_DROWNING_AIR: i32 = -20;
+
+/// Vanilla `WaterAnimal.handleAirSupply` and the dry-out variants used by the
+/// axolotl and nautilus: drain one air per tick out of water, then hurt for two
+/// every time the supply reaches -20.
+pub fn tick_mob_air_supply(
+    caller: &dyn EntityBase,
+    air_supply: &AtomicI32,
+    max_air: i32,
+    out_of_water: bool,
+    damage_type: DamageType,
+) {
+    if caller.get_entity().is_alive() && out_of_water {
+        let next = air_supply.load(Ordering::Relaxed) - 1;
+        air_supply.store(next, Ordering::Relaxed);
+        if next <= MOB_DROWNING_AIR {
+            air_supply.store(0, Ordering::Relaxed);
+            caller.damage(caller, DROWNING_DAMAGE, damage_type);
+        }
+    } else {
+        air_supply.store(max_air, Ordering::Relaxed);
+    }
+}
 
 pub struct BreathManager {
     pub air_supply: AtomicI32,

@@ -2,13 +2,22 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::{
-    entity::{EntityBase, player::Player, r#type::from_type},
+    entity::{
+        EntityBase,
+        passive::{
+            axolotl::AxolotlEntity, salmon::SalmonEntity, tropical_fish::TropicalFishEntity,
+        },
+        player::Player,
+        r#type::from_type,
+    },
     item::{ItemBehaviour, ItemMetadata},
 };
 use pumpkin_data::{
     Block, BlockDirection,
     data_component_impl::{
-        BucketEntityDataImpl, CustomNameImpl, EquipmentSlot, SulfurCubeContentImpl,
+        AxolotlVariantImpl, BucketEntityDataImpl, CustomNameImpl, EquipmentSlot, SalmonSizeImpl,
+        SulfurCubeContentImpl, TropicalFishBaseColorImpl, TropicalFishPatternColorImpl,
+        TropicalFishPatternImpl,
     },
     entity::EntityType,
     fluid::Fluid,
@@ -159,6 +168,28 @@ pub(crate) fn fill_mob_bucket_stack(
             name: custom_name.clone(),
         });
     }
+    // Vanilla `saveToBucketTag` copies the variant components onto the bucket.
+    if let Some(axolotl) = entity.cast_any().downcast_ref::<AxolotlEntity>() {
+        bucket_stack.set_data_component(AxolotlVariantImpl {
+            value: axolotl.get_variant().name().into(),
+        });
+    }
+    if let Some(salmon) = entity.cast_any().downcast_ref::<SalmonEntity>() {
+        bucket_stack.set_data_component(SalmonSizeImpl {
+            value: salmon.get_variant().name().into(),
+        });
+    }
+    if let Some(tropical) = entity.cast_any().downcast_ref::<TropicalFishEntity>() {
+        bucket_stack.set_data_component(TropicalFishPatternImpl {
+            value: tropical.get_pattern().name().into(),
+        });
+        bucket_stack.set_data_component(TropicalFishBaseColorImpl {
+            value: tropical.get_base_color().name().into(),
+        });
+        bucket_stack.set_data_component(TropicalFishPatternColorImpl {
+            value: tropical.get_pattern_color().name().into(),
+        });
+    }
     if entity.get_entity().entity_type == &EntityType::SULFUR_CUBE
         && let Some(living) = entity.get_living_entity()
     {
@@ -228,6 +259,9 @@ pub(crate) fn apply_mob_bucket_components(
             .get_mob_entity()
             .persistence_required
             .store(true, Ordering::Relaxed);
+        // Vanilla `MobBucketItem.spawn` marks the released mob as coming from a
+        // bucket, which keeps fish from despawning.
+        mob_trait.set_from_bucket(true);
     }
 }
 

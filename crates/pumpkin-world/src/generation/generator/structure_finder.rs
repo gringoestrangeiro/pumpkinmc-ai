@@ -279,6 +279,57 @@ pub fn find_nearest_structure_start(
     None
 }
 
+/// Vanilla `ChunkGenerator.findNearestMapStructure` for a set of structure
+/// types, such as the `minecraft:dolphin_located` tag. Every enabled set that
+/// holds one of `target_structures` is searched and the nearest start wins.
+pub fn find_nearest_structure_of_types(
+    origin: BlockPos,
+    target_structures: &[pumpkin_data::structures::StructureKeys],
+    max_search_radius: i32,
+    generator: &WorldGenerator,
+) -> Option<(BlockPos, pumpkin_data::structures::StructureKeys)> {
+    let enabled = generator.enabled_structure_sets();
+    let mut nearest: Option<(BlockPos, pumpkin_data::structures::StructureKeys, f64)> = None;
+
+    for (index, set) in StructureSet::ALL.iter().enumerate() {
+        if enabled.is_some_and(|enabled| !enabled.contains(&index)) {
+            continue;
+        }
+        let targets: Vec<pumpkin_data::structures::StructureKeys> = set
+            .structures
+            .iter()
+            .map(|entry| entry.structure)
+            .filter(|key| target_structures.contains(key))
+            .collect();
+        if targets.is_empty() {
+            continue;
+        }
+        if !matches!(
+            &set.placement.placement_type,
+            StructurePlacementType::RandomSpread(_)
+        ) {
+            continue;
+        }
+
+        let Some((position, key)) =
+            find_nearest_structure_start(origin, set, &targets, max_search_radius, generator)
+        else {
+            continue;
+        };
+        let dx = f64::from(position.0.x - origin.0.x);
+        let dz = f64::from(position.0.z - origin.0.z);
+        let distance_sq = dx * dx + dz * dz;
+        if nearest
+            .as_ref()
+            .is_none_or(|(_, _, current)| distance_sq < *current)
+        {
+            nearest = Some((position, key, distance_sq));
+        }
+    }
+
+    nearest.map(|(position, key, _)| (position, key))
+}
+
 /// Whether `key` lists `biome_id` among its biomes, which is how vanilla's
 /// flat structure state decides that a set may place in its single biome.
 fn structure_allows_biome(key: pumpkin_data::structures::StructureKeys, biome_id: u8) -> bool {

@@ -3,13 +3,17 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+use pumpkin_data::damage::DamageType;
+use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::potion::Effect;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
+use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
 use rand::RngExt;
 
 use crate::entity::{
@@ -22,12 +26,25 @@ use crate::entity::{
         swim::SwimGoal, tempt::TemptGoal, try_find_water::TryFindWaterGoal,
         wander_around::WanderAroundGoal,
     },
+    breath,
+    custom_sound::CustomSound,
     mob::{Mob, MobEntity},
-    passive::animal::Animal,
+    passive::{animal, animal::Animal, fish},
     player::Player,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::TROPICAL_FISH_BUCKET];
+const TOTAL_PLAYDEAD_TIME: i32 = 200;
+const AXOLOTL_TOTAL_AIR_SUPPLY: i32 = 6000;
+const REGEN_BUFF_BASE_DURATION: i32 = 100;
+const REGEN_BUFF_MAX_DURATION: i32 = 2400;
+const PLAYER_REGEN_DETECTION_RANGE: f64 = 20.0;
+const RARE_VARIANT_CHANCE: i32 = 1200;
+const BABY_DIMENSIONS: EntityDimensions = EntityDimensions {
+    width: 0.375,
+    height: 0.21,
+    eye_height: 0.09375,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
@@ -53,14 +70,37 @@ impl AxolotlVariant {
     }
 
     #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.strip_prefix("minecraft:").unwrap_or(name) {
+            "lucy" => Some(Self::Lucy),
+            "wild" => Some(Self::Wild),
+            "gold" => Some(Self::Gold),
+            "cyan" => Some(Self::Cyan),
+            "blue" => Some(Self::Blue),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub const fn id(self) -> i32 {
         self as i32
     }
 
     #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Lucy => "lucy",
+            Self::Wild => "wild",
+            Self::Gold => "gold",
+            Self::Cyan => "cyan",
+            Self::Blue => "blue",
+        }
+    }
+
+    #[must_use]
     pub fn random_variant() -> Self {
         let mut rng = rand::rng();
-        if rng.random_range(0..1200) == 0 {
+        if rng.random_range(0..RARE_VARIANT_CHANCE) == 0 {
             Self::Blue
         } else {
             match rng.random_range(0..4) {
@@ -80,6 +120,8 @@ pub struct AxolotlEntity {
     pub playing_dead: AtomicBool,
     pub from_bucket: AtomicBool,
     pub play_dead_ticks: AtomicI32,
+    pub air_supply: AtomicI32,
+    hurt_by_entity: AtomicBool,
 }
 
 impl AxolotlEntity {
@@ -93,12 +135,27 @@ impl AxolotlEntity {
             playing_dead: AtomicBool::new(false),
             from_bucket: AtomicBool::new(false),
             play_dead_ticks: AtomicI32::new(0),
+            air_supply: AtomicI32::new(AXOLOTL_TOTAL_AIR_SUPPLY),
+            hurt_by_entity: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(axolotl);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
+
+        mob_arc.refresh_dimensions();
+
+        {
+            let mut navigator = mob_arc
+                .mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *navigator = crate::entity::ai::pathfinder::Navigator::amphibious(false);
+            navigator
+                .set_pathfinding_malus(crate::entity::ai::pathfinder::node::PathType::Water, 0.0);
+        }
 
         {
             let mut goal_selector = mob_arc
@@ -203,6 +260,27 @@ impl AxolotlEntity {
         );
     }
 
+    fn start_playing_dead(&self) {
+        self.set_playing_dead(true);
+        self.play_dead_ticks
+            .store(TOTAL_PLAYDEAD_TIME, Ordering::Relaxed);
+        self.mob_entity.set_target(None);
+        self.mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stop();
+        self.get_mob_entity().living_entity.add_effect(Effect {
+            effect_type: &StatusEffect::REGENERATION,
+            duration: TOTAL_PLAYDEAD_TIME,
+            amplifier: 0,
+            ambient: false,
+            show_particles: true,
+            show_icon: true,
+            blend: false,
+        });
+    }
+
     #[must_use]
     pub fn is_from_bucket(&self) -> bool {
         self.from_bucket.load(Ordering::Relaxed)
@@ -216,19 +294,94 @@ impl AxolotlEntity {
             from_bucket,
         );
     }
+
+    fn refresh_dimensions(&self) {
+        let entity = self.get_entity();
+        let dimensions = if self.is_baby() {
+            BABY_DIMENSIONS
+        } else {
+            EntityDimensions {
+                width: entity.entity_type.dimension[0],
+                height: entity.entity_type.dimension[1],
+                eye_height: entity.entity_type.eye_height,
+            }
+        };
+        let pos = entity.pos.load();
+        entity
+            .bounding_box
+            .store(BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &dimensions));
+        entity.entity_dimension.store(dimensions);
+    }
+
+    fn handle_air_supply(&self, caller: &dyn EntityBase) {
+        breath::tick_mob_air_supply(
+            caller,
+            &self.air_supply,
+            AXOLOTL_TOTAL_AIR_SUPPLY,
+            !self.get_entity().is_in_water_or_rain(),
+            DamageType::DRY_OUT,
+        );
+    }
+
+    fn breed_variant(&self, partner: &dyn EntityBase) -> AxolotlVariant {
+        if rand::random_range(0..RARE_VARIANT_CHANCE) == 0 {
+            return AxolotlVariant::Blue;
+        }
+        let partner_variant = partner
+            .cast_any()
+            .downcast_ref::<AxolotlEntity>()
+            .map_or_else(|| self.get_variant(), AxolotlEntity::get_variant);
+        if rand::random_range(0..2) == 0 {
+            self.get_variant()
+        } else {
+            partner_variant
+        }
+    }
+
+    /// Vanilla `Axolotl.applySupportingEffects`: the player who helped an
+    /// axolotl kill something gets regeneration and loses mining fatigue.
+    fn apply_supporting_effects(&self, player: &Player) {
+        let current = player.get_effect(&StatusEffect::REGENERATION);
+        let previous = current.as_ref().map_or(0, |effect| effect.duration);
+        if current.is_none() || previous <= REGEN_BUFF_MAX_DURATION - 1 {
+            let duration = (REGEN_BUFF_BASE_DURATION + previous).min(REGEN_BUFF_MAX_DURATION);
+            player.add_effect(Effect {
+                effect_type: &StatusEffect::REGENERATION,
+                duration,
+                amplifier: 0,
+                ambient: false,
+                show_particles: true,
+                show_icon: true,
+                blend: false,
+            });
+        }
+        player.remove_effect(&StatusEffect::MINING_FATIGUE);
+    }
 }
 
 impl AgeableMob for AxolotlEntity {
     fn get_ageable_data(&self) -> &AgeableData {
         &self.ageable_data
     }
+
+    fn age_boundary_reached(&self) {
+        self.refresh_dimensions();
+    }
 }
 
 impl Animal for AxolotlEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_AXOLOTL_FOOD)
-            || item_stack.item == &Item::TROPICAL_FISH_BUCKET
-            || item_stack.item == &Item::TROPICAL_FISH
+    }
+}
+
+impl CustomSound for AxolotlEntity {
+    fn death_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityAxolotlDeath)
+    }
+
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityAxolotlHurt)
     }
 }
 
@@ -241,12 +394,18 @@ impl Mob for AxolotlEntity {
         Some(self)
     }
 
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.write_ageable_nbt(nbt);
         nbt.put_int("Variant", self.get_variant().id());
         nbt.put_bool("FromBucket", self.is_from_bucket());
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.read_ageable_nbt(nbt);
         if let Some(variant) = nbt.get_int("Variant") {
             self.set_variant(AxolotlVariant::from_id(variant));
         }
@@ -259,7 +418,7 @@ impl Mob for AxolotlEntity {
         &self.mob_entity
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    fn mob_tick(&self, caller: &dyn EntityBase) {
         self.ageable_ai_step();
 
         let play_dead_ticks = self.play_dead_ticks.load(Ordering::Relaxed);
@@ -270,6 +429,93 @@ impl Mob for AxolotlEntity {
                 self.set_playing_dead(false);
             }
         }
+
+        if !self.mob_entity.is_no_ai() {
+            self.handle_air_supply(caller);
+        }
+    }
+
+    fn custom_travel(&self, caller: &dyn EntityBase) -> bool {
+        if !self.is_playing_dead() {
+            return false;
+        }
+        // Vanilla stops both controls while playing dead, so the AI's movement
+        // input is ignored and only drag moves the body.
+        let living = &self.mob_entity.living_entity;
+        let entity = &living.entity;
+        let mut velocity = entity.velocity.load();
+        if entity.touching_water.load(Ordering::Relaxed) {
+            velocity = velocity * 0.9;
+        } else {
+            velocity.x *= 0.91;
+            velocity.y -= caller.get_gravity();
+            velocity.z *= 0.91;
+        }
+        entity.velocity.store(velocity);
+        living.make_move(caller);
+        true
+    }
+
+    fn can_attack(&self, target: &dyn EntityBase) -> bool {
+        !self.is_playing_dead() && self.mob_entity.living_entity.can_attack(target)
+    }
+
+    fn pre_damage(&self, _damage_type: DamageType, source: Option<&dyn EntityBase>) -> bool {
+        self.hurt_by_entity
+            .store(source.is_some(), Ordering::Relaxed);
+        true
+    }
+
+    fn modify_incoming_damage(&self, amount: f32, _damage_type: DamageType) -> f32 {
+        let living = &self.mob_entity.living_entity;
+        let health = living.health.load(Ordering::Relaxed);
+        let max_health = living.get_max_health();
+        if !self.mob_entity.is_no_ai()
+            && rand::random_range(0..3) == 0
+            && ((rand::random_range(0..3) as f32) < amount || health / max_health < 0.5)
+            && amount < health
+            && self.get_entity().is_in_water()
+            && self.hurt_by_entity.load(Ordering::Relaxed)
+            && !self.is_playing_dead()
+        {
+            self.start_playing_dead();
+        }
+        amount
+    }
+
+    fn on_attack(&self, target: &dyn EntityBase) {
+        if target.get_entity().is_alive() {
+            return;
+        }
+        let Some(target_living) = target.get_living_entity() else {
+            return;
+        };
+        let player_id = target_living.last_hurt_by_player_id.load(Ordering::Relaxed);
+        if player_id == 0 {
+            return;
+        }
+        let entity = self.get_entity();
+        let world = entity.world.load();
+        let Some(player) = world.get_player_by_id(player_id) else {
+            return;
+        };
+        let distance_sq = entity
+            .pos
+            .load()
+            .squared_distance_to_vec(&player.get_entity().pos.load());
+        if distance_sq <= PLAYER_REGEN_DETECTION_RANGE * PLAYER_REGEN_DETECTION_RANGE {
+            self.apply_supporting_effects(&player);
+        }
+    }
+
+    fn on_breed_offspring(&self, partner: &dyn EntityBase, baby: &dyn EntityBase) {
+        let Some(baby) = baby.cast_any().downcast_ref::<AxolotlEntity>() else {
+            return;
+        };
+        baby.set_variant(self.breed_variant(partner));
+        baby.mob_entity
+            .persistence_required
+            .store(true, Ordering::Relaxed);
     }
 
     fn mob_init_data_tracker(&self) {
@@ -292,6 +538,12 @@ impl Mob for AxolotlEntity {
         );
     }
 
+    fn mob_set_variant_name(&self, name: &str) {
+        if let Some(variant) = AxolotlVariant::from_name(name) {
+            self.set_variant(variant);
+        }
+    }
+
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         let item = item_stack.get_item();
 
@@ -310,13 +562,62 @@ impl Mob for AxolotlEntity {
                     return false;
                 }
             }
-            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+            crate::item::items::bucket::fill_mob_bucket_stack(
+                item_stack,
+                player,
+                &Item::AXOLOTL_BUCKET,
+                self,
+            );
             let pos = entity.pos.load();
             world.play_sound(Sound::ItemBucketFillAxolotl, SoundCategory::Neutral, &pos);
             entity.remove();
             return true;
         }
 
-        self.animal_interact(player, item_stack, Sound::EntityAxolotlIdleAir)
+        let bucket_food = item == &Item::TROPICAL_FISH_BUCKET;
+        let interacted = self.animal_interact(player, item_stack, Sound::EntityAxolotlIdleAir);
+        if interacted && bucket_food {
+            animal::give_bucket_food_remainder(player, item_stack);
+        }
+        interacted
+    }
+
+    fn set_from_bucket(&self, from_bucket: bool) {
+        AxolotlEntity::set_from_bucket(self, from_bucket);
+    }
+
+    fn requires_custom_persistence(&self) -> bool {
+        self.is_from_bucket()
+    }
+
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        !self.is_from_bucket() && (**self.get_entity().custom_name.load()).is_none()
+    }
+
+    fn check_spawn_obstruction(&self, world: &crate::world::World) -> bool {
+        fish::check_spawn_obstruction(self, world)
+    }
+
+    fn mob_is_pushed_by_fluids(&self) -> bool {
+        false
+    }
+
+    fn get_walk_target_value(&self, _pos: &pumpkin_util::math::position::BlockPos) -> f32 {
+        0.0
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        if self.is_playing_dead() {
+            return None;
+        }
+        Some(if self.get_entity().is_in_water() {
+            Sound::EntityAxolotlIdleWater
+        } else {
+            Sound::EntityAxolotlIdleAir
+        })
+    }
+
+    fn get_ambient_sound_interval(&self) -> i32 {
+        120
     }
 }
