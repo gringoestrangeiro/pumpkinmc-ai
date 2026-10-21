@@ -30,8 +30,8 @@ use crate::entity::{
         active_target::ActiveTargetGoal, go_to_wanted_item::GoToWantedItemGoal,
         look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
         melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal,
-        ranged_crossbow_attack::RangedCrossbowAttackGoal, revenge::RevengeGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        ranged_crossbow_attack::RangedCrossbowAttackGoal, revenge::RevengeGoal,
+        spear_use::SpearUseGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity, crossbow_attack_mob::CrossbowAttackMob, equipment::RegionalDifficulty,
@@ -131,6 +131,7 @@ impl PiglinEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(OpenDoorGoal::new(true)));
             goal_selector.add_goal(2, Box::new(GoToWantedItemGoal::new(mob_arc.clone(), 1.0)));
+            goal_selector.add_goal(3, Box::new(SpearUseGoal::new()));
             goal_selector.add_goal(3, Box::new(MeleeAttackGoal::new(1.0, true)));
             goal_selector.add_goal(4, Box::new(RangedCrossbowAttackGoal::new(1.0, 8.0)));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
