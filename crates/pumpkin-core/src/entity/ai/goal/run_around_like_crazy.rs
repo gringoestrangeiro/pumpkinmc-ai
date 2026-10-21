@@ -2,7 +2,11 @@ use super::{Controls, Goal};
 use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::mob::Mob;
+use crate::entity::passive::horse::AbstractHorse;
+use pumpkin_data::entity::EntityStatus;
+use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 pub struct RunAroundLikeCrazyGoal {
     goal_control: Controls,
@@ -23,11 +27,58 @@ impl RunAroundLikeCrazyGoal {
             pos_z: 0.0,
         }
     }
+
+    /// Vanilla `RunAroundLikeCrazyGoal.tick`: roll taming, then buck the rider.
+    fn buck_rider(mob: &dyn Mob) {
+        let entity = mob.get_entity();
+        let Some(horse) = mob.as_abstract_horse() else {
+            return;
+        };
+
+        let passenger = entity
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first()
+            .cloned();
+        let Some(passenger) = passenger else {
+            return;
+        };
+
+        if let Some(player) = passenger.get_player() {
+            let temper = horse.get_temper();
+            let max_temper = horse.get_max_temper();
+            let mut rng = mob.get_random();
+            if max_temper > 0 && rng.random_range(0..max_temper) < temper {
+                horse.tame_with_name(player);
+                return;
+            }
+            horse.modify_temper(5);
+        }
+
+        let passenger_ids: Vec<i32> = entity
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|passenger| passenger.get_entity().entity_id)
+            .collect();
+        for passenger_id in passenger_ids {
+            entity.remove_passenger(passenger_id);
+        }
+
+        horse.make_mad();
+        entity.world.load().broadcast_entity_event(
+            entity,
+            EntityStatus::TamingFailed,
+            Some(ActorEventID::TamingFailed),
+        );
+    }
 }
 
 impl Goal for RunAroundLikeCrazyGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if mob.is_tamed() || !mob.get_entity().has_passengers() {
+        if mob.is_mob_controlled() || mob.is_tamed() || !mob.get_entity().has_passengers() {
             return false;
         }
 
@@ -59,6 +110,15 @@ impl Goal for RunAroundLikeCrazyGoal {
             Vector3::new(self.pos_x, self.pos_y, self.pos_z),
             self.speed_modifier,
         ));
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        if !mob.is_tamed() {
+            let tick_delay = self.get_tick_count(50);
+            if tick_delay > 0 && mob.get_random().random_range(0..tick_delay) == 0 {
+                Self::buck_rider(mob);
+            }
+        }
     }
 
     fn controls(&self) -> Controls {

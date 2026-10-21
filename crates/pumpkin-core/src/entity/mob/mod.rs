@@ -1075,6 +1075,19 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
+    fn as_abstract_horse(&self) -> Option<&dyn crate::entity::passive::horse::AbstractHorse> {
+        None
+    }
+
+    fn as_caravan_llama(&self) -> Option<&dyn crate::entity::passive::llama::LlamaCaravan> {
+        None
+    }
+
+    /// Vanilla `Mob.isMobControlled`: only mobs ridden by another mob override it.
+    fn is_mob_controlled(&self) -> bool {
+        false
+    }
+
     fn as_patrolling_monster(&self) -> Option<&dyn patrol::PatrollingMonster> {
         None
     }
@@ -1383,6 +1396,9 @@ pub trait Mob: EntityBase + Send + Sync {
     fn is_tamed(&self) -> bool {
         self.as_tamable()
             .is_some_and(crate::entity::passive::tamable::TamableAnimal::is_tame)
+            || self
+                .as_abstract_horse()
+                .is_some_and(crate::entity::passive::horse::AbstractHorse::is_horse_tamed)
     }
 
     fn get_base_experience_reward(&self) -> u32 {

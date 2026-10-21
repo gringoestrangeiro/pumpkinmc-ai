@@ -61,7 +61,18 @@ impl JavaClient {
                 }
             }
             Action::StartHorseJump | Action::StopHorseJump => {
-                debug!("todo");
+                if let Some(vehicle) = player.get_entity().get_vehicle()
+                    && let Some(mob) = vehicle.get_mob()
+                    && let Some(horse) = mob.as_abstract_horse()
+                {
+                    if command.action == Action::StartHorseJump {
+                        if horse.can_jump() && command.jump_boost.0 > 0 {
+                            horse.handle_start_jump(command.jump_boost.0);
+                        }
+                    } else {
+                        horse.handle_stop_jump();
+                    }
+                }
             }
             // Vanilla `Player#tryToStartFallFlying`.
             Action::StartFlyingElytra => {
