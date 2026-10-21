@@ -2,9 +2,9 @@
 
 **Parity target:** Java Edition **26.3** (`CURRENT_MC_VERSION` / `LOWEST_SUPPORTED_MC_VERSION` in `crates/pumpkin-data/src/generated/packet.rs`) and Bedrock Edition **1.26.51** (protocol 2193 in `crates/pumpkin-world/src/lib.rs`).
 
-**Snapshot date:** 2026-10-20.
+**Snapshot date:** 2026-10-21.
 
-**Repository state:** fork `fork-ai-main` code tip `1b7fbeb90`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 3 is complete except for Beehive & Bee Nest; the remaining work is the 54 entity rows plus Beehive, then live checks. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` code tip `7948638c2`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 4 is complete in the theoretical count: all 54 remaining entity rows and Beehive & Bee Nest are closed, for 562/562. No Wave 1-4 row is live-verified yet; the checks are in `LIVE_TEST.md`. The working tree keeps only the unrelated `typos.toml` edit.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -2733,6 +2733,10 @@ Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: W
 
 Wave 3 is complete except for Beehive & Bee Nest. Closed in this wave: Chests, Lily Pad, Infested Blocks, Conduit, Dragon Egg, Sea Pickles, Fire, Mace, Elytra, Dispenser, Sculk Catalyst, Pistons, Piston Head, Moving Piston, the redstone piston/block-swapping row, world moved-block persistence, `/locate`, world saving, plus the `/jfr` and 1.8 combat documented non-goals. That is **20 rows** and moves the theoretical total to **507 / 55 / 0 = 90.2%**. The remaining non-entity row is Beehive & Bee Nest, which depends on the Bee entity row.
 
+#### Wave 4 close-out (2026-10-21)
+
+Wave 4 closes the final 55 rows in the theoretical count: 54 entities plus Beehive & Bee Nest. The brain/POI, hostile AI, riding, boss, mannequin, dragon-fireball and aquatic/passive/leftover batches are merged and reviewed. Theoretical total: **562 / 0 / 0 = 100%**. The verified total remains **415 / 143 / 4 = 73.8%** until the checks in `LIVE_TEST.md` run. The close-out evidence is the Wave 4 table in `PARITY.md`; the code never claims a live pass.
+
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
 - `W2` mob tasks in parallel by family.
@@ -3224,7 +3228,7 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Wave 1 and Wave 2 have since closed 72 more rows, and Wave 3 closed 20, so the current open list is **55 partial + 0 planned** in `PARITY.md`; treat a row below as open only after checking that file. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Waves 1-3 closed 92 more rows, and Wave 4 closed the final 55, so the current theoretical open list is **0 partial + 0 planned** in `PARITY.md`. Treat this table as historical and check `PARITY.md` for the current status. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |

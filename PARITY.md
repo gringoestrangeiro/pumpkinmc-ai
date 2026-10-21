@@ -1,30 +1,30 @@
 # Parity Tracking
 
-**Last updated:** 2026-10-20
-**Fork code commit:** `1b7fbeb90`
+**Last updated:** 2026-10-21
+**Fork code commit:** `7948638c2`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
 
 The public PumpkinMC tracker had **564 entries: 402 done, 155 partial, 7 planned**. Two of those planned rows are `/publish` and `/unpublish`, which vanilla registers only for the integrated server. They are excluded from the dedicated-server target, so the in-scope baseline is **562 entries: 402 done, 155 partial, 5 planned**, or **71.5%**.
 
-This fork now has **507 done, 55 partial, 0 planned** in the **theoretical code-complete** count, or **90.2%**. That count includes Wave 1, Wave 2, and Wave 3 code, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
+This fork now has **562 done, 0 partial, 0 planned** in the **theoretical code-complete** count, or **100%**. That count includes Wave 1 through Wave 4 code, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
 
 | Metric | Upstream | This fork (theoretical) | Delta |
 | :--- | ---: | ---: | ---: |
 | In-scope tracker entries | 562 | 562 | 0 |
-| Done | 402 | 507 | +105 |
-| Partial | 155 | 55 | -100 |
+| Done | 402 | 562 | +160 |
+| Partial | 155 | 0 | -155 |
 | Planned | 5 | 0 | -5 |
-| Strict completion, done only | 71.5% | 90.2% | +18.7 pp |
-| Weighted completion, partial = 0.5 | 85.3% | 95.1% | +9.8 pp |
+| Strict completion, done only | 71.5% | 100% | +28.5 pp |
+| Weighted completion, partial = 0.5 | 85.3% | 100% | +14.7 pp |
 
 ## What the percentage means
 
 There are two numbers:
 
-- **Theoretical:** the row's code is implemented and reviewed, but no live client or bot has run the check yet. The 86.5% above is this number, and it is the target for the parity waves.
-- **Verified:** the row's live check has passed. Wave 1 and Wave 2 have not run live yet, so the last verified baseline is still **415 done, 143 partial, 4 planned (73.8%)**. The live checks are recorded in the Wave sections and will move into `LIVE_TEST.md` when theoretical parity is complete.
+- **Theoretical:** the row's code is implemented and reviewed, but no live client or bot has run the check yet. The 100% above is this number, and it is the target for the parity waves.
+- **Verified:** the row's live check has passed. No Wave 1-4 code has run live yet, so the last verified baseline is still **415 done, 143 partial, 4 planned (73.8%)**. The checks are recorded in `LIVE_TEST.md`; the theoretical count does not claim they passed.
 
 The tracker's green entries still mean only "an implementation source exists". The 1.0 roadmap treats every green entry as unverified until the `T01` audit, and two entries were green while the behavior did not work:
 
@@ -33,22 +33,22 @@ The tracker's green entries still mean only "an implementation source exists". T
 
 Commit `798734a3a` repairs both paths. They stay counted as done, but they now have code, game rules, and dispatch tests behind them.
 
-**55 tracker rows are still open** (all partial). The theoretical percentage is not a claim that those rows or the 507 done rows behave correctly in-game.
+**No in-scope tracker row is open in the theoretical count.** The 54 entity rows and Beehive & Bee Nest closed in Wave 4. The 100% figure is not a claim that any row behaves correctly in-game; it still needs the live checks in `LIVE_TEST.md`.
 
 ## Per-category status
 
 | Category | Entries | Done | Partial | Planned | Done % |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Blocks | 196 | 195 | 1 | 0 | 99.5% |
-| Entities | 160 | 106 | 54 | 0 | 66.3% |
+| Blocks | 196 | 196 | 0 | 0 | 100% |
+| Entities | 160 | 160 | 0 | 0 | 100% |
 | Commands | 94 | 94 | 0 | 0 | 100% |
 | Items | 55 | 55 | 0 | 0 | 100% |
 | Redstone | 27 | 27 | 0 | 0 | 100% |
 | World | 16 | 16 | 0 | 0 | 100% |
 | Combat | 14 | 14 | 0 | 0 | 100% |
-| **Total** | **562** | **507** | **55** | **0** | **90.2%** |
+| **Total** | **562** | **562** | **0** | **0** | **100%** |
 
-Entities are still the dominant gap. They are 54 of the 55 open rows; the only non-entity row left is Beehive & Bee Nest.
+No tracker category has an open theoretical row. The live-verification backlog is still the 143 partial rows in the verified baseline.
 
 ## Rows closed or repaired by this fork
 
@@ -70,14 +70,9 @@ Entities are still the dominant gap. They are 54 of the 55 open rows; the only n
 | Blocks / Fire & Sculk / Sculk Shrieker | done, unverified | Vibration dispatch, shrieker response | `798734a3a` |
 | Redstone / Power & Sensors / Sculk sensors, shriekers and calibrated sensors | done, unverified | Frequency table, listener radius, calibrated filter, step path | `798734a3a` |
 
-The Warden row remains partial. `798734a3a` adds vibration hearing and `a227a7212` adds anger management, but sniffing and the sonic boom are still missing.
+At that point the Warden row was still partial. Wave 2 later added sniffing and the sonic boom; the Wave 4 close-out supersedes the old status.
 
-Several rows improved without closing:
-
-- Enderman: `4ebb09882` and `7633c4a8b` fix target-death aggression and carried-block placement; the row still needs a full audit.
-- Ender Dragon: `2a4fd3b44` registers the hitbox parts; part-based contact/knockback is still untested.
-- Chest boats: `77ef9dd4c` adds the inventory and container interaction; water-status/buoyancy physics is still missing, so the 11 chest-boat rows stay partial.
-- Fish: `863285f7a` fixes swimming, panic, and land flopping; schooling and drying out remain, so Cod, Salmon, and Tropical Fish stay partial.
+Several rows improved in earlier waves before their later close-out. The current status is the table above; the historical Wave 1-3 notes below keep their original evidence labels.
 
 ## Wave 1 (2026-10-20)
 
@@ -87,15 +82,15 @@ Wave 1 targets one ported fix and a set of rows the tracker already lists as ope
 | :--- | :--- | :--- | :--- |
 | Commands / `/locate` height bug | fixed, verify-only | Port of upstream PR `#4029` in `crates/pumpkin-world/src/generation/generator/structure_finder.rs`: located starts now use `NoiseHeightSampler` and the generator's biome supplier, matching `set_structure_starts` in `proto_chunk.rs` and vanilla `ChunkGenerator.getStructureGeneratingAt`. The existing regression test at `structure_finder.rs:439` compares locate-first and generation-first starts. | `/locate structure minecraft:village_snowy` on ungenerated chunks, teleport, confirm the village sits on the surface and not under water. |
 | Items / Name Tag | done, verify-only | `item/items/name_tag.rs:20-34` sets `CustomName`, sets `PersistenceRequired` for mobs and decrements unless creative, matching vanilla `NameTagItem.interactLivingEntity`; vanilla's creative path uses a copy of the stack in `Player.interactOn:806-808`, so the guard is equivalent. | Name a mob, relog, confirm the name and persistence survive, and the tag is consumed in survival but not creative. |
-| Blocks / Shulker Box | partial | `block/blocks/shulker_box.rs:73-100` opens the container, but there is no vanilla `canOpen` lid-space check and no `PiglinAi.angerNearbyPiglins` call (`ShulkerBoxBlock.java:68-82`). The tracker premise is inverted: vanilla returns `true` when the animation is not `CLOSED`, then checks for a clear lid. | Place a solid block in the lid space; vanilla refuses to open, Pumpkin currently opens. |
-| Blocks / Structure Block | done for the tracker gap, partial as a block | The tracker's "capture/save/load execution" gap is implemented: save and load actions work (`net/java/play/set_structure_block.rs:146-171`, helpers at `178-284`) and the block entity NBT round-trips. Still missing: corner-mode `ACTION_SCAN_AREA` and redstone-powered execution; `block/blocks/structure_block.rs:18-30` only opens the GUI. | Save a structure, load it elsewhere, then test corner DETECT and a powered structure block. |
-| Commands / `/locate` coverage | partial | Structure, biome and POI branches exist (`command/commands/locate.rs`). Datapack structure ids are rejected (`wanted_structures` requires `is_vanilla()`), structure sets disabled through `enabled_structure_sets` are not filtered, flat and custom generators return not found (`structure_finder.rs:143`), and biome sampling uses a different ring order than vanilla `BlockPos.spiralAround` (`biome_finder.rs:84-110`). | Live check of all three branches, plus a datapack structure and a superflat world. |
+| Blocks / Shulker Box | done, verify-only | `block/blocks/shulker_box.rs:82` now runs the vanilla `canOpen` lid-space check (`128-144`) before opening, and `:101` calls `PiglinAi::anger_nearby_piglins` for the opening player. | Place a solid block in the lid space and confirm the box refuses to open; open one near a piglin and confirm anger. |
+| Blocks / Structure Block | done for the tracker gap; documented deviation | The tracker's "capture/save/load execution" gap is implemented: save and load actions work (`net/java/play/set_structure_block.rs:146-171`, helpers at `178-284`) and the block entity NBT round-trips. Corner-mode `ACTION_SCAN_AREA` and redstone-powered execution are still missing; see **Documented deviations**. | Save a structure, load it elsewhere, then confirm the documented corner/redstone limitation. |
+| Commands / `/locate` coverage | done, verify-only | Wave 3 (`1b7fbeb90`) added `enabled_structure_sets` filtering, flat and custom generator searches, and the generator's biome supplier; `command/commands/locate.rs` now covers structure, biome and POI branches. Unknown non-vanilla structure ids remain a documented deviation. | Live check of structure, biome and POI branches on a normal world and a superflat world. |
 | World / loading | done, verify-only | `level.rs:150-176` resolves canonical `dimensions/<namespace>/<name>` and falls back to `region`, `DIM-1`, `DIM1`; both paths have tests at `level.rs:1043-1096`. `world_info/anvil.rs:361-420` reads `level.dat`, checks data and level versions, and reads the seed. | Import a vanilla 26.3 world in both the canonical and legacy layouts. |
-| World / saving | partial, verify-only | `save_all` (`server/mod.rs:595-618`) writes world info, players and advancements, then calls `world.save()`. `stop` saves block entities and POI before `level.shutdown` (`world/mod.rs:599-624`). `save-all flush` uses the same executor as `save-all` and does not wait for chunk writes, and `add_block_entity_nbt` still drops writes for chunks that are no longer loaded (`world/mod.rs:6373-6389`). | A/B `#3902`: fresh area, chest with items, `stop` without `save-all`, restart, reopen the chest. |
+| World / saving | done, verify-only | `save_all` (`server/mod.rs:595-618`) writes world info, players and advancements, then calls `world.save()`. `save-all flush` waits on `world.flush()` (`server/mod.rs:599-632`), and `world/mod.rs:620` flushes block-entity NBT for chunks that unloaded before the save. | A/B `#3902`: fresh area, chest with items, `stop` without `save-all`, restart, reopen the chest. |
 
 ### Wave 1 code merged, live check pending
 
-The Wave 1 code merge (`bf5edaf97`) implements 49 tracker rows. They stay **partial** in the headline until the live checks pass. If every check below passes, the counts become **464 done / 94 partial / 4 planned = 82.6%**; the current verified headline stays 415 / 143 / 4.
+The Wave 1 code merge (`bf5edaf97`) implemented 49 tracker rows at the time. Later waves closed the remaining Wave 1 gaps: Shulker Box, `/locate` coverage and save flushing are now in the theoretical count, and Structure Block's tracker gap is done with the corner/redstone limitation recorded in **Documented deviations**. The live checks below still apply; the verified headline remains 415 / 143 / 4 until they pass.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
@@ -103,11 +98,11 @@ The Wave 1 code merge (`bf5edaf97`) implements 49 tracker rows. They stay **part
 | Zombie, Zoglin, Evoker, Vindicator, Pillager, Husk, Wolf, Armadillo, Polar Bear, Stray, Endermite, Wither Skeleton, Parched | 13 | Baby zombie speed/XP, living targets, illager revenge/Johnny, husk hunger and sun immunity, wolf sit/leap, armadillo roll, polar-bear cub defence, stray/parched arrow effects, endermite persistence, wither-skeleton equipment/targets. | Bot fights and summon checks listed in the Wave 1 handoff; compare against vanilla behavior in `PARITY.md` notes. |
 | Note Block (blocks + redstone), Powered Rail, Activator Rail, Pumpkin & Melon Stems, Chiseled Bookshelf, Bell, Jukebox, Ender Chest, Big Dripleaf, Sugar Cane, Campfire | 12 | Game events, rail dedupe, stem support tag, used-item statistic, bell/jukebox events, piglin anger, projectile tilt/ignition, fluid-aware cane support. | Note-block game event, 8-rail power boundary, fruit on podzol/moss/mud, bookshelf stat, bell/sculk event, comparator update, piglin anger, projectile tilt/ignition, cane beside water. |
 
-Name Tag and world loading are already listed as done/verify-only above. Structure Block was already counted done in the previous batch. The remaining Wave 1 checks are `/locate` live coverage and the `#3902` save A/B; both stay partial until they pass.
+Name Tag, world loading, Shulker Box, `/locate` coverage and world saving are listed as done/verify-only above. Structure Block is done for the tracker gap with its documented deviation. The remaining Wave 1 live checks are the `/locate` branches and the `#3902` save A/B; the theoretical count treats them as done, the verified count does not.
 
 ## Wave 2 (2026-10-20)
 
-Wave 2 closes 22 more rows in the theoretical count and leaves the live checks below. It also adds the remaining `/version` and `/debug function` command behavior, which is not a tracker row change.
+Wave 2 closes 23 more rows in the theoretical count and leaves the live checks below. It also adds the remaining `/version` and `/debug function` command behavior, which is not a tracker row change.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
@@ -117,9 +112,9 @@ Wave 2 closes 22 more rows in the theoretical count and leaves the live checks b
 | Fishing Rod | 1 | Nested loot tables, parent weights/quality, open-water condition, `set_damage`/`set_potion`; bobber uses the real distribution. | Fish in open water and a cramped pond, with and without Luck of the Sea. |
 | Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland, Daylight Detector (blocks + redstone) | 10 | Long hatch delays; compass inventory tick; tripwire events/shears/filtering; bed wake; shulker `canOpen`/piglin anger; entity push on path/farmland; player-source daylight event. | Hatch tadpoles; bind/break lodestone; tripwire/shears; sleep/wake; shulker lid; path/farmland lift; sculk hears daylight detector. |
 
-The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity Fishing Bobber (the same fishing-loot fix as Fishing Rod), 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball remains deferred.
+The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity Fishing Bobber (the same fishing-loot fix as Fishing Rod), 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball closed in Wave 4.
 
-## Wave 3 (in progress)
+## Wave 3 (complete theoretically)
 
 | Row | Work | Live check |
 | :--- | :--- | :--- |
@@ -138,6 +133,24 @@ The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity F
 | `/locate` | Namespaced ids by path, enabled structure sets, flat/custom generator handling, vanilla biome spiral order. | Compare structure/biome/POI coordinates with vanilla in noise and flat worlds. |
 | World saving | `save-all flush` waits for writes; deferred block-entity NBT for unloaded chunks; shutdown ordering. | `#3902` chest 10k blocks out, `/stop`, restart; `/save-all flush` feedback timing. |
 | `/jfr`, 1.8 combat mode | Documented non-goals; see **Documented deviations**. | Documentation only. |
+
+## Wave 4 (2026-10-21)
+
+Wave 4 closes the last 55 open tracker rows in the theoretical count: the 54 entity rows and Beehive & Bee Nest. None of these rows is live-verified yet; the checks are in `LIVE_TEST.md` §1 and §2.
+
+| Cluster | Rows | Evidence | Live check |
+| :--- | ---: | :--- | :--- |
+| Brain/POI and passive interaction | 7 | Allay item transfer, Bee hive/pollination/crop growth, Copper Golem transport/weathering/statue, Villager schedule/breeding, Iron Golem village defence, Wandering Trader ambient/trade, Zombie Villager village movement. Commits `99738ea01`, `f184388a6`, `2cf0fe82a`. | P65, P66, P71, P80, P87, P96; A21, A24, A26, A31 |
+| Wave 4a hostile AI | 14 | Wither autonomous primary-head targeting, Ender Dragon part dimensions/contact, Blaze home/retreat, Breeze wind charge/jump/slide, Spider/Cave Spider leap and armadillo avoidance, Vex charge/owner target/lifetime, Creaking freeze/attack/portal handling, Creeper cloud, Drowned trident/water movement, Illusioner bow/blindness/mirror, Ravager roar/stun, Witch raider healing, Hoglin repellent/retreat. Commits `27f475eec`, `27c741082`, `6ffb321f6`. | P67-P70, P72, P73, P76, P77, P79, P84, P88, P96; A25 |
+| Riding and mount-family | 9 | Camel/Camel Husk sitting/dashing, Horse taming/gear/jump, Donkey/Mule/Llama/Trader Llama chest inventory and caravan, Skeleton Horse trap, Zombie Horse riding. Commit `6a616b58d`. | P69, P74, P78, P81, P85, P90; A22 |
+| Boss and Nether objectives | 3 | Piglin Brute home memory, Piglin/Zombified Piglin spear use, Wither and Ender Dragon follow-ups. Commits `87c12fba1`, `b12493295`. | P83, P89; A25 |
+| Mannequin and decoration | 1 | Mannequin entity, profile metadata, pose/description/immovable NBT, registration. Commits `94a3a19a2`, `d56b1f271`. | P82; A23 |
+| Dragon Fireball | 1 | Gravity-free projectile, dragon-breath area cloud, instant damage, splash event. Commit `253b128a7`. | P75 |
+| Wave 4b aquatic | 7 | Axolotl, Cod, Dolphin, Nautilus, Salmon, Tropical Fish and Zombie Nautilus parity pass. | P91, P92; A27 |
+| Wave 4b passive A | 5 | Fox, Frog, Goat, Rabbit and Strider parity pass. | P93; A28 |
+| Wave 4b passive B | 5 | Happy Ghast, Panda, Parrot, Sniffer and Turtle parity pass. | P94; A29 |
+| Wave 4b leftovers | 2 | Experience Bottle and Tadpole parity pass. | P95; A30 |
+| Beehive & Bee Nest | 1 | Hive occupant ticks, honey, emergency release, campfire sedation, silk-touch item components. Commit `99738ea01`. | P66; A31 |
 
 ## Command parity audit
 
@@ -170,7 +183,7 @@ Pumpkin extras that are not parity gaps: `/pumpkin`, `/plugin`, `/plugins`, `/tp
 
 ### Effect on the tracker
 
-The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. Porting `/perf` moves one planned command row to done. The theoretical total is **487/562 = 86.7%**; the verified baseline is **415/562 = 73.8%**. Verifying `/locate` would make the verified total **416/562 = 74.0%**, and treating `/jfr` as a non-goal would give **416/561 = 74.2%**.
+The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. The theoretical total is **562/562 = 100%**; the verified baseline is **415/562 = 73.8%**. Treating `/jfr` as a non-goal does not change the denominator recorded here; it is listed as a documented deviation instead.
 
 ## How to update this file
 
@@ -180,15 +193,9 @@ The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562
 4. Recompute the counts and percentages. Keep the date and fork commit current.
 5. Keep the weighted number as a secondary signal. The primary number is done-only, because that is what the public 71% figure uses.
 
-## Open gaps by workstream
+## Remaining work
 
-The 55 partial rows are mapped to roadmap tasks in Appendix B. The largest cluster is:
-
-- **Entities:** 54 partial rows, mostly mob AI, pathfinding, and missing interactions.
-- **Blocks:** 1 partial row (Beehive & Bee Nest, which depends on the Bee entity row).
-- Commands, items, redstone, world and combat have no open rows; `/jfr` and 1.8 combat mode are documented non-goals.
-
-Closing block and entity rows is the fastest way to move the strict percentage. Closing an entity row is worth about 0.18 pp; closing the whole entity gap is worth about 9.6 pp (54 / 562).
+No tracker row remains open in the theoretical count. The remaining work is live verification: the Wave 1-4 checks in `LIVE_TEST.md`, starting with the 143 rows still partial in the verified baseline. Known residual behaviors are listed under **Documented deviations**.
 
 ## Documented deviations
 
@@ -196,3 +203,13 @@ Closing block and entity rows is the fastest way to move the strict percentage. 
 | :--- | :--- | :--- |
 | Commands / `/jfr` | non-goal | JVM Flight Recorder is a JVM tool. The Rust server has no JVM; vanilla 26.3 registers only `start` and `stop`. Operators can use JVM flags or `jcmd` on a JVM process. |
 | Combat / 1.8 combat mode | non-goal | Not a vanilla 26.3 feature. Pumpkin targets 26.3 combat; a legacy mode would be a plugin or a separate configurable game mode, not parity behavior. |
+| Horse-family mount GUI | deviation | Mount screens for Horse, Donkey, Mule, Llama, Trader Llama, Camel and Nautilus are wired and chest storage is real. The saddle slot is synthetic because saddle state is a flag, horse body armor is stored but does not reduce damage, and vanilla's per-slot validity/`isActive` filters are not reproduced. P74/P81/P90 and A22 cover the supported paths. |
+| Entities / Hostile / Creaking | deviation | Freeze, attack and portal behavior is implemented. Breaking the Creaking Heart does not run vanilla's `removeProtector` teardown; the bound Creaking loses protection on its next heart check instead. P72 covers the live check. |
+| Ageable mobs / Golden Dandelion | deviation | `AgeLocked` is stored and ageing is suppressed while locked, but right-clicking a baby with a Golden Dandelion does not toggle the lock, reset its age or emit the growth particles. The horse family, panda and camel rows are otherwise complete. |
+| Combat / thrown projectiles | deviation | Server-owned projectile motion works, but vanilla's `KnownMovement` history is not recorded, so checks that compare a projectile's recent movement are not reproduced. |
+| Entities / Experience Orb | deviation | Orbs merge and despawn, but do not call vanilla's `unstuckIfPossible` when they are embedded in a block. |
+| Entities / Area Effect Cloud | deviation | Lingering clouds tick and apply effects, but their owner UUID and persistent effect NBT are not saved or reloaded. |
+| Blocks / Structure Block corner scan and redstone | deviation | Save, load and capture work, but corner-mode `ACTION_SCAN_AREA` and redstone-powered execution are not implemented; the block only opens its GUI. The tracker gap itself is closed by the save/load path. |
+| Moving piston drops and collision shape | verify-only | The Wave 3 piston port keeps moved-block persistence and the player-pass-through break path, but the full drop/collision-shape comparison against vanilla is still a live check (P57-P60). |
+| Elytra fly-into-wall damage | verify-only | Fall-flying movement, durability and stop conditions are implemented; the wall-impact damage edge is not covered by a focused test and needs the P52 client check. |
+| Custom-biome `/locate` and unknown datapack structure paths | deviation | `/locate` handles vanilla structure, biome and POI searches; custom biome sources and structure ids that are not in the generated registry are still not resolved. P61-P62 and A08 cover the supported paths. |
