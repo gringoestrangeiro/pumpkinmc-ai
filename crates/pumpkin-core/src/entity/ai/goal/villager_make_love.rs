@@ -113,7 +113,8 @@ impl VillagerMakeLoveGoal {
             .get_entity()
             .age
             .store(BABY_START_AGE, Ordering::Relaxed);
-        world.spawn_entity(child.clone() as Arc<dyn EntityBase>);
+        let child_entity: Arc<dyn EntityBase> = child.clone();
+        world.spawn_entity(child_entity);
         world.send_entity_status(
             child.get_entity(),
             EntityStatus::LoveHearts,

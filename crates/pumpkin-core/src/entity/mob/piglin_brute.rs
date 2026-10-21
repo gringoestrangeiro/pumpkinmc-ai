@@ -37,7 +37,7 @@ struct StrollToHomeGoal {
 
 impl StrollToHomeGoal {
     fn move_to_home(&self, mob: &dyn Mob) {
-        let Some(home) = mob.get_home_pos() else {
+        let Some(home) = mob.get_home() else {
             return;
         };
         let mob_pos = mob.get_entity().pos.load();
@@ -53,7 +53,7 @@ impl StrollToHomeGoal {
     }
 
     fn distance_sq(mob: &dyn Mob) -> Option<f64> {
-        let home = mob.get_home_pos()?;
+        let home = mob.get_home()?;
         Some(
             mob.get_entity()
                 .pos
