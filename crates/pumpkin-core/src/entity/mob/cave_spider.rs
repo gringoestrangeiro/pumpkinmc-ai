@@ -8,14 +8,17 @@ use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
         active_target::{ActiveTargetGoal, TargetCondition},
+        avoid_entity::AvoidEntityGoal,
+        leap_at_target::LeapAtTargetGoal,
         look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal,
         revenge::RevengeGoal,
         spider_attack::SpiderAttackGoal,
         swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     mob::{Mob, MobEntity},
+    passive::armadillo::ArmadilloEntity,
 };
 
 pub struct CaveSpiderEntity {
@@ -45,8 +48,24 @@ impl CaveSpiderEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(3, SpiderAttackGoal::new(1.0, false));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.8)));
+            goal_selector.add_goal(
+                2,
+                Box::new(AvoidEntityGoal::with_target_gate(
+                    &EntityType::ARMADILLO,
+                    6.0,
+                    1.0,
+                    1.2,
+                    |entity| {
+                        entity
+                            .cast_any()
+                            .downcast_ref::<ArmadilloEntity>()
+                            .is_some_and(|armadillo| !armadillo.is_scared())
+                    },
+                )),
+            );
+            goal_selector.add_goal(3, Box::new(LeapAtTargetGoal::new(0.4)));
+            goal_selector.add_goal(4, SpiderAttackGoal::new(1.0, false));
+            goal_selector.add_goal(5, Box::new(WaterAvoidingRandomStrollGoal::new(0.8)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),

@@ -13,6 +13,8 @@ const VERTICAL_RANGE: i32 = 7;
 
 /// Extra condition deciding whether the mob avoids anything at all right now.
 type AvoidGate = dyn Fn(&dyn Mob) -> bool + Send + Sync;
+/// Extra condition on the found threat, vanilla's `AvoidEntityTargetingCondition`.
+type TargetGate = dyn Fn(&dyn EntityBase) -> bool + Send + Sync;
 
 pub struct AvoidEntityGoal {
     goal_control: Controls,
@@ -23,6 +25,7 @@ pub struct AvoidEntityGoal {
     target: Option<Arc<dyn EntityBase>>,
     flee_pos: Option<Vector3<f64>>,
     gate: Option<Box<AvoidGate>>,
+    target_gate: Option<Box<TargetGate>>,
 }
 
 impl AvoidEntityGoal {
@@ -64,6 +67,26 @@ impl AvoidEntityGoal {
         )
     }
 
+    /// Rejects a found threat for which `gate` returns false.
+    ///
+    /// Vanilla `Spider` passes `entity -> !armadillo.isScared()` as its
+    /// `AvoidEntityTargetingCondition`, so a scared armadillo is not avoided.
+    #[must_use]
+    pub fn with_target_gate<F>(
+        flee_type: &'static EntityType,
+        flee_distance: f64,
+        slow_speed: f64,
+        fast_speed: f64,
+        gate: F,
+    ) -> Self
+    where
+        F: Fn(&dyn EntityBase) -> bool + Send + Sync + 'static,
+    {
+        let mut goal = Self::build(flee_type, flee_distance, slow_speed, fast_speed, None);
+        goal.target_gate = Some(Box::new(gate));
+        goal
+    }
+
     /// Shared constructor behind [`Self::new`] and [`Self::with_gate`].
     fn build(
         flee_type: &'static EntityType,
@@ -81,6 +104,7 @@ impl AvoidEntityGoal {
             target: None,
             flee_pos: None,
             gate,
+            target_gate: None,
         }
     }
 
@@ -117,6 +141,14 @@ impl Goal for AvoidEntityGoal {
         let Some(target) = self.find_threat(mob) else {
             return false;
         };
+
+        if self
+            .target_gate
+            .as_ref()
+            .is_some_and(|gate| !gate(target.as_ref()))
+        {
+            return false;
+        }
 
         let threat_pos = target.get_entity().pos.load();
         let Some(flee_pos) =

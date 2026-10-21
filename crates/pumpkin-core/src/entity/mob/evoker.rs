@@ -7,6 +7,7 @@ use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::{
@@ -492,6 +493,18 @@ impl Goal for EvokerSummonSpellGoal {
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
+                if let Some(vex_entity) = vex
+                    .cast_any()
+                    .downcast_ref::<crate::entity::mob::vex::VexEntity>()
+                {
+                    vex_entity.set_owner(evoker_ent);
+                    vex_entity.set_bound_origin(BlockPos::floored(
+                        spawn_pos.x,
+                        spawn_pos.y,
+                        spawn_pos.z,
+                    ));
+                    vex_entity.set_limited_life(20 * (30 + rand::random_range(0..90)));
+                }
                 world.spawn_entity(vex);
             }
         }

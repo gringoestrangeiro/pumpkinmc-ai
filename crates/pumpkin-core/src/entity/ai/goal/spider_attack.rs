@@ -20,6 +20,9 @@ impl SpiderAttackGoal {
 
 impl Goal for SpiderAttackGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        if mob.get_entity().has_passengers() {
+            return false;
+        }
         self.melee_attack_goal.can_start(mob)
     }
 

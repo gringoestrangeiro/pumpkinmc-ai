@@ -10,6 +10,7 @@ use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::particle::Particle;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::java::client::play::CEntityStatus;
 use pumpkin_util::math::position::BlockPos;
@@ -18,10 +19,13 @@ use pumpkin_util::math::vector3::Vector3;
 use crate::block::entities::creaking_heart::CreakingHeartBlockEntity;
 use crate::entity::{
     Entity, EntityBase,
-    ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+    ai::{
+        goal::{
+            Controls, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
+            look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, swim::SwimGoal,
+            wander_around::WanderAroundGoal,
+        },
+        pathfinder::node::PathType,
     },
     mob::{Mob, MobEntity},
     player::Player,
@@ -118,7 +122,10 @@ impl CreakingEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(1.0, true)));
+            goal_selector.add_goal(
+                4,
+                Box::new(MeleeAttackGoal::new(1.0, true).with_attack_interval(ATTACK_INTERVAL)),
+            );
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 6,
@@ -142,6 +149,16 @@ impl CreakingEntity {
 
     pub fn set_transient(&self, pos: BlockPos) {
         self.set_home_pos(Some(pos));
+        let mut navigator = self
+            .mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_pathfinding_malus(PathType::DamageOther, 8.0);
+        navigator.set_pathfinding_malus(PathType::PowderSnow, 8.0);
+        navigator.set_pathfinding_malus(PathType::Lava, 8.0);
+        navigator.set_pathfinding_malus(PathType::DamageFire, 0.0);
+        navigator.set_pathfinding_malus(PathType::DangerFire, 0.0);
     }
 
     pub fn is_heart_bound(&self) -> bool {
@@ -190,6 +207,11 @@ impl CreakingEntity {
 
     pub fn set_home_pos(&self, pos: Option<BlockPos>) {
         self.home_pos.store(pos);
+        self.mob_entity
+            .living_entity
+            .entity
+            .fire_immune
+            .store(pos.is_some(), Ordering::Relaxed);
         if let Some(p) = pos {
             self.mob_entity.position_target.store(p);
             self.mob_entity
@@ -334,6 +356,7 @@ impl CreakingEntity {
             if player.living_entity.entity.is_alive()
                 && player.gamemode.load() != pumpkin_util::GameMode::Creative
                 && player.gamemode.load() != pumpkin_util::GameMode::Spectator
+                && self.can_attack(player.as_ref())
             {
                 has_potential_target = true;
                 let is_disguised = Self::is_player_disguised(&player);
@@ -412,6 +435,29 @@ impl Mob for CreakingEntity {
         &self.mob_entity
     }
 
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        if self.is_active() {
+            None
+        } else {
+            Some(Sound::EntityCreakingAmbient)
+        }
+    }
+
+    fn is_pushable(&self) -> bool {
+        self.mob_entity.living_entity.is_pushable() && self.can_move()
+    }
+
+    fn on_attack(&self, _target: &dyn EntityBase) {
+        self.attack_animation_remaining_ticks
+            .store(ATTACK_ANIMATION_DURATION, Ordering::Relaxed);
+        let entity = &self.mob_entity.living_entity.entity;
+        entity.world.load().broadcast_to_chunk(
+            entity.chunk_pos.load(),
+            &CEntityStatus::new(entity.entity_id, 4),
+        );
+        self.play_sound(Sound::EntityCreakingAttack);
+    }
+
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         if !entity.is_alive() {
@@ -449,7 +495,6 @@ impl Mob for CreakingEntity {
                     1.0,
                 );
             } else {
-                self.stop_in_place();
                 world.play_sound_fine(
                     Sound::EntityCreakingFreeze,
                     SoundCategory::Hostile,
@@ -459,6 +504,20 @@ impl Mob for CreakingEntity {
                 );
             }
             self.set_can_move(now_can_move);
+        }
+
+        {
+            let mut goals_selector = self
+                .mob_entity
+                .goals_selector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            goals_selector.set_control_enabled(Controls::MOVE, now_can_move);
+            goals_selector.set_control_enabled(Controls::LOOK, now_can_move);
+            goals_selector.set_control_enabled(Controls::JUMP, now_can_move);
+        }
+        if !now_can_move {
+            self.stop_in_place();
         }
 
         // Home Creaking Heart check
@@ -487,7 +546,10 @@ impl Mob for CreakingEntity {
     fn pre_damage(&self, damage_type: DamageType, _source: Option<&dyn EntityBase>) -> bool {
         let entity = &self.mob_entity.living_entity.entity;
 
-        if self.is_heart_bound() && damage_type != DamageType::OUT_OF_WORLD {
+        if self.is_heart_bound()
+            && damage_type != DamageType::OUT_OF_WORLD
+            && !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_INVULNERABILITY)
+        {
             if self
                 .invulnerability_animation_remaining_ticks
                 .load(Ordering::Relaxed)

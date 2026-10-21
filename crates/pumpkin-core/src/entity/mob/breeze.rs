@@ -3,10 +3,11 @@ use std::sync::{Arc, Weak};
 use pumpkin_data::entity::EntityType;
 
 use crate::entity::{
-    Entity,
+    Entity, EntityBase,
     ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::ActiveTargetGoal, breeze_attack::BreezeCombatGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, revenge::RevengeGoal,
+        swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
 };
@@ -33,6 +34,7 @@ impl BreezeEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(1, Box::new(BreezeCombatGoal::new(Arc::downgrade(&mob_arc))));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 6,
@@ -45,9 +47,14 @@ impl BreezeEntity {
                 .target_selector
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            target_selector.add_goal(0, Box::new(RevengeGoal::new(true)));
             target_selector.add_goal(
                 1,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+            );
+            target_selector.add_goal(
+                2,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::IRON_GOLEM, true),
             );
         };
 
@@ -58,5 +65,13 @@ impl BreezeEntity {
 impl Mob for BreezeEntity {
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
+    }
+
+    fn can_attack(&self, target: &dyn EntityBase) -> bool {
+        let entity_type = target.get_entity().entity_type;
+        if entity_type != &EntityType::PLAYER && entity_type != &EntityType::IRON_GOLEM {
+            return false;
+        }
+        self.mob_entity.living_entity.can_attack(target)
     }
 }

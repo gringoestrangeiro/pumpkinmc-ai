@@ -18,7 +18,6 @@ pub struct MeleeAttackGoal {
     target_location: Vector3<f64>,
     update_countdown_ticks: i32,
     pub cooldown: i32,
-    #[expect(dead_code)]
     attack_interval_ticks: i32,
     last_update_time: i64,
     last_target_position: Option<Vector3<f64>>,
@@ -49,9 +48,16 @@ impl MeleeAttackGoal {
         self
     }
 
+    /// Ticks between attacks, vanilla `MeleeAttack.create(canAttack, cooldownBetweenAttacks)`.
+    #[must_use]
+    pub const fn with_attack_interval(mut self, ticks: i32) -> Self {
+        self.attack_interval_ticks = ticks;
+        self
+    }
+
     #[must_use]
     pub fn get_max_cooldown(&self) -> i32 {
-        self.get_tick_count(20)
+        self.get_tick_count(self.attack_interval_ticks)
     }
 }
 
