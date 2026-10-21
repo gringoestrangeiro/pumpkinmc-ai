@@ -265,9 +265,18 @@ impl ThrownItemEntity {
             return true;
         }
 
-        // Skip owner for initial frames
-        if Some(other_ent.entity_id) == self.owner_id && self_ent.age.load(Ordering::Relaxed) < 5 {
-            return true;
+        // Skip owner for initial frames. Vanilla `AABB.clip` also finds no hit
+        // while the projectile is inside the shooter's box, which is what lets
+        // a fireball leave a large hitbox such as the ender dragon's.
+        if Some(other_ent.entity_id) == self.owner_id {
+            let owner_box = other_ent.bounding_box.load();
+            let pos = self_ent.pos.load();
+            let inside_owner = (owner_box.min.x..=owner_box.max.x).contains(&pos.x)
+                && (owner_box.min.y..=owner_box.max.y).contains(&pos.y)
+                && (owner_box.min.z..=owner_box.max.z).contains(&pos.z);
+            if self_ent.age.load(Ordering::Relaxed) < 5 || inside_owner {
+                return true;
+            }
         }
 
         // Projectiles should pass through lingering clouds

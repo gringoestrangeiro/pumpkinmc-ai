@@ -27,6 +27,28 @@ use pumpkin_data::frog_variant::FrogVariant;
 
 pub const FROG_FOOD: &[&Item] = &[&Item::SLIME_BALL];
 
+/// Vanilla `VariantUtils.selectVariantToSpawn` for `frog_variant`: the cold and
+/// warm entries are biome-conditioned at priority 1, temperate is the default.
+fn variant_for_biome(biome: &pumpkin_data::biome::Biome) -> FrogVariant {
+    let name = biome
+        .registry_id
+        .strip_prefix("minecraft:")
+        .unwrap_or(biome.registry_id);
+    if tag::WorldgenBiome::MINECRAFT_SPAWNS_COLD_VARIANT_FROGS
+        .0
+        .contains(&name)
+    {
+        FrogVariant::Cold
+    } else if tag::WorldgenBiome::MINECRAFT_SPAWNS_WARM_VARIANT_FROGS
+        .0
+        .contains(&name)
+    {
+        FrogVariant::Warm
+    } else {
+        FrogVariant::Temperate
+    }
+}
+
 /// Represents a Frog, an amphibious mob that can eat small slimes and magma cubes.
 ///
 /// Wiki: <https://minecraft.wiki/w/Frog>
@@ -39,11 +61,13 @@ pub struct FrogEntity {
 
 impl FrogEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
+        let world = entity.world.load_full();
+        let variant = variant_for_biome(world.get_biome(&entity.block_pos.load()));
         let mob_entity = MobEntity::new(entity);
         let frog = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
-            variant: AtomicI32::new(FrogVariant::Temperate.id() as i32),
+            variant: AtomicI32::new(variant.id() as i32),
             tongue_target_id: AtomicI32::new(-1),
         };
         let mob_arc = Arc::new(frog);

@@ -12,7 +12,10 @@ use pumpkin_util::math::vector3::Vector3;
 use crate::entity::{
     Entity, EntityBase,
     area_effect_cloud::AreaEffectCloudEntity,
-    projectile::{ProjectileHit, ThrownItemEntity},
+    projectile::{
+        ProjectileHit, ThrownItemEntity,
+        fireball::{AIR_INERTIA, INITIAL_ACCELERATION_POWER, WATER_INERTIA},
+    },
 };
 use crate::server::Server;
 
@@ -44,10 +47,11 @@ impl DragonFireballEntity {
     #[must_use]
     pub fn new_shot(entity: Entity, shooter: &Entity, direction: Vector3<f64>) -> Self {
         let thrown = ThrownItemEntity::new(entity, shooter, 0.0);
-        thrown
-            .entity
-            .velocity
-            .store(direction.normalize().multiply(0.1, 0.1, 0.1));
+        thrown.entity.velocity.store(direction.normalize().multiply(
+            INITIAL_ACCELERATION_POWER,
+            INITIAL_ACCELERATION_POWER,
+            INITIAL_ACCELERATION_POWER,
+        ));
         Self { thrown }
     }
 
@@ -91,7 +95,7 @@ impl DragonFireballEntity {
             Self::CLOUD_DURATION,
             Self::CLOUD_RADIUS,
             20,
-            0,
+            20,
             0.0,
             0,
         );
@@ -101,6 +105,11 @@ impl DragonFireballEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 (Self::MAX_RADIUS - Self::CLOUD_RADIUS) / Self::CLOUD_DURATION as f32;
+            // Vanilla `PowerParticleOption.create(ParticleTypes.DRAGON_BREATH, 1.0F)`.
+            cloud.set_custom_particle(
+                pumpkin_data::particle::Particle::DragonBreath as i32,
+                Box::new(1.0f32.to_be_bytes()),
+            );
         }
         world.sync_world_event(
             WorldEvent::ParticlesDragonFireballSplash,
@@ -121,6 +130,27 @@ impl EntityBase for DragonFireballEntity {
     }
 
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
+        // Vanilla `AbstractHurtingProjectile.applyInertia`, as ported for `Fireball`.
+        let entity = self.get_entity();
+        let mut velocity = entity.velocity.load();
+        let inertia = if entity.touching_water.load(Ordering::Relaxed) {
+            WATER_INERTIA
+        } else {
+            AIR_INERTIA
+        };
+        let speed = velocity.length();
+        if speed > 1e-6 {
+            velocity = velocity
+                .normalize()
+                .multiply(
+                    INITIAL_ACCELERATION_POWER,
+                    INITIAL_ACCELERATION_POWER,
+                    INITIAL_ACCELERATION_POWER,
+                )
+                .add(&velocity)
+                .multiply(inertia, inertia, inertia);
+            entity.velocity.store(velocity);
+        }
         self.thrown.process_tick(caller);
     }
 

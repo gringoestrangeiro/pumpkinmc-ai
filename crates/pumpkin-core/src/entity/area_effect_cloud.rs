@@ -52,6 +52,9 @@ pub struct AreaEffectCloudEntity {
     pub duration_on_use: Mutex<i32>,
     /// ticks to wait before the cloud becomes active and applies effects (grace period)
     pub wait_time: Mutex<i32>,
+    /// Particle option that replaces the potion-colored effect particle, e.g. the
+    /// dragon breath particle used by dragon fireballs.
+    custom_particle: Mutex<Option<ParticleMeta>>,
 }
 
 impl AreaEffectCloudEntity {
@@ -73,6 +76,7 @@ impl AreaEffectCloudEntity {
             radius_on_use: Mutex::new(0.0),
             duration_on_use: Mutex::new(0),
             wait_time: Mutex::new(20),
+            custom_particle: Mutex::new(None),
         };
 
         Arc::new(cloud)
@@ -106,9 +110,26 @@ impl AreaEffectCloudEntity {
             radius_on_use: Mutex::new(radius_on_use_in),
             duration_on_use: Mutex::new(duration_on_use_in),
             wait_time: Mutex::new(wait_time_in),
+            custom_particle: Mutex::new(None),
         };
 
         Arc::new(cloud)
+    }
+
+    /// Replaces the potion-colored effect particle with a custom particle option.
+    pub fn set_custom_particle(&self, particle_id: i32, data: Box<[u8]>) {
+        let meta = ParticleMeta {
+            particle_id: pumpkin_protocol::codec::var_int::VarInt(particle_id),
+            data,
+        };
+        self.entity.set_synced_data(
+            pumpkin_data::tracked_data::area_effect_cloud::PARTICLE,
+            meta.clone(),
+        );
+        *self
+            .custom_particle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(meta);
     }
 }
 
@@ -173,15 +194,19 @@ impl EntityBase for AreaEffectCloudEntity {
             color = (0xFFi32 << 24) | (r << 16) | (g << 8) | b;
         }
 
-        // Build raw particle option bytes for ENTITY_EFFECT
-        let data_bytes = color.to_be_bytes();
-
-        let meta = ParticleMeta {
-            particle_id: pumpkin_protocol::codec::var_int::VarInt(
-                pumpkin_data::particle::Particle::EntityEffect as i32,
-            ),
-            data: Box::new(data_bytes),
-        };
+        // Build raw particle option bytes for ENTITY_EFFECT, unless the cloud
+        // overrides the particle (dragon fireballs use the dragon breath particle).
+        let meta = self
+            .custom_particle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| ParticleMeta {
+                particle_id: pumpkin_protocol::codec::var_int::VarInt(
+                    pumpkin_data::particle::Particle::EntityEffect as i32,
+                ),
+                data: Box::new(color.to_be_bytes()),
+            });
 
         self.entity.set_synced_data(
             pumpkin_data::tracked_data::area_effect_cloud::PARTICLE,

@@ -1,5 +1,5 @@
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use crate::entity::experience_orb::ExperienceOrbEntity;
 use crate::entity::projectile::{ProjectileHit, ThrownItemEntity};
@@ -93,18 +93,46 @@ impl EntityBase for ExperienceBottleEntity {
         let hit_pos = hit.hit_pos();
         let block_pos = BlockPos::floored(hit_pos.x, hit_pos.y, hit_pos.z);
 
-        world.sync_world_event(
-            WorldEvent::ParticlesSpellPotionSplash,
-            block_pos,
-            WATER_COLOR,
-        );
-        if !entity.silent.load(Ordering::Relaxed) {
+        let mut rng = rand::rng();
+        let mut xp_count: i32 = 3 + rng.random_range(0..5) + rng.random_range(0..5);
+
+        let mut show_effect = true;
+        if let Some(server) = world.server.upgrade() {
+            let mut event = crate::plugin::api::events::entity::exp_bottle::ExpBottleEvent::new(
+                entity.entity_id,
+                xp_count,
+                block_pos,
+                show_effect,
+            );
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            if event.cancelled {
+                return;
+            }
+            xp_count = event.experience;
+            show_effect = event.show_effect;
+        }
+
+        if show_effect {
+            world.sync_world_event(
+                WorldEvent::ParticlesSpellPotionSplash,
+                block_pos,
+                WATER_COLOR,
+            );
+        }
+        if !entity.is_silent() {
             world.sync_world_event(WorldEvent::SoundSpellPotionSplash, block_pos, 0);
         }
 
-        let mut rng = rand::rng();
-        let xp_count = 3 + rng.random_range(0..5) + rng.random_range(0..5);
-        ExperienceOrbEntity::spawn(&world, hit_pos, xp_count);
+        let direction = match &hit {
+            ProjectileHit::Block { face, .. } => face.to_offset().to_f64(),
+            ProjectileHit::Entity { normal, .. } => *normal,
+        };
+        ExperienceOrbEntity::spawn_with_direction(
+            &world,
+            hit_pos,
+            direction,
+            xp_count.max(0) as u32,
+        );
     }
 
     fn cast_any(&self) -> &dyn std::any::Any {

@@ -17,10 +17,9 @@ use crate::entity::ai::pathfinder::Navigator;
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::mob::{Mob, MobEntity};
 
-/// Gives a new fish vanilla's swimming AI in place of the walking defaults every
-/// mob starts with: water navigation, panic when hurt, keeping clear of players,
-/// and swimming to random spots.
-pub fn init(mob_entity: &MobEntity) {
+/// Gives a new fish vanilla's water navigation and move control, in place of the
+/// walking defaults every mob starts with.
+pub fn init_movement(mob_entity: &MobEntity) {
     let mut navigator = Navigator::water_bound(false);
     navigator.set_pathfinding_malus(PathType::Water, 0.0);
     *mob_entity
@@ -31,6 +30,13 @@ pub fn init(mob_entity: &MobEntity) {
         .move_control
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Box::new(FishMoveControl);
+}
+
+/// Gives a new fish vanilla's swimming AI in place of the walking defaults every
+/// mob starts with: water navigation, panic when hurt, keeping clear of players,
+/// and swimming to random spots.
+pub fn init(mob_entity: &MobEntity) {
+    init_movement(mob_entity);
 
     let mut goals = mob_entity
         .goals_selector

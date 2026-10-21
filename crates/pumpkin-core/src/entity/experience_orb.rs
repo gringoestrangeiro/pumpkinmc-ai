@@ -28,11 +28,37 @@ impl ExperienceOrbEntity {
     }
 
     pub fn spawn(world: &Arc<World>, position: Vector3<f64>, amount: u32) {
+        Self::spawn_with_direction(world, position, Vector3::new(0.0, 0.0, 0.0), amount);
+    }
+
+    /// Vanilla `ExperienceOrb.awardWithDirection`: orbs spawn pushed away from the
+    /// impact surface and drift in a random direction.
+    pub fn spawn_with_direction(
+        world: &Arc<World>,
+        position: Vector3<f64>,
+        direction: Vector3<f64>,
+        amount: u32,
+    ) {
         let mut amount = amount;
         while amount > 0 {
             let i = Self::round_to_orb_size(amount);
             amount -= i;
             let entity = Entity::new(world.clone(), position, &EntityType::EXPERIENCE_ORB);
+            let mut movement = Vector3::new(
+                (rand::random::<f64>() * 0.2 - 0.1) * 2.0,
+                rand::random::<f64>() * 0.2 * 2.0,
+                (rand::random::<f64>() * 0.2 - 0.1) * 2.0,
+            );
+            if direction.dot(&movement) < 0.0 {
+                movement = movement.multiply(-1.0, -1.0, -1.0);
+            }
+            let size = entity.bounding_box.load().get_average_side_length();
+            entity.set_pos(position.add(&direction.normalize().multiply(
+                size * 0.5,
+                size * 0.5,
+                size * 0.5,
+            )));
+            entity.velocity.store(movement);
             let orb = Arc::new(Self::new(entity, i));
             world.spawn_entity(orb);
         }

@@ -19,7 +19,9 @@ pub enum PotionApplicationSource {
 impl PotionApplicationSource {
     const fn instant_scale(self, scale: f32) -> f32 {
         match self {
-            Self::AreaEffectCloud => scale * 0.5,
+            // Vanilla `AreaEffectCloud` passes a fixed 0.5 potency to
+            // `applyInstantaneousEffect`, independent of the distance.
+            Self::AreaEffectCloud => 0.5,
             Self::Arrow => 1.0,
             Self::Normal => scale,
         }
