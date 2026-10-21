@@ -24,6 +24,7 @@ use crate::block::entities::sculk_sensor::SculkSensorBlockEntity;
 use crate::block::entities::sculk_shrieker::SculkShriekerBlockEntity;
 use crate::entity::EntityBase;
 use crate::entity::mob::warden::WardenEntity;
+use crate::entity::passive::allay::AllayEntity;
 use crate::plugin::api::events::block::sculk_bloom::SculkBloomEvent;
 use crate::world::World;
 
@@ -84,6 +85,23 @@ pub fn dispatch(
     }
 
     receive_warden_vibration(world, event, position, source);
+    receive_allay_vibration(world, event, position);
+}
+
+fn receive_allay_vibration(world: &Arc<World>, event: GameEvent, position: Vector3<f64>) {
+    if !event.has_tag(&GameEventTags::MINECRAFT_ALLAY_CAN_LISTEN) {
+        return;
+    }
+
+    for entity in world.get_nearby_entities(position, 16.0).values() {
+        if entity.get_entity().entity_type != &EntityType::ALLAY {
+            continue;
+        }
+        let Some(allay) = entity.cast_any().downcast_ref::<AllayEntity>() else {
+            continue;
+        };
+        allay.hear_noteblock(BlockPos::containing_vec(position));
+    }
 }
 
 fn loaded_block_entities_in_radius(
