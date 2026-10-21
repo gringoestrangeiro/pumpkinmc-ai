@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use crossbeam::atomic::AtomicCell;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -35,7 +36,8 @@ use crate::entity::{
 };
 
 use super::horse::{
-    AbstractHorse, drop_horse_inventory, read_horse_inventory, write_horse_inventory,
+    AbstractHorse, drop_horse_inventory, open_mount_screen, read_horse_inventory,
+    write_horse_inventory,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::HAY_BLOCK];
@@ -98,7 +100,7 @@ pub struct TraderLlamaEntity {
     pub owner: AtomicCell<Option<Uuid>>,
     pub caravan_head_id: AtomicI32,
     pub caravan_tail_id: AtomicI32,
-    pub inventory: SimpleInventory,
+    pub inventory: Arc<SimpleInventory>,
 }
 
 impl TraderLlamaEntity {
@@ -122,7 +124,9 @@ impl TraderLlamaEntity {
             owner: AtomicCell::new(None),
             caravan_head_id: AtomicI32::new(0),
             caravan_tail_id: AtomicI32::new(0),
-            inventory: SimpleInventory::new(MAX_STRENGTH as usize * super::horse::INVENTORY_ROWS),
+            inventory: Arc::new(SimpleInventory::new(
+                MAX_STRENGTH as usize * super::horse::INVENTORY_ROWS,
+            )),
         };
         let mob_arc = Arc::new(llama);
         let mob_weak: Weak<dyn Mob> = {
@@ -602,7 +606,10 @@ impl Mob for TraderLlamaEntity {
             && let Some(color) = get_carpet_color_from_item(item)
         {
             self.carpet_color.store(Some(color));
+            let carpet = item_stack.copy_with_count(1);
             item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+            self.mob_entity
+                .set_item_slot_and_drop_when_killed(&EquipmentSlot::BODY, carpet);
             let entity = self.get_entity();
             entity.world.load().play_sound(
                 Sound::EntityLlamaSwag,
@@ -616,7 +623,13 @@ impl Mob for TraderLlamaEntity {
             return self.animal_interact(player, item_stack, Sound::EntityLlamaAmbient);
         }
         if should_open_inventory {
-            return false;
+            open_mount_screen(
+                self.get_entity(),
+                player,
+                self.inventory.clone(),
+                self.get_inventory_columns(),
+            );
+            return true;
         }
 
         self.do_player_ride(player);

@@ -40,6 +40,11 @@ impl Default for MoveControl {
 impl Control for MoveControl {}
 
 impl MoveControlTrait for MoveControl {
+    fn reset(&mut self) {
+        self.operation = Operation::Wait;
+        self.speed_modifier = 0.0;
+    }
+
     fn tick(&mut self, mob: &dyn Mob) {
         let mob_entity = mob.get_mob_entity();
         let living_entity = &mob_entity.living_entity;

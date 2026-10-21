@@ -18,7 +18,7 @@ impl BlockBehaviour for EndPortalBlock {
             } else {
                 args.server.get_world_from_dimension(&Dimension::THE_END)
             };
-        if Arc::ptr_eq(&target_world, args.world) {
+        if Arc::ptr_eq(&target_world, args.world) || !args.entity.can_use_portal() {
             return;
         }
         args.entity

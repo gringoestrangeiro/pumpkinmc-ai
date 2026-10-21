@@ -207,6 +207,9 @@ impl CreakingEntity {
 
     pub fn set_home_pos(&self, pos: Option<BlockPos>) {
         self.home_pos.store(pos);
+        if let Ok(mut navigator) = self.mob_entity.navigator.lock() {
+            navigator.set_home_pos(pos);
+        }
         self.mob_entity
             .living_entity
             .entity
@@ -231,8 +234,16 @@ impl CreakingEntity {
     pub fn stop_in_place(&self) {
         let entity = &self.mob_entity.living_entity.entity;
         entity.velocity.store(Vector3::default());
+        self.mob_entity
+            .living_entity
+            .movement_input
+            .store(Vector3::default());
+        entity.jumping.store(false, Ordering::Relaxed);
         if let Ok(mut navigator) = self.mob_entity.navigator.lock() {
             navigator.stop();
+        }
+        if let Ok(mut move_control) = self.mob_entity.move_control.lock() {
+            move_control.reset();
         }
     }
 
@@ -435,6 +446,26 @@ impl Mob for CreakingEntity {
         &self.mob_entity
     }
 
+    fn mob_init_data_tracker(&self) {
+        let entity = self.get_entity();
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::creaking::CAN_MOVE,
+            self.can_move(),
+        );
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::creaking::IS_ACTIVE,
+            self.is_active(),
+        );
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::creaking::IS_TEARING_DOWN,
+            self.is_tearing_down(),
+        );
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::creaking::HOME_POS,
+            self.get_home_pos(),
+        );
+    }
+
     fn get_ambient_sound(&self) -> Option<Sound> {
         if self.is_active() {
             None
@@ -444,7 +475,15 @@ impl Mob for CreakingEntity {
     }
 
     fn is_pushable(&self) -> bool {
-        self.mob_entity.living_entity.is_pushable() && self.can_move()
+        self.mob_entity.living_entity.is_pushable() && CreakingEntity::can_move(self)
+    }
+
+    fn can_use_portal(&self) -> bool {
+        !self.is_heart_bound()
+    }
+
+    fn can_move(&self) -> bool {
+        CreakingEntity::can_move(self)
     }
 
     fn on_attack(&self, _target: &dyn EntityBase) {

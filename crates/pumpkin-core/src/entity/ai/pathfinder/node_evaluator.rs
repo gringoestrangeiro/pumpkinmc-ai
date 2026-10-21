@@ -46,6 +46,8 @@ pub struct MobData {
     pub sea_level: i32,
     pub min_y: i32,
     pub path_type_malus: [Option<f32>; PATH_TYPE_COUNT],
+    /// Vanilla `Creaking.HomeNodeEvaluator` keeps paths within 1024 blocks of home.
+    pub home_pos: Option<BlockPos>,
 }
 
 impl MobData {
@@ -66,6 +68,7 @@ impl MobData {
             sea_level: 63,
             min_y: -64,
             path_type_malus: [None; PATH_TYPE_COUNT],
+            home_pos: None,
         };
 
         data.set_pathfinding_malus(PathType::DangerFire, 16.0);
@@ -99,6 +102,7 @@ impl MobData {
             sea_level: 63,
             min_y: -64,
             path_type_malus: [None; PATH_TYPE_COUNT],
+            home_pos: None,
         }
     }
 

@@ -275,6 +275,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         None
     }
 
+    /// Vanilla `Entity.canUsePortal`; heart-bound Creakings refuse portals.
+    fn can_use_portal(&self) -> bool {
+        true
+    }
+
     /// Players are tracked by profile name, every other entity by its UUID.
     fn get_scoreboard_name(&self) -> String {
         self.get_player().map_or_else(

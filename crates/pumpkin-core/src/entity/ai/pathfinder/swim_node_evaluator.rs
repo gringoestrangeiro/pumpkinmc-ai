@@ -208,6 +208,7 @@ impl NodeEvaluator for SwimNodeEvaluator {
             sea_level: 63,
             min_y: -64,
             path_type_malus: [None; crate::entity::ai::pathfinder::node::PATH_TYPE_COUNT],
+            home_pos: None,
         });
         self.get_path_type_of_mob(context, pos, &mob_data)
     }

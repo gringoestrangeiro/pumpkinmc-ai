@@ -28,7 +28,9 @@ use crate::entity::{
     r#type::from_type,
 };
 
-use super::horse::{AbstractHorse, FLAG_SADDLE, FLAG_TAME};
+use super::horse::{
+    AbstractHorse, FLAG_SADDLE, FLAG_TAME, empty_mount_inventory, open_mount_screen,
+};
 
 const TRAP_MAX_LIFE: i32 = 18000;
 
@@ -371,8 +373,8 @@ impl Mob for SkeletonHorseEntity {
 
         let item = item_stack.get_item();
         if player.get_entity().is_sneaking() {
-            // Vanilla opens the mount screen here; Pumpkin has no horse window type yet.
-            return false;
+            open_mount_screen(self.get_entity(), player, empty_mount_inventory(), 0);
+            return true;
         }
 
         if item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {

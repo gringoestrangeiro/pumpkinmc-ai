@@ -137,17 +137,6 @@ impl BlockEntity for BeehiveBlockEntity {
         Some(nbt)
     }
 
-    fn collect_item_components(&self, stack: &mut pumpkin_data::item_stack::ItemStack) {
-        if let Ok(bees) = self.bees.lock()
-            && let Some(bees) = bees.as_ref()
-            && !bees.is_empty()
-        {
-            stack.set_data_component(pumpkin_data::data_component_impl::BeesImpl {
-                bees: bees.clone(),
-            });
-        }
-    }
-
     fn apply_item_components(&self, stack: &pumpkin_data::item_stack::ItemStack) {
         if let Some(bees) =
             stack.get_data_component::<pumpkin_data::data_component_impl::BeesImpl>()
@@ -189,6 +178,18 @@ impl BeehiveBlockEntity {
             position,
             bees: Mutex::new(None),
             flower_pos: Mutex::new(None),
+        }
+    }
+
+    /// Vanilla `BeehiveBlockEntity.collectComponents`: stored bees become `minecraft:bees`.
+    pub fn collect_components(&self, stack: &mut pumpkin_data::item_stack::ItemStack) {
+        if let Ok(bees) = self.bees.lock()
+            && let Some(bees) = bees.as_ref()
+            && !bees.is_empty()
+        {
+            stack.set_data_component(pumpkin_data::data_component_impl::BeesImpl {
+                bees: bees.clone(),
+            });
         }
     }
 

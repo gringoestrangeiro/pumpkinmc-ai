@@ -390,6 +390,8 @@ pub trait PathNavigationTrait: Send + Sync {
     fn set_pathfinding_malus(&mut self, path_type: PathType, malus: f32);
     fn get_pathfinding_malus(&self, path_type: PathType) -> f32;
     fn set_mob_dimensions(&mut self, width: f32, height: f32);
+    /// Vanilla `Creaking.HomeNodeEvaluator` home restriction.
+    fn set_home_pos(&mut self, _home_pos: Option<BlockPos>) {}
     fn can_reach_within(
         &mut self,
         entity: &LivingEntity,
@@ -464,6 +466,7 @@ pub struct PathNavigation {
     pub can_pass_doors: bool,
     pub avoid_sun: bool,
     pub can_path_to_targets_below_surface: bool,
+    pub home_pos: Option<BlockPos>,
     pub open_set: BinaryHeap,
     pub neighbors_buf: Vec<Node>,
     pub is_idle: AtomicBool,
@@ -512,6 +515,7 @@ impl PathNavigation {
             can_pass_doors: true,
             avoid_sun: false,
             can_path_to_targets_below_surface: false,
+            home_pos: None,
             open_set: BinaryHeap::new(),
             neighbors_buf: Vec::new(),
             is_idle: AtomicBool::new(true),
@@ -597,6 +601,7 @@ impl PathNavigation {
         let mut mob_data = MobData::new(start_pos_f, self.mob_width, self.mob_height, 1.0);
         mob_data.on_ground = entity.entity.on_ground.load(Ordering::Relaxed);
         mob_data.can_swim = self.can_float;
+        mob_data.home_pos = self.home_pos;
 
         mob_data.set_pathfinding_malus(PathType::DangerFire, 16.0);
         mob_data.set_pathfinding_malus(PathType::DamageFire, -1.0);
@@ -1250,6 +1255,10 @@ impl PathNavigationTrait for GroundPathNavigation {
 
     fn get_pathfinding_malus(&self, path_type: PathType) -> f32 {
         self.inner.get_pathfinding_malus(path_type)
+    }
+
+    fn set_home_pos(&mut self, home_pos: Option<BlockPos>) {
+        self.inner.home_pos = home_pos;
     }
 
     fn set_mob_dimensions(&mut self, width: f32, height: f32) {

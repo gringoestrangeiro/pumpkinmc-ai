@@ -1073,6 +1073,98 @@ fn limit_for_slot(slot: &EquipmentSlot, stack: &mut ItemStack) -> ItemStack {
     }
 }
 
+/// One-slot equipment view backing a mount's saddle or body armor slot.
+///
+/// Mirrors vanilla `Mob.createEquipmentSlotContainer`.
+pub struct MobEquipmentInventory {
+    mob: Arc<dyn EntityBase>,
+    slot: EquipmentSlot,
+}
+
+impl MobEquipmentInventory {
+    #[must_use]
+    pub fn new(mob: Arc<dyn EntityBase>, slot: EquipmentSlot) -> Self {
+        Self { mob, slot }
+    }
+}
+
+impl pumpkin_inventory::inventory::Inventory for MobEquipmentInventory {
+    fn size(&self) -> usize {
+        1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.get_stack(0).is_empty()
+    }
+
+    fn get_stack(&self, slot: usize) -> ItemStack {
+        if slot != 0 {
+            return ItemStack::EMPTY.clone();
+        }
+        let Some(mob) = self.mob.get_mob() else {
+            return ItemStack::EMPTY.clone();
+        };
+        // Pumpkin keeps the saddle as the horse's synced flag, not as equipment.
+        if self.slot == EquipmentSlot::SADDLE {
+            return if mob.is_saddled() {
+                ItemStack::new(1, &Item::SADDLE)
+            } else {
+                ItemStack::EMPTY.clone()
+            };
+        }
+        mob.get_mob_entity()
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.slot)
+    }
+
+    fn remove_stack(&self, slot: usize) -> ItemStack {
+        let stack = self.get_stack(slot);
+        self.set_stack(slot, ItemStack::EMPTY.clone());
+        stack
+    }
+
+    fn remove_stack_specific(&self, slot: usize, amount: u8) -> ItemStack {
+        let mut stack = self.get_stack(slot);
+        let taken = stack.split(amount);
+        self.set_stack(slot, stack);
+        taken
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn set_stack(&self, slot: usize, stack: ItemStack) {
+        if slot != 0 {
+            return;
+        }
+        let Some(mob) = self.mob.get_mob() else {
+            return;
+        };
+        if self.slot == EquipmentSlot::SADDLE {
+            mob.set_saddled(!stack.is_empty());
+            return;
+        }
+        let mob_entity = mob.get_mob_entity();
+        mob_entity.set_item_slot(&self.slot, stack.clone());
+        if !stack.is_empty() {
+            mob_entity.set_guaranteed_drop(&self.slot);
+            mob_entity
+                .persistence_required
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+impl pumpkin_inventory::inventory::Clearable for MobEquipmentInventory {
+    fn clear(&self) {
+        self.set_stack(0, ItemStack::EMPTY.clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::moon_brightness;

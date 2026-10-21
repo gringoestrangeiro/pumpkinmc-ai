@@ -290,6 +290,7 @@ impl MobEntity {
         };
 
         // 4. Repeat for Navigator
+        let can_move = mob.can_move();
         let mut navigator = {
             let mut guard = self
                 .navigator
@@ -298,7 +299,9 @@ impl MobEntity {
             std::mem::take(&mut *guard)
         };
 
-        navigator.tick(&self.living_entity);
+        if can_move {
+            navigator.tick(&self.living_entity);
+        }
 
         {
             *self
@@ -315,7 +318,9 @@ impl MobEntity {
                 .look_control
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            look_control.tick(mob);
+            if can_move {
+                look_control.tick(mob);
+            }
         };
 
         {
@@ -323,7 +328,9 @@ impl MobEntity {
                 .move_control
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            move_control.tick(mob);
+            if can_move {
+                move_control.tick(mob);
+            }
         };
     }
 
@@ -1033,6 +1040,17 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
+    /// Vanilla `Entity.canUsePortal`.
+    fn can_use_portal(&self) -> bool {
+        true
+    }
+
+    /// Vanilla per-mob movement gate. `Creaking` returns false while frozen and then
+    /// skips its navigation, look and move controls.
+    fn can_move(&self) -> bool {
+        true
+    }
+
     /// Sound played periodically while alive.
     fn get_ambient_sound(&self) -> Option<Sound> {
         None
@@ -1429,6 +1447,10 @@ pub trait Mob: EntityBase + Send + Sync {
 impl<T: Mob + Send + 'static> EntityBase for T {
     fn get_mob(&self) -> Option<&dyn Mob> {
         Some(self)
+    }
+
+    fn can_use_portal(&self) -> bool {
+        Mob::can_use_portal(self)
     }
 
     fn is_pushed_by_fluids(&self) -> bool {

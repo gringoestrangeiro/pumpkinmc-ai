@@ -128,7 +128,7 @@ impl BlockBehaviour for NetherPortalBlock {
                 args.server.get_world_from_dimension(&Dimension::THE_NETHER)
             };
 
-        if Arc::ptr_eq(&target_world, args.world) {
+        if Arc::ptr_eq(&target_world, args.world) || !args.entity.can_use_portal() {
             return;
         }
 

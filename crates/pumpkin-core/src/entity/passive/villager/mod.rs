@@ -333,6 +333,9 @@ fn explorer_map_target(
     })
 }
 
+/// Vanilla `Villager` inventory size.
+const INVENTORY_SIZE: usize = 8;
+
 pub struct VillagerEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
@@ -402,7 +405,11 @@ impl VillagerEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let villager_data = VillagerData::new(VillagerType::Plains, VillagerProfession::None, 1);
-        let inventory = std::sync::Mutex::new((0..8).map(|_| ItemStack::EMPTY.clone()).collect());
+        let inventory = std::sync::Mutex::new(
+            (0..INVENTORY_SIZE)
+                .map(|_| ItemStack::EMPTY.clone())
+                .collect(),
+        );
 
         let villager = Self {
             mob_entity,
@@ -442,6 +449,9 @@ impl VillagerEntity {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
         };
+
+        // Vanilla `Villager` constructor.
+        mob_arc.mob_entity.set_can_pick_up_loot(true);
 
         {
             let mut goal_selector = mob_arc
@@ -546,6 +556,144 @@ impl VillagerEntity {
             }
         }
         total
+    }
+
+    /// Vanilla `Villager.wantsToPickUp`.
+    fn wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        use pumpkin_data::data_component_impl::VillagerFoodImpl;
+
+        let profession = self
+            .villager_data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .profession_enum();
+        (stack
+            .item
+            .has_tag(&pumpkin_data::tag::Item::MINECRAFT_VILLAGER_PICKS_UP)
+            || stack.get_data_component::<VillagerFoodImpl>().is_some()
+            || profession.requested_items().contains(&stack.item))
+            && self.can_add_item(stack)
+    }
+
+    /// Vanilla `SimpleContainer.canAddItem`.
+    fn can_add_item(&self, stack: &ItemStack) -> bool {
+        let mut remaining = i32::from(stack.item_count);
+        let inventory = self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for slot in inventory.iter() {
+            if slot.is_empty() {
+                remaining -= i32::from(stack.get_max_stack_size());
+            } else if slot.are_items_and_components_equal(stack) {
+                remaining -= i32::from(slot.get_max_stack_size().saturating_sub(slot.item_count));
+            }
+            if remaining <= 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Vanilla `SimpleContainer.addItem`: fills matching slots first, then empty ones.
+    fn add_item(&self, mut stack: ItemStack) -> ItemStack {
+        let mut inventory = self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for slot in inventory.iter_mut() {
+            if stack.is_empty() {
+                break;
+            }
+            if slot.is_empty() {
+                let amount = stack.item_count.min(stack.get_max_stack_size());
+                *slot = stack.copy_with_count(amount);
+                stack.item_count -= amount;
+            } else if slot.are_items_and_components_equal(&stack) {
+                let amount = stack
+                    .item_count
+                    .min(slot.get_max_stack_size().saturating_sub(slot.item_count));
+                slot.item_count = slot.item_count.saturating_add(amount);
+                stack.item_count -= amount;
+            }
+            if stack.item_count == 0 {
+                stack = ItemStack::EMPTY.clone();
+            }
+        }
+        stack
+    }
+
+    /// Vanilla `InventoryCarrier.pickUpItem`.
+    fn pick_up_item(&self, item: &crate::entity::item::ItemEntity) -> bool {
+        let stack = item
+            .get_item_stack()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if stack.is_empty() || !self.wants_to_pick_up(&stack) {
+            return false;
+        }
+        if !self
+            .mob_entity
+            .living_entity
+            .pickup(item.get_entity(), u32::from(stack.item_count))
+        {
+            return false;
+        }
+
+        let count = stack.item_count;
+        let remainder = self.add_item(stack);
+        let taken = count.saturating_sub(remainder.item_count);
+
+        let mut item_stack = item
+            .get_item_stack()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        item_stack.item_count = item_stack.item_count.saturating_sub(taken);
+        let emptied = item_stack.is_empty();
+        drop(item_stack);
+
+        if emptied {
+            item.get_entity().remove();
+        } else {
+            item.init_data_tracker();
+        }
+        true
+    }
+
+    /// Vanilla `Mob.aiStep` looting pass.
+    pub fn pick_up_nearby_items(&self) {
+        let living = &self.mob_entity.living_entity;
+        let entity = &living.entity;
+        if !self.mob_entity.can_pick_up_loot()
+            || !entity.is_alive()
+            || living.dead.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let world = entity.world.load();
+        if !world.level_info.load().game_rules.mob_griefing {
+            return;
+        }
+
+        // Vanilla `Mob.ITEM_PICKUP_REACH`.
+        let reach = entity.bounding_box.load().expand(1.0, 0.0, 1.0);
+        for candidate in world.get_entities_at_box(&reach) {
+            let Some(item) = candidate.get_item_entity() else {
+                continue;
+            };
+            if item.get_entity().is_alive()
+                && item.get_pickup_delay() == 0
+                && self.wants_to_pick_up(
+                    &item
+                        .get_item_stack()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                )
+            {
+                self.pick_up_item(item);
+            }
+        }
     }
 
     fn poi_owner(&self) -> Option<Weak<dyn EntityBase>> {
@@ -2421,6 +2569,10 @@ impl Mob for VillagerEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.villager_mob_tick();
+    }
+
+    fn post_tick(&self) {
+        self.pick_up_nearby_items();
     }
 
     fn mob_interact(&self, player: &Arc<Player>, _item_stack: &mut ItemStack) -> bool {

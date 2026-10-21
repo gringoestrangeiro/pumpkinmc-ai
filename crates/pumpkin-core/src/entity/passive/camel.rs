@@ -25,7 +25,7 @@ use crate::entity::{
     player::Player,
 };
 
-use super::horse::AbstractHorse;
+use super::horse::{AbstractHorse, empty_mount_inventory, open_mount_screen};
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::CACTUS];
 const HUSK_TEMPT_ITEMS: &[&Item] = &[&Item::RABBIT_FOOT];
@@ -653,8 +653,8 @@ impl Mob for CamelEntity {
         let item = item_stack.get_item();
 
         if !self.is_baby() && player.get_entity().is_sneaking() {
-            // Vanilla opens the mount screen here; Pumpkin has no horse window type yet.
-            return false;
+            open_mount_screen(self.get_entity(), player, empty_mount_inventory(), 0);
+            return true;
         }
 
         if item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {

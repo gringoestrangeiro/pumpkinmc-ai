@@ -152,6 +152,16 @@ pub trait BlockBehaviour: Send + Sync {
 
     fn broken(&self, _args: BrokenArgs<'_>) {}
 
+    /// Applies vanilla loot-table `copy_components`/`copy_state` modifiers to a dropped item.
+    fn modify_dropped_item(
+        &self,
+        _stack: &mut ItemStack,
+        _state: &BlockState,
+        _has_silk_touch: bool,
+        _block_entity: Option<&dyn entities::BlockEntity>,
+    ) {
+    }
+
     /// Called before a player removes the block, mirroring vanilla's `playerWillDestroy`.
     fn player_will_destroy(&self, _args: BrokenArgs<'_>) {}
 
@@ -505,6 +515,11 @@ pub fn drop_loot(
     experience: bool,
     params: &LootContextParameters,
 ) {
+    let has_silk_touch = params.tool.as_ref().is_some_and(|tool| {
+        pumpkin_data::Enchantment::from_name("silk_touch")
+            .is_some_and(|e| tool.get_enchantment_level(e) > 0)
+    });
+
     if let Some(loot_table) = block.loot_table.and_then(|key| world.get_loot_table(key)) {
         let seed: i64 = rand::random();
         let items = crate::world::loot::generate_loot_from_handle(&loot_table, seed, params);
@@ -522,21 +537,27 @@ pub fn drop_loot(
             if !event.cancelled {
                 let block_entity = world.get_block_entity(pos);
                 for mut stack in event.items {
-                    if let Some(block_entity) = &block_entity
-                        && Block::from_item_id(stack.item.id) == Some(block)
-                    {
-                        block_entity.collect_item_components(&mut stack);
+                    if Block::from_item_id(stack.item.id) == Some(block) {
+                        if let Some(block_entity) = &block_entity {
+                            block_entity.collect_item_components(&mut stack);
+                        }
+                        if let Some(state) = params.block_state
+                            && let Some(behaviour) =
+                                world.block_registry.get_pumpkin_block(block.id)
+                        {
+                            behaviour.modify_dropped_item(
+                                &mut stack,
+                                state,
+                                has_silk_touch,
+                                block_entity.as_deref(),
+                            );
+                        }
                     }
                     world.drop_stack(pos, stack);
                 }
             }
         }
     }
-
-    let has_silk_touch = params.tool.as_ref().is_some_and(|tool| {
-        pumpkin_data::Enchantment::from_name("silk_touch")
-            .is_some_and(|e| tool.get_enchantment_level(e) > 0)
-    });
 
     if experience
         && !has_silk_touch

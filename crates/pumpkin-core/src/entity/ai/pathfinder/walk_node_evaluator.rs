@@ -8,6 +8,16 @@ use crate::entity::ai::pathfinder::{
     pathfinding_context::PathfindingContext,
 };
 
+/// Vanilla `Creaking.HomeNodeEvaluator.MAX_DISTANCE_TO_HOME_SQ`.
+const MAX_DISTANCE_TO_HOME_SQ: i32 = 1024;
+
+fn squared_block_distance(home: BlockPos, x: i32, y: i32, z: i32) -> i64 {
+    let dx = i64::from(x) - i64::from(home.0.x);
+    let dy = i64::from(y) - i64::from(home.0.y);
+    let dz = i64::from(z) - i64::from(home.0.z);
+    dx * dx + dy * dy + dz * dz
+}
+
 pub struct WalkNodeEvaluator {
     pub base: BaseNodeEvaluator,
     path_types_cache: FxHashMap<Vector3<i32>, PathType>,
@@ -641,6 +651,20 @@ impl NodeEvaluator for WalkNodeEvaluator {
     }
 
     fn get_path_type(&mut self, context: &mut PathfindingContext, pos: Vector3<i32>) -> PathType {
+        // Vanilla `Creaking.HomeNodeEvaluator`: block nodes farther than 1024 from home
+        // unless they are closer to home than the mob already is.
+        if let Some(home) = self.base.mob_data.as_ref().and_then(|data| data.home_pos) {
+            let distance = squared_block_distance(home, pos.x, pos.y, pos.z);
+            if distance > i64::from(MAX_DISTANCE_TO_HOME_SQ) {
+                let mob_distance = self.base.mob_data.as_ref().map_or(0, |data| {
+                    let (x, y, z) = data.block_position();
+                    squared_block_distance(home, x, y, z)
+                });
+                if distance >= mob_distance {
+                    return PathType::Blocked;
+                }
+            }
+        }
         context.get_land_node_type(pos)
     }
 

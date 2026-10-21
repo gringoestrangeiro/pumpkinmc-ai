@@ -21,6 +21,9 @@ pub trait Control: Send + Sync {
 pub trait MoveControlTrait: Control {
     fn tick(&mut self, mob: &dyn Mob);
 
+    /// Drops any pending movement without stepping the controller.
+    fn reset(&mut self) {}
+
     fn set_wanted_position(&mut self, _x: f64, _y: f64, _z: f64, _speed_modifier: f64) {}
 
     fn strafe(&mut self, _forward: f32, _right: f32) {}

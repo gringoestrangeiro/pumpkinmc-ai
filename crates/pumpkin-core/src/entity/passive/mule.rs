@@ -28,8 +28,8 @@ use crate::entity::{
 };
 
 use super::horse::{
-    AbstractHorse, FLAG_SADDLE, FLAG_TAME, drop_horse_inventory, read_horse_inventory,
-    write_horse_inventory,
+    AbstractHorse, FLAG_SADDLE, FLAG_TAME, drop_horse_inventory, open_mount_screen,
+    read_horse_inventory, write_horse_inventory,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[
@@ -46,7 +46,7 @@ pub struct MuleEntity {
     pub temper: AtomicI32,
     pub stand_ticks: AtomicI32,
     pub owner: AtomicCell<Option<Uuid>>,
-    pub inventory: SimpleInventory,
+    pub inventory: Arc<SimpleInventory>,
 }
 
 impl MuleEntity {
@@ -60,7 +60,7 @@ impl MuleEntity {
             temper: AtomicI32::new(0),
             stand_ticks: AtomicI32::new(0),
             owner: AtomicCell::new(None),
-            inventory: SimpleInventory::new(5 * super::horse::INVENTORY_ROWS),
+            inventory: Arc::new(SimpleInventory::new(5 * super::horse::INVENTORY_ROWS)),
         };
         let mob_arc = Arc::new(mule);
         let mob_weak: Weak<dyn Mob> = {
@@ -348,7 +348,13 @@ impl Mob for MuleEntity {
             return self.animal_interact(player, item_stack, Sound::EntityMuleAmbient);
         }
         if should_open_inventory {
-            return false;
+            open_mount_screen(
+                self.get_entity(),
+                player,
+                self.inventory.clone(),
+                self.get_inventory_columns(),
+            );
+            return true;
         }
 
         if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() {

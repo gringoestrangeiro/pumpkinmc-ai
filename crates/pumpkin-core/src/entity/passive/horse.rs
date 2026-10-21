@@ -345,6 +345,29 @@ pub(crate) fn write_horse_inventory(inventory: &SimpleInventory, nbt: &mut NbtCo
     nbt.put("Items", NbtTag::List(list));
 }
 
+/// Mounts without a chest still get the saddle and body slots.
+pub(crate) fn empty_mount_inventory() -> Arc<dyn Inventory> {
+    Arc::new(SimpleInventory::new(0))
+}
+
+/// Vanilla `AbstractHorse.openCustomInventoryScreen`.
+pub(crate) fn open_mount_screen(
+    entity: &Entity,
+    player: &Arc<Player>,
+    inventory: Arc<dyn Inventory>,
+    inventory_columns: usize,
+) -> bool {
+    if entity.has_passengers() && !entity.has_passenger(player.entity_id()) {
+        return false;
+    }
+    let Some(mount) = entity.world.load().get_entity_by_id(entity.entity_id) else {
+        return false;
+    };
+    player
+        .open_mount_screen(&mount, inventory, inventory_columns)
+        .is_some()
+}
+
 pub(crate) fn drop_horse_inventory(entity: &Entity, inventory: &SimpleInventory) {
     for slot in 0..inventory.size() {
         entity.spawn_at_location(inventory.remove_stack(slot));
@@ -624,8 +647,8 @@ impl Mob for HorseEntity {
             return self.animal_interact(player, item_stack, Sound::EntityHorseAmbient);
         }
         if should_open_inventory {
-            // Vanilla opens the mount screen here; Pumpkin has no horse window type yet.
-            return false;
+            open_mount_screen(self.get_entity(), player, empty_mount_inventory(), 0);
+            return true;
         }
 
         if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() {

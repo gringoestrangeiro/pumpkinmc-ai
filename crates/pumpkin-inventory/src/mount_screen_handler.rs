@@ -9,12 +9,15 @@ use crate::player::player_inventory::PlayerInventory;
 use crate::screen_handler::{InventoryPlayer, ScreenHandler, ScreenHandlerBehaviour};
 use crate::slot::{ArmorSlot, NormalSlot};
 
+pub type MountValidityCheck = Box<dyn Fn(&dyn InventoryPlayer) -> bool + Send + Sync>;
+
 pub struct MountScreenHandler {
     behaviour: ScreenHandlerBehaviour,
     pub mount_inventory: Arc<dyn Inventory>,
     pub saddle_inventory: Arc<dyn Inventory>,
     pub armor_inventory: Arc<dyn Inventory>,
     pub inventory_columns: usize,
+    pub validity_check: Option<MountValidityCheck>,
 }
 
 impl MountScreenHandler {
@@ -38,11 +41,14 @@ impl MountScreenHandler {
     ) -> Self {
         let mut handler = Self {
             behaviour: ScreenHandlerBehaviour::new(sync_id, None),
-            mount_inventory,
+            mount_inventory: mount_inventory.clone(),
             saddle_inventory: saddle_inventory.clone(),
             armor_inventory: armor_inventory.clone(),
             inventory_columns,
+            validity_check: None,
         };
+
+        mount_inventory.on_open();
 
         handler.add_slot(Arc::new(ArmorSlot::new(
             saddle_inventory,
@@ -55,7 +61,9 @@ impl MountScreenHandler {
             EquipmentSlot::BODY,
         )));
 
-        let mount_size = handler.mount_inventory.size();
+        // Vanilla only adds the chest slots a mount currently has room for.
+        let mount_size = Self::get_inventory_size(inventory_columns);
+        handler.behaviour.container_slots = 2 + mount_size;
         for i in 0..mount_size {
             handler.add_slot(Arc::new(NormalSlot::new(
                 handler.mount_inventory.clone(),
@@ -87,7 +95,14 @@ impl ScreenHandler for MountScreenHandler {
         &mut self.behaviour
     }
 
+    fn can_use(&self, player: &dyn InventoryPlayer) -> bool {
+        self.validity_check
+            .as_ref()
+            .is_none_or(|check| check(player))
+    }
+
     fn on_closed(&mut self, player: &dyn InventoryPlayer) {
+        self.mount_inventory.on_close();
         self.default_on_closed(player);
     }
 
@@ -103,8 +118,9 @@ impl ScreenHandler for MountScreenHandler {
             let mut stack = slot.get_stack();
             clicked = stack.clone();
 
-            let mount_container_size = self.mount_inventory.size();
-            let player_container_start = 2 + mount_container_size as i32;
+            let mount_container_size = Self::get_inventory_size(self.inventory_columns);
+            let player_container_start =
+                2 + i32::try_from(mount_container_size).unwrap_or_default();
             let total_slots = self.get_behaviour().slots.len() as i32;
 
             if slot_index < player_container_start {

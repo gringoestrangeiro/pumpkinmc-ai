@@ -26,7 +26,9 @@ use crate::entity::{
     player::Player,
 };
 
-use super::horse::{AbstractHorse, FLAG_SADDLE, FLAG_TAME};
+use super::horse::{
+    AbstractHorse, FLAG_SADDLE, FLAG_TAME, empty_mount_inventory, open_mount_screen,
+};
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::RED_MUSHROOM];
 
@@ -289,7 +291,8 @@ impl Mob for ZombieHorseEntity {
             return false;
         }
         if should_open_inventory {
-            return false;
+            open_mount_screen(self.get_entity(), player, empty_mount_inventory(), 0);
+            return true;
         }
 
         if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() {

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::entity::attributes::{Modifier, ModifierOperation};
+use crate::entity::mob::equipment::MobEquipmentInventory;
 use crate::plugin::api::events::enchantment::{EnchantItemEvent, PrepareItemEnchantEvent};
 use crate::world::scoreboard::{BedrockScoreboard, Scoreboard};
 use advancement::PlayerAdvancement;
@@ -21,6 +22,7 @@ use crossbeam::queue::SegQueue;
 use pumpkin_data::dimension::Dimension;
 use pumpkin_inventory::Inventory;
 use pumpkin_inventory::merchant::merchant_screen_handler::MerchantScreenHandler;
+use pumpkin_inventory::mount_screen_handler::MountScreenHandler;
 use pumpkin_inventory::player::ender_chest_inventory::EnderChestInventory;
 use pumpkin_protocol::RawPacket;
 use pumpkin_protocol::bedrock::client::play_status::CPlayStatus;
@@ -251,7 +253,7 @@ use pumpkin_inventory::player::{
 };
 use pumpkin_inventory::screen_handler::{
     ClickType, InventoryPlayer, ScreenHandler, ScreenHandlerBehaviour, ScreenHandlerFactory,
-    ScreenHandlerListener,
+    ScreenHandlerListener, SharedScreenHandler,
 };
 use pumpkin_inventory::sync_handler::SyncHandler;
 use pumpkin_macros::send_cancellable;
@@ -268,13 +270,13 @@ use pumpkin_protocol::java::client::play::{
     Animation, CAcknowledgeBlockChange, CActionBar, CAwardStats, CBlockUpdate, CChangeDifficulty,
     CCloseContainer, CCombatDeath, CCustomPayload, CDisguisedChatMessage, CEntityAnimation,
     CEntityPositionSync, CEntityVelocity, CGameEvent, CHurtAnimation, CItemCooldown, CMapItemData,
-    COpenBook, COpenScreen, COpenSignEditor, CParticle, CPlayServerLinks, CPlayerAbilities,
-    CPlayerInfoUpdate, CPlayerPosition, CPlayerSpawnPosition, CRespawn, CSetCamera,
-    CSetContainerContent, CSetContainerProperty, CSetContainerSlot, CSetCursorItem, CSetExperience,
-    CSetHealth, CSetPlayerInventory, CSetSelectedSlot, CSoundEffect, CStopSound, CSubtitle,
-    CSystemChatMessage, CTabList, CTitleAnimation, CTitleText, CUnloadChunk, CUpdateMobEffect,
-    CUpdateTime, GameEvent, MapIcon, MapPatch, PlayerAction, PlayerInfoFlags, PlayerSpawnData,
-    PreviousMessage, Statistic,
+    COpenBook, COpenMountScreen, COpenScreen, COpenSignEditor, CParticle, CPlayServerLinks,
+    CPlayerAbilities, CPlayerInfoUpdate, CPlayerPosition, CPlayerSpawnPosition, CRespawn,
+    CSetCamera, CSetContainerContent, CSetContainerProperty, CSetContainerSlot, CSetCursorItem,
+    CSetExperience, CSetHealth, CSetPlayerInventory, CSetSelectedSlot, CSoundEffect, CStopSound,
+    CSubtitle, CSystemChatMessage, CTabList, CTitleAnimation, CTitleText, CUnloadChunk,
+    CUpdateMobEffect, CUpdateTime, GameEvent, MapIcon, MapPatch, PlayerAction, PlayerInfoFlags,
+    PlayerSpawnData, PreviousMessage, Statistic,
 };
 use pumpkin_protocol::java::server::play::{
     SClickSlot, SContainerButtonClick, SRenameItem, SlotActionType,
@@ -5901,6 +5903,101 @@ impl Player {
         {
             anvil_handler.set_item_name(packet.item_name, self.has_infinite_materials());
         }
+    }
+
+    /// Vanilla `ServerPlayer.openHorseInventory`: opens the mount screen with the
+    /// saddle and body slots backed by the mount's equipment.
+    pub fn open_mount_screen(
+        &self,
+        mount: &Arc<dyn EntityBase>,
+        container: Arc<dyn Inventory>,
+        inventory_columns: usize,
+    ) -> Option<u8> {
+        if !self
+            .current_screen_handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_any()
+            .is::<PlayerScreenHandler>()
+        {
+            self.close_handled_screen();
+        }
+
+        if let Some(server) = self.world().server.upgrade()
+            && let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id)
+        {
+            let mut event =
+                crate::plugin::api::events::inventory::inventory_open::InventoryOpenEvent::new(
+                    player_arc,
+                );
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            if event.cancelled {
+                return None;
+            }
+        }
+
+        self.increment_screen_handler_sync_id();
+        let sync_id = self.screen_handler_sync_id.load(Ordering::Relaxed);
+
+        let saddle = Arc::new(MobEquipmentInventory::new(
+            mount.clone(),
+            EquipmentSlot::SADDLE,
+        ));
+        let armor = Arc::new(MobEquipmentInventory::new(
+            mount.clone(),
+            EquipmentSlot::BODY,
+        ));
+        let mut handler = MountScreenHandler::new(
+            sync_id,
+            &self.inventory,
+            container,
+            saddle,
+            armor,
+            inventory_columns,
+        );
+
+        let mount_weak = Arc::downgrade(mount);
+        handler.validity_check = Some(Box::new(move |inventory_player| {
+            let Some(mount) = mount_weak.upgrade() else {
+                return false;
+            };
+            let entity = mount.get_entity();
+            entity.is_alive()
+                && inventory_player
+                    .as_any()
+                    .downcast_ref::<Player>()
+                    .is_some_and(|player| {
+                        player
+                            .get_entity()
+                            .pos
+                            .load()
+                            .squared_distance_to_vec(&entity.pos.load())
+                            <= 16.0
+                    })
+        }));
+
+        let screen_handler: SharedScreenHandler = Arc::new(std::sync::Mutex::new(handler));
+        let entity_id = mount.get_entity().entity_id;
+
+        let columns = i32::try_from(inventory_columns).unwrap_or_default();
+        let java_packet = COpenMountScreen::new(sync_id, VarInt(columns), entity_id);
+        let bedrock_packet = CContainerOpen {
+            container_id: sync_id,
+            container_type: 0,
+            position: BlockPos::ZERO,
+            target_entity_id: VarLong(i64::from(entity_id)),
+        };
+        self.try_enqueue_packet_editioned(&java_packet, &bedrock_packet);
+
+        self.on_screen_handler_opened(screen_handler.as_ref());
+        *self
+            .current_screen_handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = screen_handler;
+        self.open_container_pos.store(None);
+        Some(sync_id)
     }
 
     pub fn open_handled_screen(

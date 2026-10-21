@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::entity::{
     Entity, EntityBase,
     ai::{
+        brain::memory::{GlobalPos, MemoryValue, codec},
         control::flying_move_control::FlyingMoveControl,
         goal::{Controls, Goal, water_avoiding_random_flying::WaterAvoidingRandomFlyingGoal},
         pathfinder::{Navigator, NavigatorGoal},
@@ -704,11 +705,70 @@ impl Mob for AllayEntity {
                 nbt.put_list("Inventory", items);
             }
         }
+
+        // Vanilla keeps these in the brain as `LIKED_NOTEBLOCK_POSITION` and
+        // `LIKED_NOTEBLOCK_COOLDOWN_TICKS` memories.
+        let liked_noteblock = *self
+            .liked_noteblock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(pos) = liked_noteblock {
+            let world = self.mob_entity.living_entity.entity.world.load();
+            if let Some(dimension) =
+                pumpkin_data::dimension::Dimension::from_name(world.dimension.minecraft_name)
+            {
+                let global_pos = GlobalPos::new(dimension, pos);
+                if let Some(tag) = (codec::GLOBAL_POS.encode)(&global_pos as &dyn MemoryValue) {
+                    let mut brain = nbt.get_compound("Brain").cloned().unwrap_or_default();
+                    let mut memories = brain.get_compound("memories").cloned().unwrap_or_default();
+
+                    let mut memory = NbtCompound::new();
+                    memory.put("value", tag);
+                    memories.put("minecraft:liked_noteblock", NbtTag::Compound(memory));
+
+                    let cooldown = self.liked_noteblock_cooldown.load(Ordering::Relaxed);
+                    if cooldown > 0 {
+                        let mut cooldown_memory = NbtCompound::new();
+                        cooldown_memory.put_int("value", cooldown);
+                        memories.put(
+                            "minecraft:liked_noteblock_cooldown_ticks",
+                            NbtTag::Compound(cooldown_memory),
+                        );
+                    }
+
+                    brain.put("memories", NbtTag::Compound(memories));
+                    nbt.put("Brain", NbtTag::Compound(brain));
+                }
+            }
+        }
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         if let Some(can) = nbt.get_bool("CanDuplicate") {
             self.set_can_duplicate(can);
+        }
+        if let Some(memories) = nbt
+            .get_compound("Brain")
+            .and_then(|brain| brain.get_compound("memories"))
+        {
+            if let Some(tag) = memories
+                .get_compound("minecraft:liked_noteblock")
+                .and_then(|memory| memory.get("value"))
+                && let Some(value) = (codec::GLOBAL_POS.decode)(tag)
+                && let Some(global_pos) = value.as_any().downcast_ref::<GlobalPos>()
+            {
+                *self
+                    .liked_noteblock
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(global_pos.pos);
+            }
+            if let Some(cooldown) = memories
+                .get_compound("minecraft:liked_noteblock_cooldown_ticks")
+                .and_then(|memory| memory.get_int("value"))
+            {
+                self.liked_noteblock_cooldown
+                    .store(cooldown, Ordering::Relaxed);
+            }
         }
         if let Some(cd) = nbt.get_int("DuplicationCooldown") {
             self.duplication_cooldown.store(cd, Ordering::Relaxed);
