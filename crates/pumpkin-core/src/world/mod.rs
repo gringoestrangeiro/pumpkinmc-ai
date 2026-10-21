@@ -5278,11 +5278,15 @@ impl World {
                     .portal_poi
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if villager_poi::profession_for_block(old_block).is_some() {
+                if villager_poi::profession_for_block(old_block).is_some()
+                    || villager_poi::meeting_point_for_block(old_block)
+                {
                     poi.remove(position);
                 }
                 if let Some(poi_type) = villager_poi::poi_type_for_block(new_block) {
                     poi.add_with_free_tickets(*position, poi_type, 1);
+                } else if villager_poi::meeting_point_for_block(new_block) {
+                    poi.add_with_free_tickets(*position, villager_poi::MEETING_POINT_POI_TYPE, 32);
                 }
             }
         }

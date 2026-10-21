@@ -9,6 +9,7 @@ use pumpkin_data::attributes::Attributes;
 use pumpkin_data::block_properties::{BedPart, WhiteBedLikeProperties as BedProperties};
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityPose, EntityType};
+use pumpkin_data::environment_attribute::Activity;
 use pumpkin_data::item::{Item, JavaToBedrockItemMapping};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::potion::Effect;
@@ -34,12 +35,14 @@ use pumpkin_util::version::JavaMinecraftVersion;
 use crate::entity::player::Player;
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob, BABY_START_AGE},
     ai::{
         goal::{
             avoid_entity::AvoidEntityGoal, look_around::RandomLookAroundGoal,
-            look_at_entity::LookAtEntityGoal, open_door::OpenDoorGoal, swim::SwimGoal,
-            trade_with_player::TradeWithPlayerGoal, wander_around::WanderAroundGoal,
-            work_at_job_site::WorkAtJobSiteGoal,
+            look_at_entity::LookAtEntityGoal, meet_at_bell::MeetAtBellGoal,
+            open_door::OpenDoorGoal, sleep_in_bed::SleepInBedGoal, swim::SwimGoal,
+            trade_with_player::TradeWithPlayerGoal, villager_make_love::VillagerMakeLoveGoal,
+            wander_around::WanderAroundGoal, work_at_job_site::WorkAtJobSiteGoal,
         },
         pathfinder::Navigator,
     },
@@ -52,7 +55,7 @@ use crate::world::villager_poi::profession_for_block;
 pub mod data;
 pub use data::{
     BREEDING_FOOD_THRESHOLD, GossipType, VillagerData, VillagerProfession, VillagerType,
-    get_food_points,
+    get_food_points, villager_type_for_biome,
 };
 
 pub(crate) fn trigger_trade_advancement(player: &Player) {
@@ -332,6 +335,8 @@ fn explorer_map_target(
 
 pub struct VillagerEntity {
     pub mob_entity: MobEntity,
+    pub ageable_data: AgeableData,
+    was_baby: AtomicBool,
     pub villager_data: std::sync::Mutex<VillagerData>,
     pub food_level: AtomicI32,
     pub xp: AtomicI32,
@@ -401,6 +406,8 @@ impl VillagerEntity {
 
         let villager = Self {
             mob_entity,
+            ageable_data: AgeableData::default(),
+            was_baby: AtomicBool::new(false),
             villager_data: std::sync::Mutex::new(villager_data),
             food_level: AtomicI32::new(0),
             xp: AtomicI32::new(0),
@@ -493,9 +500,12 @@ impl VillagerEntity {
                 Box::new(AvoidEntityGoal::new(&EntityType::VEX, 12.0, 0.5, 0.5)),
             );
 
-            goal_selector.add_goal(2, Box::new(TradeWithPlayerGoal::new()));
+            goal_selector.add_goal(1, Box::new(TradeWithPlayerGoal::new()));
+            goal_selector.add_goal(2, Box::new(SleepInBedGoal::new(0.5)));
             // Basic movement and looking (Vanilla uses 0.5 speed)
             goal_selector.add_goal(3, Box::new(WorkAtJobSiteGoal::new(0.5)));
+            goal_selector.add_goal(2, Box::new(MeetAtBellGoal::new(0.5)));
+            goal_selector.add_goal(2, Box::new(VillagerMakeLoveGoal::new()));
             goal_selector.add_goal(4, Box::new(WanderAroundGoal::new(0.5)));
             goal_selector.add_goal(
                 5,
@@ -579,6 +589,154 @@ impl VillagerEntity {
                 }
             }
         }
+    }
+
+    /// Vanilla `Villager.eatAndDigestFood`: top the villager up, then spend one breeding meal.
+    pub fn eat_and_digest_food(&self) {
+        self.eat_until_full();
+        self.food_level
+            .fetch_sub(BREEDING_FOOD_THRESHOLD, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn is_sleeping(&self) -> bool {
+        self.get_entity().pose.load() == EntityPose::Sleeping
+    }
+
+    /// Vanilla `Villager.canBreed`.
+    #[must_use]
+    pub fn can_breed(&self) -> bool {
+        self.food_level.load(Ordering::Relaxed) + self.count_food_points_in_inventory()
+            >= BREEDING_FOOD_THRESHOLD
+            && !self.is_sleeping()
+            && self.get_entity().age.load(Ordering::Relaxed) >= 0
+            && self.mob_entity.breeding_cooldown.load(Ordering::Relaxed) <= 0
+    }
+
+    #[must_use]
+    pub fn get_player_reputation(&self, player_uuid: Uuid) -> i32 {
+        self.gossips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&player_uuid)
+            .map_or(0, |gossips| {
+                gossips
+                    .iter()
+                    .map(|(kind, value)| kind.weight() * value)
+                    .sum()
+            })
+    }
+
+    pub fn set_home_pos(&self, position: Option<BlockPos>) {
+        *self
+            .home_pos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = position;
+    }
+
+    /// Vanilla `VillagerMakeLove.takeVacantBed`: nearest bed head no other villager calls home.
+    pub(crate) fn take_vacant_bed(&self, radius: i32) -> Option<BlockPos> {
+        self.find_vacant_bed(radius, 4)
+    }
+
+    fn find_vacant_bed(&self, radius: i32, vertical_radius: i32) -> Option<BlockPos> {
+        let entity = self.get_entity();
+        let pos = entity.block_pos.load();
+        let start = BlockPos::new(
+            pos.0.x - radius,
+            pos.0.y - vertical_radius,
+            pos.0.z - radius,
+        );
+        let end = BlockPos::new(
+            pos.0.x + radius,
+            pos.0.y + vertical_radius,
+            pos.0.z + radius,
+        );
+        let claim_radius = radius * 2;
+        let claim_vertical_radius = vertical_radius * 2;
+        let aabb = BoundingBox::new(
+            Vector3::new(
+                pos.0.x as f64 - f64::from(claim_radius),
+                pos.0.y as f64 - f64::from(claim_vertical_radius),
+                pos.0.z as f64 - f64::from(claim_radius),
+            ),
+            Vector3::new(
+                pos.0.x as f64 + f64::from(claim_radius),
+                pos.0.y as f64 + f64::from(claim_vertical_radius),
+                pos.0.z as f64 + f64::from(claim_radius),
+            ),
+        );
+
+        let mut claimed_homes = Vec::new();
+        for other in entity.world.load().get_all_at_box(&aabb) {
+            if other.get_entity().entity_id != entity.entity_id
+                && other.get_entity().entity_type == &EntityType::VILLAGER
+                && let Some(home) = other.get_home_pos()
+            {
+                claimed_homes.push(home);
+            }
+        }
+
+        let world = entity.world.load();
+        let mut best_home = None;
+        let mut best_dist = f64::MAX;
+        for position in BlockPos::iterate(start, end) {
+            let (block, state) = world.get_block_and_state(&position);
+            if !block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
+                continue;
+            }
+            let bed_props = BedProperties::from_state_id(state.id);
+            let bed_head_pos = if bed_props.part == BedPart::Head {
+                position
+            } else {
+                position.offset(bed_props.facing.to_offset())
+            };
+            if claimed_homes.contains(&bed_head_pos) {
+                continue;
+            }
+            let dist = bed_head_pos
+                .to_f64()
+                .squared_distance_to_vec(&entity.pos.load());
+            if dist < best_dist {
+                best_dist = dist;
+                best_home = Some(bed_head_pos);
+            }
+        }
+        best_home
+    }
+
+    /// Vanilla `Villager.getBreedOffspring`: biome, then parent types decide the child's type.
+    #[must_use]
+    pub fn get_breed_offspring(&self, partner: &Self) -> Arc<Self> {
+        let entity = self.get_entity();
+        let world = entity.world.load_full();
+        let roll = rand::random::<f64>();
+        let r#type = if roll < 0.5 {
+            villager_type_for_biome(world.get_biome(&entity.block_pos.load()).registry_id)
+        } else if roll < 0.75 {
+            self.villager_data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .type_enum()
+        } else {
+            partner
+                .villager_data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .type_enum()
+        };
+
+        let child = Self::new(Entity::new(
+            world,
+            entity.pos.load(),
+            &pumpkin_data::entity::EntityType::VILLAGER,
+        ));
+        child.set_villager_data(VillagerData::new(r#type, VillagerProfession::None, 1));
+        child
+            .get_entity()
+            .age
+            .store(BABY_START_AGE, Ordering::Relaxed);
+        child
     }
 
     pub fn set_villager_data(&self, data: VillagerData) {
@@ -786,17 +944,7 @@ impl VillagerEntity {
 
     fn update_special_prices(&self, player: &Player) {
         let player_uuid = player.get_entity().entity_uuid;
-        let reputation = self
-            .gossips
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&player_uuid)
-            .map_or(0, |gossips| {
-                gossips
-                    .iter()
-                    .map(|(kind, value)| kind.weight() * value)
-                    .sum()
-            });
+        let reputation = self.get_player_reputation(player_uuid);
         let hero_amplifier = player
             .living_entity
             .get_effect(&StatusEffect::HERO_OF_THE_VILLAGE)
@@ -1578,6 +1726,11 @@ impl ScreenHandlerFactory for VillagerEntity {
 impl VillagerEntity {
     #[expect(clippy::too_many_lines)]
     pub fn villager_mob_tick(&self) {
+        let is_baby = self.get_entity().age.load(Ordering::Relaxed) < 0;
+        if self.was_baby.swap(is_baby, Ordering::Relaxed) != is_baby {
+            self.get_entity()
+                .set_synced_data(tracked_data::villager::BABY_ID, is_baby);
+        }
         let world = self.get_entity().world.load();
 
         let unhappy_counter = self.unhappy_counter.load(Ordering::Relaxed);
@@ -1694,77 +1847,16 @@ impl VillagerEntity {
 
         // If no bed, search for one
         if self.get_home_pos().is_none() {
-            let pos = self.get_entity().block_pos.load();
-            let start = BlockPos::new(pos.0.x - 16, pos.0.y - 4, pos.0.z - 16);
-            let end = BlockPos::new(pos.0.x + 16, pos.0.y + 4, pos.0.z + 16);
-
-            let aabb = BoundingBox::new(
-                Vector3::new(
-                    pos.0.x as f64 - 32.0,
-                    pos.0.y as f64 - 16.0,
-                    pos.0.z as f64 - 32.0,
-                ),
-                Vector3::new(
-                    pos.0.x as f64 + 32.0,
-                    pos.0.y as f64 + 16.0,
-                    pos.0.z as f64 + 32.0,
-                ),
-            );
-            let nearby_entities = world.get_all_at_box(&aabb);
-
-            let mut claimed_homes = Vec::new();
-            for entity in nearby_entities {
-                if entity.get_entity().entity_id != self.get_entity().entity_id
-                    && entity.get_entity().entity_type
-                        == &pumpkin_data::entity::EntityType::VILLAGER
-                    && let Some(home) = entity.get_home_pos()
-                {
-                    claimed_homes.push(home);
-                }
-            }
-
-            let mut best_home = None;
-            let mut best_dist = f64::MAX;
-
-            for p in BlockPos::iterate(start, end) {
-                let (block, state) = world.get_block_and_state(&p);
-                if block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
-                    let bed_props = BedProperties::from_state_id(state.id);
-                    let bed_head_pos = if bed_props.part == BedPart::Head {
-                        p
-                    } else {
-                        p.offset(bed_props.facing.to_offset())
-                    };
-
-                    if claimed_homes.contains(&bed_head_pos) {
-                        continue;
-                    }
-
-                    let dist = bed_head_pos
-                        .to_f64()
-                        .squared_distance_to_vec(&self.get_entity().pos.load());
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best_home = Some(bed_head_pos);
-                    }
-                }
-            }
-
-            if let Some(home) = best_home {
-                *self
-                    .home_pos
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(home);
-            }
+            self.set_home_pos(self.find_vacant_bed(16, 4));
         }
 
-        // Handle Sleeping/Waking up based on time
+        // Handle Sleeping/Waking up based on the villager's activity schedule
         let is_sleeping = self.get_entity().pose.load() == EntityPose::Sleeping;
         if let Some(home_pos) = self.get_home_pos() {
-            let time = world.get_time_of_day();
-            let is_night = (12000..=23000).contains(&time);
+            let activity = world.villager_activity(&self.get_entity().block_pos.load(), age < 0);
+            let is_resting = activity == Activity::Rest;
 
-            if is_night {
+            if is_resting {
                 if !is_sleeping {
                     // Check distance to bed. If close enough, go to sleep
                     let dist = home_pos
@@ -1875,6 +1967,12 @@ impl VillagerEntity {
                 }
             }
         }
+    }
+}
+
+impl AgeableMob for VillagerEntity {
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
     }
 }
 
@@ -2183,6 +2281,14 @@ impl Mob for VillagerEntity {
 
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
+    }
+
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        false
     }
 
     fn mob_bedrock_identifier(&self) -> Option<&'static str> {

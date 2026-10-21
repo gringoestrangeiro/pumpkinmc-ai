@@ -152,6 +152,13 @@ pub fn profession_for_block(block: &Block) -> Option<VillagerProfession> {
     }
 }
 
+pub const MEETING_POINT_POI_TYPE: &str = "minecraft:meeting";
+
+#[must_use]
+pub fn meeting_point_for_block(block: &Block) -> bool {
+    block == &Block::BELL
+}
+
 #[must_use]
 pub fn poi_type_for_block(block: &Block) -> Option<&'static str> {
     Some(match profession_for_block(block)? {

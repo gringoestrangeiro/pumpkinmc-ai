@@ -1,3 +1,4 @@
+use pumpkin_data::environment_attribute::Activity;
 use pumpkin_util::math::position::BlockPos;
 
 use super::{Controls, Goal};
@@ -21,13 +22,12 @@ impl WorkAtJobSiteGoal {
         if mob.is_job_site_pending() {
             return true;
         }
-        let world = mob.get_mob_entity().living_entity.entity.world.load();
-        let daytime = world
-            .level_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .query_daytime();
-        (2_000..9_000).contains(&daytime)
+        let entity = &mob.get_mob_entity().living_entity.entity;
+        entity
+            .world
+            .load()
+            .villager_activity(&entity.block_pos.load(), false)
+            == Activity::Work
     }
 }
 

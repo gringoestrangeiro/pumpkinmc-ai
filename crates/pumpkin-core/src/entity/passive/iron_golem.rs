@@ -14,10 +14,10 @@ use crate::entity::{
     Entity, EntityBase,
     ai::behavior::neutral::apply_targets,
     ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
-        move_towards_target::MoveTowardsTargetGoal, offer_flower::OfferFlowerGoal,
-        revenge::RevengeGoal, wander_around::WanderAroundGoal,
+        active_target::ActiveTargetGoal, defend_village_target::DefendVillageTargetGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal, move_towards_target::MoveTowardsTargetGoal,
+        offer_flower::OfferFlowerGoal, revenge::RevengeGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -75,7 +75,7 @@ impl IronGolemEntity {
             );
             goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
 
-            // TODO: DefendVillageTargetGoal at 1.
+            target_selector.add_goal(1, DefendVillageTargetGoal::new());
             target_selector.add_goal(2, Box::new(RevengeGoal::new(true)));
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 3, 4, false);
             // Mirrors NearestAttackableTargetGoal<Mob>: any monster but creepers.

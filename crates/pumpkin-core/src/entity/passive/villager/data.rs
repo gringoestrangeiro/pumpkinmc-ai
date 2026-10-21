@@ -18,6 +18,27 @@ pub fn get_food_points(item: &Item) -> i32 {
     0
 }
 
+/// Vanilla `VillagerType.byBiome`.
+#[must_use]
+pub fn villager_type_for_biome(biome: &str) -> VillagerType {
+    match biome.strip_prefix("minecraft:").unwrap_or(biome) {
+        "badlands" | "desert" | "eroded_badlands" | "wooded_badlands" => VillagerType::Desert,
+        "bamboo_jungle" | "jungle" | "sparse_jungle" => VillagerType::Jungle,
+        "savanna" | "savanna_plateau" | "windswept_savanna" => VillagerType::Savanna,
+        "deep_frozen_ocean" | "frozen_ocean" | "frozen_river" | "ice_spikes" | "snowy_beach"
+        | "snowy_taiga" | "snowy_plains" | "grove" | "snowy_slopes" | "frozen_peaks"
+        | "jagged_peaks" => VillagerType::Snow,
+        "swamp" | "mangrove_swamp" => VillagerType::Swamp,
+        "old_growth_spruce_taiga"
+        | "old_growth_pine_taiga"
+        | "windswept_gravelly_hills"
+        | "windswept_hills"
+        | "taiga"
+        | "windswept_forest" => VillagerType::Taiga,
+        _ => VillagerType::Plains,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[repr(i32)]
 pub enum GossipType {
