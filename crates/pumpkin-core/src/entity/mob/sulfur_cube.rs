@@ -128,7 +128,7 @@ impl SulfurCubeEntity {
 
         let pos = entity.pos.load();
         let new_bb = BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &scaled_dimensions);
-        entity.bounding_box.store(new_bb);
+        entity.set_bounding_box(new_bb);
     }
 
     pub fn get_size(&self) -> i32 {

@@ -31,7 +31,7 @@ use pumpkin_util::GameMode;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::math::{get_section_cord, pack_degrees};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxBuildHasher, FxHashSet};
 use uuid::Uuid;
 
 use crate::entity::player::Player;
@@ -71,7 +71,8 @@ pub struct TrackedEntity {
     pub tracking_range: u32,
     pub update_interval: u32,
     pub track_deltas: bool,
-    pub seen_by: DashSet<Uuid>,
+    /// Probed once per world player for every packet this entity sends, hence the Fx hasher.
+    pub seen_by: DashSet<Uuid, FxBuildHasher>,
     /// Bedrock players in `seen_by`.
     bedrock_watchers: AtomicU32,
     pub last_section_pos: AtomicCell<Vector3<i32>>,
@@ -119,7 +120,7 @@ impl TrackedEntity {
             tracking_range: range,
             update_interval,
             track_deltas,
-            seen_by: DashSet::new(),
+            seen_by: DashSet::with_hasher(FxBuildHasher),
             bedrock_watchers: AtomicU32::new(0),
             last_section_pos: AtomicCell::new(last_section_pos),
             tick_count: AtomicU32::new(0),

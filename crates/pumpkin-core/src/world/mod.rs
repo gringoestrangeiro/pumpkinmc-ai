@@ -23,6 +23,7 @@ use tracing::{debug, error, info, trace, warn};
 mod active_chunks;
 pub mod brightness;
 pub mod chunker;
+pub(crate) mod entity_index;
 pub mod explosion;
 pub(crate) mod game_event;
 pub mod generation_cache;
@@ -225,7 +226,7 @@ fn bedrock_chest_block_actor(state_id: BlockStateId, position: BlockPos) -> Opti
     Some(nbt)
 }
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 impl PumpkinError for GetBlockError {
     fn is_kick(&self) -> bool {
@@ -240,6 +241,9 @@ impl PumpkinError for GetBlockError {
         None
     }
 }
+
+pub(crate) type EntityIndex = entity_index::SectionIndex<Arc<dyn EntityBase>>;
+pub(crate) type EntityIndexSlot = entity_index::IndexSlot<Arc<dyn EntityBase>>;
 
 /// Represents a Minecraft world, containing entities, players, and the underlying level data.
 ///
@@ -264,6 +268,10 @@ pub struct World {
     pub entities: ArcSwap<Vec<Arc<dyn EntityBase>>>,
     /// Lookup-only entities (e.g. multipart-mob hitboxes): findable by id, never ticked or saved.
     pub lookup_only_entities: ArcSwap<Vec<Arc<dyn EntityBase>>>,
+    /// `entities` filed by chunk column, for bounding box queries.
+    entity_index: Arc<EntityIndex>,
+    /// `entities` by entity id, kept in step with `entity_index`.
+    entities_by_id: DashMap<i32, Arc<dyn EntityBase>, FxBuildHasher>,
     /// The world's scoreboard, used for tracking scores, objectives, and display information.
     pub scoreboard: std::sync::Mutex<Scoreboard>,
     /// The world's worldborder, defining the playable area and controlling its expansion or contraction.
@@ -422,6 +430,8 @@ impl World {
             players: ArcSwap::new(Arc::new(Vec::new())),
             entities: ArcSwap::new(Arc::new(Vec::new())),
             lookup_only_entities: ArcSwap::new(Arc::new(Vec::new())),
+            entity_index: Arc::new(EntityIndex::default()),
+            entities_by_id: DashMap::with_hasher(FxBuildHasher),
             scoreboard: std::sync::Mutex::new(Scoreboard::default()),
             worldborder: std::sync::Mutex::new(Worldborder::new(
                 0.0,
@@ -4416,10 +4426,8 @@ impl World {
 
     /// Gets an entity by an entity id
     pub fn get_entity_by_id(&self, id: i32) -> Option<Arc<dyn EntityBase>> {
-        for entity in self.entities.load().iter() {
-            if entity.get_entity().entity_id == id {
-                return Some(entity.clone());
-            }
+        if let Some(entity) = self.entities_by_id.get(&id) {
+            return Some(entity.clone());
         }
         for entity in self.lookup_only_entities.load().iter() {
             if entity.get_entity().entity_id == id {
@@ -4446,46 +4454,32 @@ impl World {
 
     // Gets all entities at a Box
     pub fn get_all_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
-        let entities_guard = self.entities.load();
-        let players_guard = self.players.load();
-
-        entities_guard
-            .iter()
-            .map(|e| e.clone() as Arc<dyn EntityBase>)
-            .chain(
-                players_guard
-                    .iter()
-                    .map(|p| p.clone() as Arc<dyn EntityBase>),
-            )
-            .filter(|entity| entity.get_entity().bounding_box.load().intersects(aabb))
-            .collect()
-    }
-
-    // Gets all non Player entities at a Box
-    pub fn get_entities_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
-        self.entities
-            .load()
-            .iter()
-            .filter(|entity| entity.get_entity().bounding_box.load().intersects(aabb))
-            .cloned()
-            .collect()
-    }
-
-    /// Gets all entities and players whose bounding box intersects `aabb`.
-    pub fn get_entities_and_players_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
-        let mut result: Vec<Arc<dyn EntityBase>> = self
-            .entities
-            .load()
-            .iter()
-            .filter(|e| e.get_entity().bounding_box.load().intersects(aabb))
-            .cloned()
-            .collect();
+        let mut result = self.get_entities_at_box(aabb);
         for player in self.players.load().iter() {
             if player.get_entity().bounding_box.load().intersects(aabb) {
                 result.push(player.clone() as Arc<dyn EntityBase>);
             }
         }
         result
+    }
+
+    /// Gets all non-player entities whose bounding box intersects `aabb`, in `entities` order.
+    pub fn get_entities_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        self.entity_index
+            .query(aabb, |entity| entity.get_entity().bounding_box.load())
+            .unwrap_or_else(|| {
+                self.entities
+                    .load()
+                    .iter()
+                    .filter(|entity| entity.get_entity().bounding_box.load().intersects(aabb))
+                    .cloned()
+                    .collect()
+            })
+    }
+
+    /// Gets all entities and players whose bounding box intersects `aabb`.
+    pub fn get_entities_and_players_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        self.get_all_at_box(aabb)
     }
 
     // Gets all Player entities at a Box
@@ -4608,16 +4602,16 @@ impl World {
         radius: f64,
         predicate: impl Fn(&Arc<Player>) -> bool,
     ) -> Option<Arc<Player>> {
-        self.get_nearby_players(pos, radius)
-            .into_iter()
-            .filter(|player| predicate(player))
-            .min_by(|a, b| {
-                a.get_entity()
-                    .pos
-                    .load()
-                    .squared_distance_to_vec(&pos)
-                    .total_cmp(&b.get_entity().pos.load().squared_distance_to_vec(&pos))
+        let radius_squared = radius.powi(2);
+        self.players
+            .load()
+            .iter()
+            .filter_map(|player| {
+                let distance = player.get_entity().pos.load().squared_distance_to_vec(&pos);
+                (distance <= radius_squared && predicate(player)).then_some((distance, player))
             })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, player)| player.clone())
     }
 
     /// Closest entity that satisfies `predicate`. See [`Self::get_nearest_player`] for why this is
@@ -4629,19 +4623,20 @@ impl World {
         entity_types: Option<&[&'static EntityType]>,
         predicate: impl Fn(&Arc<dyn EntityBase>) -> bool,
     ) -> Option<Arc<dyn EntityBase>> {
-        self.get_nearby_entities(pos, radius)
-            .into_values()
-            .filter(|entity| {
-                entity_types.is_none_or(|types| types.contains(&entity.get_entity().entity_type))
-                    && predicate(entity)
+        let radius_squared = radius.powi(2);
+        self.entities
+            .load()
+            .iter()
+            .filter_map(|entity| {
+                let base_entity = entity.get_entity();
+                let distance = base_entity.pos.load().squared_distance_to_vec(&pos);
+                (distance <= radius_squared
+                    && entity_types.is_none_or(|types| types.contains(&base_entity.entity_type))
+                    && predicate(entity))
+                .then_some((distance, entity))
             })
-            .min_by(|a, b| {
-                a.get_entity()
-                    .pos
-                    .load()
-                    .squared_distance_to_vec(&pos)
-                    .total_cmp(&b.get_entity().pos.load().squared_distance_to_vec(&pos))
-            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, entity)| entity.clone())
     }
 
     pub fn get_closest_player(&self, pos: Vector3<f64>, radius: f64) -> Option<Arc<Player>> {
@@ -4685,9 +4680,16 @@ impl World {
         bounding_box: BoundingBox,
         predicate: impl Fn(&dyn EntityBase) -> bool,
     ) {
-        self.extend_entities_where(list, max_list_capacity, |e| {
-            bounding_box.intersects(&e.get_entity().bounding_box.load()) && predicate(e)
-        });
+        if list.len() >= max_list_capacity {
+            return;
+        }
+        Self::extend_entities_from(
+            list,
+            max_list_capacity,
+            &self.players.load(),
+            &self.get_entities_at_box(&bounding_box),
+            |e| bounding_box.intersects(&e.get_entity().bounding_box.load()) && predicate(e),
+        );
     }
 
     /// Adds entities to the provided [`Vec`] that satisfy a particular condition.
@@ -4704,11 +4706,28 @@ impl World {
         max_list_capacity: usize,
         predicate: impl Fn(&dyn EntityBase) -> bool,
     ) {
+        Self::extend_entities_from(
+            list,
+            max_list_capacity,
+            &self.players.load(),
+            &self.entities.load(),
+            predicate,
+        );
+    }
+
+    /// Body of [`Self::extend_entities_where`]: `players` first, then `entities`.
+    fn extend_entities_from(
+        list: &mut Vec<Arc<dyn EntityBase>>,
+        max_list_capacity: usize,
+        players: &[Arc<Player>],
+        entities: &[Arc<dyn EntityBase>],
+        predicate: impl Fn(&dyn EntityBase) -> bool,
+    ) {
         if list.len() >= max_list_capacity {
             return;
         }
         // Loop the players.
-        for player in self.players.load().iter() {
+        for player in players {
             if !predicate(player.as_ref()) {
                 continue;
             }
@@ -4720,7 +4739,7 @@ impl World {
             }
         }
         // Same with entities.
-        for entity in self.entities.load().iter() {
+        for entity in entities {
             if !predicate(entity.as_ref()) {
                 continue;
             }
@@ -4923,6 +4942,7 @@ impl World {
         self.entity_tracker.add_entity(&entity, self);
         self.spawn_state.load().add_entity(self, entity.as_ref());
 
+        self.index_entity(&entity);
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
@@ -5017,12 +5037,59 @@ impl World {
         self.spawn_state.load().add_entity(self, entity.as_ref());
         self.entity_tracker.add_entity(&entity, self);
 
+        self.index_entity(&entity);
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
             new_entities
         });
         self.add_pending_riders(&entity);
+    }
+
+    /// Files an entity that is about to be pushed onto `entities` in the entity index. Indexing
+    /// first means a racing `remove_entity` that drops it from the list also finds its entry.
+    fn index_entity(&self, entity: &Arc<dyn EntityBase>) {
+        let base_entity = entity.get_entity();
+        let mut slot = base_entity
+            .index_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_some() {
+            return;
+        }
+        let (key, seq) = self
+            .entity_index
+            .insert(entity.clone(), &base_entity.bounding_box.load());
+        self.entities_by_id
+            .insert(base_entity.entity_id, entity.clone());
+        *slot = Some(EntityIndexSlot {
+            index: Arc::downgrade(&self.entity_index),
+            key,
+            seq,
+        });
+    }
+
+    /// Drops an entity that just left `entities` from the entity index.
+    fn unindex_entity(&self, entity: &dyn EntityBase) {
+        let removed = {
+            let mut slot = entity
+                .get_entity()
+                .index_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match slot.take() {
+                Some(own) if std::ptr::eq(own.index.as_ptr(), Arc::as_ptr(&self.entity_index)) => (
+                    self.entity_index.remove(own.seq, own.key),
+                    self.entities_by_id.remove(&entity.get_entity().entity_id),
+                ),
+                other => {
+                    *slot = other;
+                    (None, None)
+                }
+            }
+        };
+        // Dropped outside the locks, they may hold the last reference to the entity.
+        drop(removed);
     }
 
     /// Registers an entity for `get_entity_by_id` only: no tracking, ticking, or persistence.
@@ -5059,11 +5126,22 @@ impl World {
 
         self.spawn_state.load().remove_entity(self, entity);
         self.entity_tracker.remove_entity(entity, self);
+        let mut removed = Vec::new();
         self.entities.rcu(|current_entities| {
+            removed.clear();
             let mut new_entities = (**current_entities).clone();
-            new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
+            new_entities.retain(|e| {
+                let keep = e.get_entity().entity_uuid != base_entity.entity_uuid;
+                if !keep {
+                    removed.push(e.clone());
+                }
+                keep
+            });
             new_entities
         });
+        for removed_entity in removed {
+            self.unindex_entity(removed_entity.as_ref());
+        }
         self.lookup_only_entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
@@ -5100,6 +5178,9 @@ impl World {
             });
             new_entities
         });
+        for entity in &entities_to_remove {
+            self.unindex_entity(entity.as_ref());
+        }
 
         self.save_entities_by_chunk(&entities_to_remove, chunks_set.iter().copied())
             .await;

@@ -251,7 +251,7 @@ impl EnderDragonEntity {
             let dimensions = EntityDimensions::new(width, height, 0.0);
             part_entity.entity_dimension.store(dimensions);
             let part_pos = part_entity.pos.load();
-            part_entity.bounding_box.store(BoundingBox::new_from_pos(
+            part_entity.set_bounding_box(BoundingBox::new_from_pos(
                 part_pos.x,
                 part_pos.y,
                 part_pos.z,

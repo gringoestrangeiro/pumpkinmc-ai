@@ -3,7 +3,8 @@ use crate::{
     net::{ClientPlatform, bedrock::BedrockClient, java::JavaClient},
     server::Server,
     world::{
-        World,
+        EntityIndexSlot, World,
+        entity_index::IndexKey,
         portal::{NetherPortal, PortalProcessor, PortalType, SourcePortalInfo},
     },
 };
@@ -1007,8 +1008,11 @@ pub struct Entity {
     pub pitch: AtomicCell<f32>,
     /// The entity's current pose (e.g., standing, sitting, swimming).
     pub pose: AtomicCell<EntityPose>,
-    /// The bounding box of an entity (hitbox)
+    /// The bounding box of an entity (hitbox). Write it through [`Entity::set_bounding_box`] so
+    /// the world's entity index follows it.
     pub bounding_box: AtomicCell<BoundingBox>,
+    /// This entity's entry in its world's entity index, while it is in the world's entity list.
+    pub(crate) index_slot: std::sync::Mutex<Option<EntityIndexSlot>>,
     ///The size (width and height) of the bounding box
     pub entity_dimension: AtomicCell<EntityDimensions>,
     /// Whether this entity is invulnerable to all damage
@@ -1222,6 +1226,7 @@ impl Entity {
             last_sent_pos: AtomicCell::new(position),
             last_sent_velocity: AtomicCell::new(Vector3::default()),
             custom_data: std::sync::Mutex::new(NbtCompound::new()),
+            index_slot: std::sync::Mutex::new(None),
         }
     }
 
@@ -1463,6 +1468,25 @@ impl Entity {
         f64::from(self.entity_dimension.load().eye_height)
     }
 
+    /// Stores the bounding box and moves the entity's world index entry to match it.
+    pub fn set_bounding_box(&self, bounding_box: BoundingBox) {
+        self.bounding_box.store(bounding_box);
+        let mut slot = self
+            .index_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(slot) = slot.as_mut() {
+            // Read back under the lock: with racing writers, the last one here sees the last store.
+            let key = IndexKey::of(&self.bounding_box.load());
+            if key != slot.key {
+                if let Some(index) = slot.index.upgrade() {
+                    index.relocate(slot.seq, slot.key, key);
+                }
+                slot.key = key;
+            }
+        }
+    }
+
     /// Updates the entity's position, block position, and chunk position.
     ///
     /// This function calculates the new position, block position, and chunk position based on the provided coordinates. If any of these values change, the corresponding fields are updated.
@@ -1470,7 +1494,7 @@ impl Entity {
         let pos = self.pos.load();
         if pos != new_position {
             self.pos.store(new_position);
-            self.bounding_box.store(BoundingBox::new_from_pos(
+            self.set_bounding_box(BoundingBox::new_from_pos(
                 new_position.x,
                 new_position.y,
                 new_position.z,
@@ -3318,7 +3342,7 @@ impl Entity {
             let dimension = self.get_dimensions(pose);
             let position = self.pos.load();
             let aabb = BoundingBox::new_from_pos(position.x, position.y, position.z, &dimension);
-            self.bounding_box.store(aabb);
+            self.set_bounding_box(aabb);
             self.entity_dimension.store(dimension);
             dimension
         } else {
