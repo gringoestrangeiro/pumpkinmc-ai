@@ -564,8 +564,8 @@ impl ChunkData {
             // block_states
             let block_states_nbt = block_lock[i].to_disk_nbt();
             let mut bs_comp = NbtCompound::new();
-            if let Some(ref data_arr) = block_states_nbt.data {
-                bs_comp.put("data", NbtTag::LongArray(data_arr.to_vec()));
+            if let Some(data_arr) = block_states_nbt.data {
+                bs_comp.put("data", NbtTag::LongArray(data_arr.into_vec()));
             }
             let palette_tags: Vec<NbtTag> = block_states_nbt
                 .palette
@@ -598,8 +598,8 @@ impl ChunkData {
             // biomes
             let biomes_nbt = biome_lock[i].to_disk_nbt();
             let mut b_comp = NbtCompound::new();
-            if let Some(ref data_arr) = biomes_nbt.data {
-                b_comp.put("data", NbtTag::LongArray(data_arr.to_vec()));
+            if let Some(data_arr) = biomes_nbt.data {
+                b_comp.put("data", NbtTag::LongArray(data_arr.into_vec()));
             }
             let biome_palette_tags: Vec<NbtTag> = biomes_nbt
                 .palette
