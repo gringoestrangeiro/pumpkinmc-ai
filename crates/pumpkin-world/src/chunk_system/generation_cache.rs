@@ -15,6 +15,7 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::HeightMap;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
+use std::cell::RefCell;
 use tracing::debug;
 
 pub struct Cache {
@@ -719,16 +720,20 @@ impl Cache {
                 }
             },
             StagedChunkEnum::Lighting => {
-                let mut engine = crate::lighting::LightEngine::new();
-                engine.initialize_light(self, lighting_config);
+                thread_local! {
+                    // initialize_light() clears the engine before and after use; keeping it per
+                    // worker thread only saves reallocating its queues and visited set.
+                    static LIGHT_ENGINE: RefCell<crate::lighting::LightEngine> =
+                        RefCell::new(crate::lighting::LightEngine::new());
+                }
+                LIGHT_ENGINE
+                    .with_borrow_mut(|engine| engine.initialize_light(self, lighting_config));
                 // Only set stage to Lighting if it wasn't already at Lighting or higher
                 // (initialize_light may short-circuit for already-lit chunks)
                 let chunk = self.chunks[mid].get_proto_chunk_mut();
                 if chunk.stage < StagedChunkEnum::Lighting {
                     chunk.stage = StagedChunkEnum::Lighting;
                 }
-                // Engine's internal state is cleared by initialize_light() and will be dropped here
-                drop(engine);
             }
             StagedChunkEnum::Spawn => {
                 ProtoChunk::spawn_mobs(self, block_registry);

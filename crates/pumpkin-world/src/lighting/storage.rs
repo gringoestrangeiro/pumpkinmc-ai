@@ -61,16 +61,17 @@ pub fn get_block_light(cache: &Cache, pos: BlockPos) -> u8 {
     }
 }
 
+/// Returns whether the level was stored, i.e. the position has a light section.
 #[inline]
-pub fn set_block_light(cache: &mut Cache, pos: BlockPos, level: u8) {
+pub fn set_block_light(cache: &mut Cache, pos: BlockPos, level: u8) -> bool {
     let chunk_x = pos.0.x >> 4;
     let chunk_z = pos.0.z >> 4;
 
     let Some(idx) = get_chunk_index(cache, chunk_x, chunk_z) else {
-        return;
+        return false;
     };
     let Some(section_y) = get_section_y(cache, pos.0.y) else {
-        return;
+        return false;
     };
 
     let x = (pos.0.x & 15) as usize;
@@ -94,11 +95,14 @@ pub fn set_block_light(cache: &mut Cache, pos: BlockPos, level: u8) {
             if marked_dirty {
                 c.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+            marked_dirty
         }
         Chunk::Proto(c) => {
             if section_y < c.light.block_light.len() {
                 c.light.block_light[section_y].set(x, y, z, level);
+                return true;
             }
+            false
         }
     }
 }
@@ -141,16 +145,17 @@ pub fn get_sky_light(cache: &Cache, pos: BlockPos) -> u8 {
     }
 }
 
+/// Returns whether the level was stored, i.e. the position has a light section.
 #[inline]
-pub fn set_sky_light(cache: &mut Cache, pos: BlockPos, level: u8) {
+pub fn set_sky_light(cache: &mut Cache, pos: BlockPos, level: u8) -> bool {
     let chunk_x = pos.0.x >> 4;
     let chunk_z = pos.0.z >> 4;
 
     let Some(idx) = get_chunk_index(cache, chunk_x, chunk_z) else {
-        return;
+        return false;
     };
     let Some(section_y) = get_section_y(cache, pos.0.y) else {
-        return;
+        return false;
     };
 
     let x = (pos.0.x & 15) as usize;
@@ -174,11 +179,14 @@ pub fn set_sky_light(cache: &mut Cache, pos: BlockPos, level: u8) {
             if marked_dirty {
                 c.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+            marked_dirty
         }
         Chunk::Proto(c) => {
             if section_y < c.light.sky_light.len() {
                 c.light.sky_light[section_y].set(x, y, z, level);
+                return true;
             }
+            false
         }
     }
 }

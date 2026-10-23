@@ -9,12 +9,14 @@ use pumpkin_util::HeightMap;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use std::collections::VecDeque;
+use std::sync::LazyLock;
 
 use crate::ProtoChunk;
 
 pub trait LightProvider {
     fn get_light(cache: &Cache, pos: BlockPos) -> u8;
-    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8);
+    /// Returns whether the level was stored, i.e. the position has a light section.
+    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8) -> bool;
     fn get_light_proto(
         chunk: &ProtoChunk,
         section_idx: usize,
@@ -22,6 +24,7 @@ pub trait LightProvider {
         ly: usize,
         lz: usize,
     ) -> u8;
+    /// Returns whether the level was stored, i.e. the chunk has the light section.
     fn set_light_proto(
         chunk: &mut ProtoChunk,
         section_idx: usize,
@@ -29,7 +32,7 @@ pub trait LightProvider {
         ly: usize,
         lz: usize,
         level: u8,
-    );
+    ) -> bool;
     fn propagate_level(current_level: u8, opacity: u8, dir: BlockDirection) -> u8;
 }
 
@@ -40,8 +43,8 @@ impl LightProvider for BlockLightProvider {
         get_block_light(cache, pos)
     }
     #[inline]
-    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8) {
-        set_block_light(cache, pos, level);
+    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8) -> bool {
+        set_block_light(cache, pos, level)
     }
     #[inline]
     fn get_light_proto(
@@ -65,10 +68,12 @@ impl LightProvider for BlockLightProvider {
         ly: usize,
         lz: usize,
         level: u8,
-    ) {
+    ) -> bool {
         if let Some(c) = chunk.light.block_light.get_mut(section_idx) {
             c.set(lx, ly, lz, level);
+            return true;
         }
+        false
     }
     #[inline]
     fn propagate_level(current_level: u8, opacity: u8, _dir: BlockDirection) -> u8 {
@@ -83,8 +88,8 @@ impl LightProvider for SkyLightProvider {
         get_sky_light(cache, pos)
     }
     #[inline]
-    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8) {
-        set_sky_light(cache, pos, level);
+    fn set_light(cache: &mut Cache, pos: BlockPos, level: u8) -> bool {
+        set_sky_light(cache, pos, level)
     }
     #[inline]
     fn get_light_proto(
@@ -108,10 +113,12 @@ impl LightProvider for SkyLightProvider {
         ly: usize,
         lz: usize,
         level: u8,
-    ) {
+    ) -> bool {
         if let Some(c) = chunk.light.sky_light.get_mut(section_idx) {
             c.set(lx, ly, lz, level);
+            return true;
         }
+        false
     }
     #[inline]
     fn propagate_level(current_level: u8, opacity: u8, dir: BlockDirection) -> u8 {
@@ -123,10 +130,51 @@ impl LightProvider for SkyLightProvider {
     }
 }
 
+/// Light dampening of every block state as this engine applies it: 0 for air, otherwise the
+/// state's opacity, raised to at least 1 when the state can occlude.
+static LIGHT_DAMPENING: LazyLock<Box<[u8]>> = LazyLock::new(|| {
+    (0..BlockStateId::COUNT)
+        .map(|raw| {
+            let state_id = BlockStateId::new_or_air(raw);
+            if state_id == BlockStateId::AIR {
+                return 0;
+            }
+            let state = state_id.to_state();
+            if state.can_occlude() {
+                state.opacity.max(1)
+            } else {
+                state.opacity
+            }
+        })
+        .collect()
+});
+
+#[inline]
+const fn light_dampening(table: &[u8], state_id: BlockStateId) -> u8 {
+    table[state_id.as_u16() as usize]
+}
+
+/// Queued light level that has to be read back from storage when the entry is processed.
+const UNKNOWN_LEVEL: u8 = u8::MAX;
+
 #[derive(Clone, Copy)]
 pub struct PropagationEntry {
     pos: BlockPos,
     skip_direction: Option<BlockDirection>,
+    /// Light stored at `pos` when it was queued. Positions queued by `propagate` are marked
+    /// visited, so nothing writes them again before they are popped. Seeds are not, and use
+    /// `UNKNOWN_LEVEL`.
+    level: u8,
+}
+
+impl PropagationEntry {
+    const fn seed(pos: BlockPos, skip_direction: Option<BlockDirection>) -> Self {
+        Self {
+            pos,
+            skip_direction,
+            level: UNKNOWN_LEVEL,
+        }
+    }
 }
 
 pub struct VisitedBitSet {
@@ -211,6 +259,27 @@ impl VisitedBitSet {
         }
     }
 
+    /// Bit index of the position when it lies inside the tracked box and is not visited yet.
+    #[inline]
+    fn unvisited_index(&self, x: i32, y: i32, z: i32) -> Option<usize> {
+        let lx = (x - self.min_x) as usize;
+        let ly = (y - self.min_y) as usize;
+        let lz = (z - self.min_z) as usize;
+        if lx >= self.size_x || ly >= self.size_y || lz >= self.size_z {
+            return None;
+        }
+        let idx = (ly * self.size_z + lz) * self.size_x + lx;
+        let word = *self.bits.get(idx >> 6)?;
+        (word & (1u64 << (idx & 63)) == 0).then_some(idx)
+    }
+
+    #[inline]
+    fn mark_index(&mut self, idx: usize) {
+        if let Some(w) = self.bits.get_mut(idx >> 6) {
+            *w |= 1u64 << (idx & 63);
+        }
+    }
+
     #[inline]
     #[must_use]
     pub fn is_visited(&self, x: i32, y: i32, z: i32) -> bool {
@@ -255,7 +324,6 @@ impl<P: LightProvider> LightPropagator<P> {
         self.decrease_queue.clear();
     }
 
-    #[expect(clippy::too_many_lines)]
     pub fn propagate(&mut self, cache: &mut Cache) {
         let cache_x = cache.x;
         let cache_z = cache.z;
@@ -270,19 +338,22 @@ impl<P: LightProvider> LightPropagator<P> {
         let size_y = (max_y - min_y) as usize;
         self.visited
             .ensure_capacity(min_x, min_y, min_z, size_x, size_y, size_z);
+        let dampening: &[u8] = &LIGHT_DAMPENING;
 
         while let Some(entry) = self.queue.pop_front() {
             let pos = entry.pos;
 
-            let current_light = P::get_light(cache, pos);
+            let current_light = if entry.level == UNKNOWN_LEVEL {
+                P::get_light(cache, pos)
+            } else {
+                entry.level
+            };
             if current_light <= 1 {
                 continue;
             }
 
             for dir in BlockDirection::all() {
-                if let Some(skip_dir) = entry.skip_direction
-                    && dir == skip_dir
-                {
+                if entry.skip_direction == Some(dir) {
                     continue;
                 }
 
@@ -291,9 +362,9 @@ impl<P: LightProvider> LightPropagator<P> {
                 let ny = neighbor_pos.0.y;
                 let nz = neighbor_pos.0.z;
 
-                if self.visited.is_visited(nx, ny, nz) {
+                let Some(visited_index) = self.visited.unvisited_index(nx, ny, nz) else {
                     continue;
-                }
+                };
 
                 if ny < min_y || ny >= max_y {
                     continue;
@@ -312,66 +383,45 @@ impl<P: LightProvider> LightPropagator<P> {
                 let section_idx = ((ny - min_y) >> 4) as usize;
                 let local_y = (ny & 15) as usize;
 
-                let (opacity, neighbor_light) = match &cache.chunks[chunk_idx] {
+                let neighbor_light = match &cache.chunks[chunk_idx] {
                     Chunk::Proto(c) => {
-                        let local_y_proto = ny - min_y;
-                        let state_id =
-                            c.get_block_state_raw(local_x as i32, local_y_proto, local_z as i32);
-                        let op = if state_id == BlockStateId::AIR {
-                            0
-                        } else {
-                            let s = state_id.to_state();
-                            if s.can_occlude() {
-                                s.opacity.max(1)
-                            } else {
-                                s.opacity
-                            }
-                        };
-                        let light = P::get_light_proto(c, section_idx, local_x, local_y, local_z);
-                        (op, light)
+                        P::get_light_proto(c, section_idx, local_x, local_y, local_z)
                     }
-                    Chunk::Level(lvl) => {
-                        let state_id = lvl
-                            .section
-                            .get_block_absolute_y(local_x, ny, local_z)
-                            .unwrap_or(BlockStateId::AIR);
-                        let op = if state_id == BlockStateId::AIR {
-                            0
-                        } else {
-                            let s = state_id.to_state();
-                            if s.can_occlude() {
-                                s.opacity.max(1)
-                            } else {
-                                s.opacity
-                            }
-                        };
-                        (op, P::get_light(cache, neighbor_pos))
-                    }
+                    Chunk::Level(_) => P::get_light(cache, neighbor_pos),
                 };
+                // Opacity only lowers the propagated level, so skip the block lookup when
+                // even a transparent neighbor would not be brightened.
+                if P::propagate_level(current_light, 0, dir) <= neighbor_light {
+                    continue;
+                }
+
+                let state_id = match &cache.chunks[chunk_idx] {
+                    Chunk::Proto(c) => {
+                        c.get_block_state_raw(local_x as i32, ny - min_y, local_z as i32)
+                    }
+                    Chunk::Level(lvl) => lvl
+                        .section
+                        .get_block_absolute_y(local_x, ny, local_z)
+                        .unwrap_or(BlockStateId::AIR),
+                };
+                let opacity = light_dampening(dampening, state_id);
 
                 let new_level = P::propagate_level(current_light, opacity, dir);
 
                 if new_level > neighbor_light {
-                    match &mut cache.chunks[chunk_idx] {
+                    let stored = match &mut cache.chunks[chunk_idx] {
                         Chunk::Proto(c) => {
-                            P::set_light_proto(
-                                c,
-                                section_idx,
-                                local_x,
-                                local_y,
-                                local_z,
-                                new_level,
-                            );
+                            P::set_light_proto(c, section_idx, local_x, local_y, local_z, new_level)
                         }
-                        Chunk::Level(_) => {
-                            P::set_light(cache, neighbor_pos, new_level);
-                        }
-                    }
+                        Chunk::Level(_) => P::set_light(cache, neighbor_pos, new_level),
+                    };
 
-                    if new_level > 1 && self.visited.test_and_set(nx, ny, nz) {
+                    if new_level > 1 {
+                        self.visited.mark_index(visited_index);
                         self.queue.push_back(PropagationEntry {
                             pos: neighbor_pos,
                             skip_direction: Some(dir.opposite()),
+                            level: if stored { new_level } else { UNKNOWN_LEVEL },
                         });
                     }
                 }
@@ -418,10 +468,8 @@ impl<P: LightProvider> LightPropagator<P> {
                     let nx = neighbor_pos.0.x;
                     let ny = neighbor_pos.0.y;
                     let nz = neighbor_pos.0.z;
-                    self.queue.push_back(PropagationEntry {
-                        pos: neighbor_pos,
-                        skip_direction: None,
-                    });
+                    self.queue
+                        .push_back(PropagationEntry::seed(neighbor_pos, None));
                     self.visited.test_and_set(nx, ny, nz);
                 }
             }
@@ -496,10 +544,7 @@ impl BlockLightPropagator {
                                 }
                                 if self.visited.test_and_set(x, y, z) {
                                     let pos = BlockPos(Vector3::new(x, y, z));
-                                    self.queue.push_back(PropagationEntry {
-                                        pos,
-                                        skip_direction: None,
-                                    });
+                                    self.queue.push_back(PropagationEntry::seed(pos, None));
                                 }
                             }
                         }
@@ -527,10 +572,7 @@ impl BlockLightPropagator {
                                 }
                                 if self.visited.test_and_set(x, y, z) {
                                     let pos = BlockPos(Vector3::new(x, y, z));
-                                    self.queue.push_back(PropagationEntry {
-                                        pos,
-                                        skip_direction: None,
-                                    });
+                                    self.queue.push_back(PropagationEntry::seed(pos, None));
                                 }
                             }
                         }
@@ -567,6 +609,7 @@ impl SkyLightPropagator {
             .ensure_capacity(min_x, bottom_y, min_z, size_x, size_y, size_z);
 
         let mut surface_heights = [0i32; 18 * 18];
+        let dampening: &[u8] = &LIGHT_DAMPENING;
 
         for z in start_z..end_z {
             let chunk_z = z >> 4;
@@ -612,16 +655,7 @@ impl SkyLightPropagator {
                                 local_y_proto,
                                 local_z as i32,
                             );
-                            let opacity = if state_id == BlockStateId::AIR {
-                                0
-                            } else {
-                                let s = state_id.to_state();
-                                if s.can_occlude() {
-                                    s.opacity.max(1) as i32
-                                } else {
-                                    s.opacity as i32
-                                }
-                            };
+                            let opacity = i32::from(light_dampening(dampening, state_id));
 
                             light = light.saturating_sub(opacity);
                             let light_val = if light <= 0 { 0 } else { light as u8 };
@@ -662,16 +696,7 @@ impl SkyLightPropagator {
                                 .section
                                 .get_block_absolute_y(local_x, y, local_z)
                                 .unwrap_or(BlockStateId::AIR);
-                            let opacity = if state_id == BlockStateId::AIR {
-                                0
-                            } else {
-                                let s = state_id.to_state();
-                                if s.can_occlude() {
-                                    s.opacity.max(1) as i32
-                                } else {
-                                    s.opacity as i32
-                                }
-                            };
+                            let opacity = i32::from(light_dampening(dampening, state_id));
 
                             light = light.saturating_sub(opacity);
                             let light_val = if light <= 0 { 0 } else { light as u8 };
@@ -741,10 +766,7 @@ impl SkyLightPropagator {
                     if (is_at_surface || below_neighbor) && self.visited.test_and_set(x, y, z) {
                         let skip_dir = (y >= top_y).then_some(BlockDirection::Up);
 
-                        self.queue.push_back(PropagationEntry {
-                            pos,
-                            skip_direction: skip_dir,
-                        });
+                        self.queue.push_back(PropagationEntry::seed(pos, skip_dir));
                     }
                 }
             }
@@ -812,10 +834,9 @@ impl LightEngine {
                 .visited
                 .test_and_set(pos.0.x, pos.0.y, pos.0.z)
             {
-                self.block_light.queue.push_back(PropagationEntry {
-                    pos,
-                    skip_direction: None,
-                });
+                self.block_light
+                    .queue
+                    .push_back(PropagationEntry::seed(pos, None));
             }
         }
     }
