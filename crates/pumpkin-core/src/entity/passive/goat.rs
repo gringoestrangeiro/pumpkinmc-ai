@@ -455,7 +455,7 @@ impl Goal for RamGoal {
                     let effect_level = |effect| {
                         living
                             .get_effect(effect)
-                            .map_or(0, |effect| effect.amplifier + 1)
+                            .map_or(0, |effect| i32::from(effect.amplifier) + 1)
                     };
                     let speed_boost = 0.25
                         * (effect_level(&StatusEffect::SPEED)
