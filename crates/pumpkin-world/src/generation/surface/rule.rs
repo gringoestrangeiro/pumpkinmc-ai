@@ -31,6 +31,21 @@ pub fn try_apply_material_rule(
     }
 }
 
+/// The block Y range `[min, max)` that the rule's ore vein rules can place in, if it has any.
+#[must_use]
+pub fn ore_vein_y_range(rule: &MaterialRule) -> Option<(i32, i32)> {
+    match rule {
+        MaterialRule::OreVein(ore_vein) => Some((ore_vein.min_y, ore_vein.max_y)),
+        MaterialRule::Sequence(sequence) => sequence
+            .sequence
+            .iter()
+            .filter_map(ore_vein_y_range)
+            .reduce(|(min_a, max_a), (min_b, max_b)| (min_a.min(min_b), max_a.max(max_b))),
+        MaterialRule::Condition(condition) => ore_vein_y_range(condition.then_run),
+        MaterialRule::Badlands(_) | MaterialRule::Block(_) => None,
+    }
+}
+
 pub struct BadLandsMaterialRule;
 
 impl BadLandsMaterialRule {

@@ -20,7 +20,9 @@ use pumpkin_util::{
 use rustc_hash::FxHashMap;
 
 use super::{
-    GlobalRandomConfig, biome_coords,
+    GlobalRandomConfig,
+    biome::BiomeFiddleCache,
+    biome_coords,
     blender::{Blender, BlenderImpl},
     feature::placed_features::PLACED_FEATURES,
     feature_order::select_features,
@@ -55,7 +57,7 @@ use crate::generation::structure::placement::should_generate_structure;
 use crate::generation::structure::structures::{
     StructureGeneratorContext, StructureInstance, StructurePiecesCollector, create_chunk_random,
 };
-use crate::generation::surface::rule::try_apply_material_rule;
+use crate::generation::surface::rule::{ore_vein_y_range, try_apply_material_rule};
 use crate::{
     chunk::CHUNK_AREA,
     generation::{biome, positions::chunk_pos},
@@ -1134,7 +1136,14 @@ impl ProtoChunk {
         z: i32,
     ) -> Option<u8> {
         let biome_pos = self.get_terrain_gen_biome_pos(x, y, z);
+        self.get_biome_id_from_neighborhood(surface_biomes, biome_pos)
+    }
 
+    fn get_biome_id_from_neighborhood(
+        &self,
+        surface_biomes: &SurfaceBiomeNeighborhood,
+        biome_pos: Vector3<i32>,
+    ) -> Option<u8> {
         if biome_pos.x >> 2 == self.x && biome_pos.z >> 2 == self.z {
             return Some(self.get_biome_id(biome_pos.x, biome_pos.y, biome_pos.z));
         }
@@ -1147,11 +1156,28 @@ impl ProtoChunk {
         Biome::from_id(self.get_terrain_gen_biome_id(x, y, z)).unwrap_or(&Biome::PLAINS)
     }
 
-    #[expect(clippy::too_many_lines)]
+    /// [`Self::get_terrain_gen_biome_id_from_neighborhood`] blended through the chunk's
+    /// precomputed fiddle offsets.
     #[expect(
         clippy::panic,
         reason = "surface scheduling guarantees a complete 3x3 biome neighborhood"
     )]
+    pub(crate) fn get_surface_biome_id(
+        &self,
+        surface_biomes: &SurfaceBiomeNeighborhood,
+        fiddles: &BiomeFiddleCache,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> u8 {
+        let biome_pos = fiddles.get_biome_blend(self.bottom_y(), self.height(), x, y, z);
+        let Some(biome_id) = self.get_biome_id_from_neighborhood(surface_biomes, biome_pos) else {
+            panic!("surface biome neighborhood must cover fuzzy biome lookup");
+        };
+        biome_id
+    }
+
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn build_surface(
         &mut self,
         generator: &super::generator::VanillaGenerator,
@@ -1178,13 +1204,24 @@ impl ProtoChunk {
             &terrain_cache.secondary_noise,
             settings.sea_level,
         );
-        let mut vein_context = settings.ore_veins_enabled.then(|| {
+        // Ore vein rules only read vein noise inside their own Y bounds, so only that slice of
+        // the chunk is sampled.
+        let vein_y_range = ore_vein_y_range(generator.surface_rule)
+            .filter(|_| settings.ore_veins_enabled)
+            .map(|(vein_min_y, vein_max_y)| {
+                (
+                    vein_min_y.max(i32::from(min_y)),
+                    vein_max_y.min(i32::from(min_y) + i32::from(self.height())),
+                )
+            })
+            .filter(|(vein_min_y, vein_max_y)| vein_min_y < vein_max_y);
+        let mut vein_context = vein_y_range.map(|(vein_min_y, vein_max_y)| {
             let volume = DensityVolume::with_block_step(
                 16,
-                self.height() as usize,
+                (vein_max_y - vein_min_y) as usize,
                 16,
                 start_x,
-                i32::from(min_y),
+                vein_min_y,
                 start_z,
             );
             let mut router = ChunkNoiseRouter::generate(
@@ -1204,6 +1241,15 @@ impl ProtoChunk {
             }
         });
         context.vein_context = vein_context.as_mut();
+        let fiddles = BiomeFiddleCache::new(
+            self.biome_mixer_seed,
+            Vector3::new(start_x, i32::from(min_y), start_z),
+            Vector3::new(
+                start_x + 15,
+                i32::from(min_y) + i32::from(self.height()),
+                start_z + 15,
+            ),
+        );
         for local_x in 0..16 {
             for local_z in 0..16 {
                 let x = start_x + local_x;
@@ -1217,11 +1263,7 @@ impl ProtoChunk {
                     top_block
                 };
 
-                let Some(this_biome) =
-                    self.get_terrain_gen_biome_id_from_neighborhood(surface_biomes, x, biome_y, z)
-                else {
-                    panic!("surface biome neighborhood must cover fuzzy biome lookup");
-                };
+                let this_biome = self.get_surface_biome_id(surface_biomes, &fiddles, x, biome_y, z);
                 if this_biome == Biome::ERODED_BADLANDS {
                     terrain_cache
                         .terrain_builder
@@ -1278,14 +1320,13 @@ impl ProtoChunk {
                     context.init_vertical(stone_depth_above, stone_depth_below, y, fluid_height);
 
                     if !state.is_air() && !state.is_liquid() {
-                        let Some(biome_id) = self.get_terrain_gen_biome_id_from_neighborhood(
+                        let biome_id = self.get_surface_biome_id(
                             surface_biomes,
+                            &fiddles,
                             context.block_pos_x,
                             context.block_pos_y,
                             context.block_pos_z,
-                        ) else {
-                            panic!("surface biome neighborhood must cover fuzzy biome lookup");
-                        };
+                        );
                         context.biome = Biome::from_id(biome_id).unwrap_or(&Biome::PLAINS);
                         let new_state = try_apply_material_rule(
                             generator.surface_rule,
