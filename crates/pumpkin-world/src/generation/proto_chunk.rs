@@ -104,6 +104,25 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
     fn get_sea_level(&self) -> i32 {
         self.get_center_chunk().get_sea_level()
     }
+    /// Vanilla `WorldGenRegion.scheduleTick` for a block: the tick is stored on the chunk that
+    /// owns the position and starts running once that chunk is promoted to a level chunk.
+    fn schedule_block_tick(&mut self, pos: &Vector3<i32>, block: &'static Block, delay: u16) {
+        if let Some(chunk) = self.get_chunk_mut(
+            section_coords::block_to_section(pos.x),
+            section_coords::block_to_section(pos.z),
+        ) {
+            chunk.schedule_block_tick(BlockPos(*pos), block, delay);
+        }
+    }
+    /// Vanilla `WorldGenRegion.scheduleTick` for a fluid, stored like [`Self::schedule_block_tick`].
+    fn schedule_fluid_tick(&mut self, pos: &Vector3<i32>, fluid: &'static Fluid) {
+        if let Some(chunk) = self.get_chunk_mut(
+            section_coords::block_to_section(pos.x),
+            section_coords::block_to_section(pos.z),
+        ) {
+            chunk.schedule_fluid_tick(pos.x, pos.y, pos.z, fluid);
+        }
+    }
 }
 
 const AIR_BLOCK: Block = Block::AIR;
@@ -164,6 +183,7 @@ pub struct ProtoChunk {
     pub blending_data: Option<crate::generation::blender::blending_data::BlendingData>,
     pub pending_block_entities: Vec<NbtCompound>,
     pending_structure_entities: Vec<NbtCompound>,
+    pub block_ticks: Vec<ScheduledTick<&'static Block>>,
     pub fluid_ticks: Vec<ScheduledTick<&'static Fluid>>,
 }
 
@@ -304,6 +324,7 @@ impl ProtoChunk {
             blending_data: None,
             pending_block_entities: Vec::new(),
             pending_structure_entities: Vec::new(),
+            block_ticks: Vec::new(),
             fluid_ticks: Vec::new(),
         }
     }
@@ -335,6 +356,10 @@ impl ProtoChunk {
             .values()
             .cloned()
             .collect();
+        // Ticks scheduled by an earlier generation pass (springs, structure fluids) are saved
+        // with the chunk and must survive resuming it.
+        proto_chunk.block_ticks = chunk_data.block_ticks.to_vec();
+        proto_chunk.fluid_ticks = chunk_data.fluid_ticks.to_vec();
 
         let section_data = &chunk_data.section;
         let heightmap_data = chunk_data
@@ -479,6 +504,15 @@ impl ProtoChunk {
         std::mem::take(&mut self.pending_structure_entities)
     }
 
+    pub fn schedule_block_tick(&mut self, pos: BlockPos, block: &'static Block, delay: u16) {
+        self.block_ticks.push(ScheduledTick {
+            delay,
+            priority: TickPriority::Normal,
+            position: pos,
+            value: block,
+        });
+    }
+
     pub fn schedule_fluid_tick(&mut self, x: i32, y: i32, z: i32, fluid: &'static Fluid) {
         self.fluid_ticks.push(ScheduledTick {
             delay: 0,
@@ -486,6 +520,16 @@ impl ProtoChunk {
             position: BlockPos::new(x, y, z),
             value: fluid,
         });
+    }
+
+    /// Vanilla `ProtoChunk.markPosForPostProcessing` for a position that holds a fluid.
+    /// Pumpkin has no post-processing pass, so the fluid tick that
+    /// `LevelChunk.postProcessGeneration` would run is scheduled directly instead.
+    pub fn mark_fluid_for_post_processing(&mut self, x: i32, y: i32, z: i32, state: &BlockState) {
+        let (fluid, fluid_state) = fluid_state_from_block_state(state.id);
+        if !fluid_state.is_empty {
+            self.schedule_fluid_tick(x, y, z, fluid);
+        }
     }
 
     fn maybe_update_surface_height_map(&mut self, index: usize, y: i16) {
@@ -1030,9 +1074,8 @@ impl ProtoChunk {
                     );
                     let block_state = state.unwrap_or(generator.default_block);
                     self.set_block_state(block_x, block_y, block_z, block_state);
-                    if should_schedule_fluid_update && block_state.is_liquid() {
-                        let (fluid, _) = fluid_state_from_block_state(block_state.id);
-                        self.schedule_fluid_tick(block_x, block_y, block_z, fluid);
+                    if should_schedule_fluid_update {
+                        self.mark_fluid_for_post_processing(block_x, block_y, block_z, block_state);
                     }
                 }
             }
@@ -1253,6 +1296,7 @@ impl ProtoChunk {
 
                         if let Some(state) = new_state {
                             self.set_block_state(x, y, z, state);
+                            self.mark_fluid_for_post_processing(x, y, z, state);
                         }
                     }
                 }
@@ -1836,6 +1880,10 @@ impl BlockPlacer for ProtoChunk {
 
     fn add_block_entity(&mut self, nbt: NbtCompound) {
         self.add_block_entity(nbt);
+    }
+
+    fn get_height(&self, heightmap: &HeightMap, x: i32, z: i32) -> Option<i32> {
+        Some(self.get_top_y(heightmap, x, z))
     }
 }
 

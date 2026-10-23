@@ -1,8 +1,11 @@
-use pumpkin_data::{BlockDirection, BlockState};
+use std::collections::HashSet;
+
+use pumpkin_data::tag::{RegistryKey, get_tag_ids};
+use pumpkin_data::{Block, BlockDirection, BlockId, BlockState};
 use pumpkin_util::{math::position::BlockPos, random::RandomGenerator};
 
 use crate::generation::proto_chunk::GenerationCache;
-use crate::world::WorldPortalExt;
+use crate::world::{WorldPortalExt, fluid_state_from_block_state};
 
 pub struct SpringFeatureFeature {
     pub state: &'static BlockState,
@@ -18,6 +21,25 @@ pub enum BlockWrapper {
 }
 
 impl BlockWrapper {
+    /// Resolves the entries to block ids, expanding `#tag` references.
+    #[must_use]
+    pub fn block_ids(&self) -> HashSet<BlockId> {
+        let names = match self {
+            Self::Single(name) => std::slice::from_ref(name),
+            Self::Multi(names) => names.as_slice(),
+        };
+        let mut ids = HashSet::new();
+        for name in names {
+            if let Some(tag) = name.strip_prefix('#') {
+                let tag_ids = get_tag_ids(RegistryKey::Block, tag).unwrap_or_default();
+                ids.extend(tag_ids.iter().filter_map(|&id| BlockId::new(id)));
+            } else if let Some(block) = Block::from_name(name) {
+                ids.insert(block.id);
+            }
+        }
+        ids
+    }
+
     fn contains(&self, name: &str) -> bool {
         let name_stripped = name.strip_prefix("minecraft:").unwrap_or(name);
         match self {
@@ -132,6 +154,8 @@ impl SpringFeatureFeature {
         }
         if valid == self.rock_count && air == self.hole_count {
             chunk.set_block_state(&pos.0, self.state);
+            let (fluid, _) = fluid_state_from_block_state(self.state.id);
+            chunk.schedule_fluid_tick(&pos.0, fluid);
             return true;
         }
         false
