@@ -36,25 +36,28 @@ impl FreezeTopLayerFeature {
                 let below_block = below.to_block_id();
 
                 let biome = chunk.get_biome_for_terrain_gen(x, y, z);
+                let sea_level = chunk.get_sea_level();
 
-                // Freeze check
-                if biome.weather.base_temperature() <= 0.15 && below_block == BlockId::WATER {
+                // Vanilla `Biome.shouldFreeze(level, belowPos, false)`: the temperature is taken
+                // at `belowPos` with the biome's modifier and height falloff, and only a source
+                // `LiquidBlock` of water freezes.
+                if !biome.weather.warm_enough_to_rain(x, below_y, z, sea_level)
+                    && below == Block::WATER.default_state.id
+                    && block_light_at(chunk, x, below_y, z) < 10
+                {
                     chunk.set_block_state(&below_vec, Block::ICE.default_state);
                     continue;
                 }
 
-                // Snow check
-                let top_temp =
-                    biome
-                        .weather
-                        .compute_temperature(x as f64, y, z as f64, chunk.get_sea_level());
-
-                if biome.weather.has_precipitation() && top_temp < 0.15 {
+                // Vanilla `Biome.shouldSnow(level, topPos)`.
+                if biome.weather.has_precipitation()
+                    && !biome.weather.warm_enough_to_rain(x, y, z, sea_level)
+                {
                     let top_raw = GenerationCache::get_block_state(chunk, &top_vec);
-                    // topPos must be air; belowPos must not be air (something to stand on)
-                    // with a full top face (unless overridden), in darkness (vanilla
-                    // only forms snow where block light is below 10).
-                    if top_raw.to_state().is_air()
+                    // topPos must be air or snow; belowPos must not be air (something to stand
+                    // on) with a full top face (unless overridden), in darkness (vanilla only
+                    // forms snow where block light is below 10).
+                    if (top_raw.to_state().is_air() || top_raw.to_block_id() == BlockId::SNOW)
                         && !below.to_state().is_air()
                         && !below_block.has_tag(tag::Block::MINECRAFT_CANNOT_SUPPORT_SNOW_LAYER)
                         && (below_block.has_tag(tag::Block::MINECRAFT_SUPPORT_OVERRIDE_SNOW_LAYER)

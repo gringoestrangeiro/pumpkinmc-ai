@@ -344,7 +344,7 @@ impl TreeFeature {
                     let pos = BlockPos(tree_pos.0.add_raw(x, y, z));
                     let rstate = GenerationCache::get_block_state(chunk, &pos.0);
                     let block = rstate.to_block_id();
-                    if Self::can_replace_or_log(rstate.to_state(), block)
+                    if self.trunk_placer.is_free(rstate.to_state(), block)
                         && (self.ignore_vines || block != BlockId::VINE)
                     {
                         continue;

@@ -163,17 +163,16 @@ impl IcebergFeature {
         let random_sign_x: i32 = if random.next_bool() { -1 } else { 1 };
         let random_sign_z: i32 = if random.next_bool() { -1 } else { 1 };
 
-        let mut x_off = if random.next_bool() {
-            width / 2 + 1 - random.next_bounded_i32((width - width / 2 - 1).max(1))
-        } else {
-            random.next_bounded_i32((width / 2 - 2).max(1))
-        };
+        // Vanilla always draws the inner offset first and then maybe replaces it.
+        let mut x_off = random.next_bounded_i32((width / 2 - 2).max(1));
+        if random.next_bool() {
+            x_off = width / 2 + 1 - random.next_bounded_i32((width - width / 2 - 1).max(1));
+        }
 
-        let mut z_off = if random.next_bool() {
-            width / 2 + 1 - random.next_bounded_i32((width - width / 2 - 1).max(1))
-        } else {
-            random.next_bounded_i32((width / 2 - 2).max(1))
-        };
+        let mut z_off = random.next_bounded_i32((width / 2 - 2).max(1));
+        if random.next_bool() {
+            z_off = width / 2 + 1 - random.next_bounded_i32((width - width / 2 - 1).max(1));
+        }
         if is_ellipse {
             let v = random.next_bounded_i32((shape_ellipse_a - 5).max(1));
             x_off = v;
@@ -347,9 +346,14 @@ impl IcebergFeature {
         {
             let randomness = !is_ellipse || random.next_f64() > 0.05;
             let divisor = if is_ellipse { 3 } else { 2 };
-            let threshold =
-                random.next_bounded_i32((height / divisor).max(1)) as f64 + height as f64 * 0.6;
-            if snow_on_top && bid != Block::WATER.id && h_diff as f64 <= threshold && randomness {
+            // The threshold draw only happens when the earlier `&&` operands hold.
+            if snow_on_top
+                && bid != Block::WATER.id
+                && h_diff as f64
+                    <= random.next_bounded_i32((height / divisor).max(1)) as f64
+                        + height as f64 * 0.6
+                && randomness
+            {
                 chunk.set_block_state(pos, Block::SNOW_BLOCK.default_state);
             } else {
                 chunk.set_block_state(pos, main_block);
