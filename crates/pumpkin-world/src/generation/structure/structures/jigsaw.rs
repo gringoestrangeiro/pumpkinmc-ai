@@ -4,8 +4,9 @@ use super::jigsaw_placement::{
 use crate::generation::structure::structures::{
     StructureGenerator, StructureGeneratorContext, StructurePieceBase, StructurePosition,
 };
+use crate::generation::structure::template::processor::HeightmapType;
 use crate::generation::structure::template::{
-    BlockMirror, BlockPlacer, BlockRotation, PaletteEntry, StructureTemplate,
+    BlockMirror, BlockPlacer, BlockRotation, PaletteEntry, StructureProcessor, StructureTemplate,
 };
 use pumpkin_util::math::block_box::BlockBox;
 use pumpkin_util::math::position::BlockPos;
@@ -19,6 +20,12 @@ pub enum JigsawProjection {
     Rigid,
     TerrainMatching,
 }
+
+/// The processor vanilla `StructureTemplatePool.Projection.TERRAIN_MATCHING` adds.
+const TERRAIN_MATCHING_GRAVITY: StructureProcessor = StructureProcessor::Gravity {
+    heightmap: HeightmapType::WorldSurfaceWg,
+    offset: -1,
+};
 
 static DYNAMIC_POOLS: std::sync::LazyLock<dashmap::DashMap<String, Arc<TemplatePool>>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
@@ -830,12 +837,21 @@ impl StructurePieceBase for PoolElementStructurePiece {
                     origin.y,
                     origin.z + corner.1.min(0),
                 );
-                let processors = match processor_list {
+                let mut processors = match processor_list {
                     ProcessorListRef::Named(name) => {
                         crate::generation::structure::template::processor::load_processor_list(name)
                     }
                     ProcessorListRef::Empty => Arc::from([]),
                 };
+                // Vanilla `SinglePoolElement.getSettings` appends the projection's processors
+                // after the element's own list.
+                if self.element.projection == JigsawProjection::TerrainMatching {
+                    processors = processors
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(TERRAIN_MATCHING_GRAVITY))
+                        .collect();
+                }
                 crate::generation::structure::template::place_template(
                     chunk,
                     &template,

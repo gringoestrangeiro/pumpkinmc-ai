@@ -268,10 +268,11 @@ impl StructurePieceBase for NetherFossilPiece {
         chunk_box: &BlockBox,
     ) {
         let fossil_bb = self.piece.bounding_box;
-        let mut enlarged_box = *chunk_box;
-        enlarged_box.encompass(&fossil_bb);
-
-        self.place_blocks(chunk, &enlarged_box);
+        // Vanilla widens the box to the whole fossil and writes into neighbouring chunks, but
+        // every chunk the fossil touches does so and the placement has no random step, so
+        // clipping to this chunk gives the same blocks. Pieces here only see the center
+        // `ProtoChunk`, which would wrap out-of-chunk writes back into this chunk.
+        self.place_blocks(chunk, chunk_box);
         Self::place_dried_ghast(chunk, seed, &fossil_bb, chunk_box);
     }
 }

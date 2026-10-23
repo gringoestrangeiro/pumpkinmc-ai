@@ -18,7 +18,9 @@ use crate::{
                 StructureGenerator, StructureGeneratorContext, StructurePiece, StructurePieceBase,
                 StructurePiecesCollector, StructurePosition, WorldPortalExt,
             },
-            template::{BlockStateResolver, StructureTemplate, get_template},
+            template::{
+                BlockStateResolver, StructurePlaceSettings, StructureTemplate, get_template,
+            },
         },
     },
 };
@@ -305,10 +307,16 @@ impl StructurePieceBase for ShipwreckPiece {
             self.adjust_position_height(target_y);
         }
 
+        // Vanilla `StructureTemplate.placeInWorld` and `filterBlocks` both pick the palette
+        // with `getRandomPalette(palettes, templatePosition)`; shipwreck templates have one
+        // palette per wood type.
+        let palette = StructurePlaceSettings::new()
+            .get_random_palette(self.template.palettes(), self.template_position);
+
         // Place non-marker blocks
         let box_limit = self.piece.bounding_box;
-        for block in &self.template.blocks {
-            let palette_entry = &self.template.palette[block.state as usize];
+        for block in palette.blocks() {
+            let palette_entry = &block.state;
 
             if palette_entry.name == "minecraft:structure_block"
                 || palette_entry.name == "minecraft:air"
@@ -394,8 +402,8 @@ impl StructurePieceBase for ShipwreckPiece {
         }
 
         // Process data markers
-        for block in &self.template.blocks {
-            let palette_entry = &self.template.palette[block.state as usize];
+        for block in palette.blocks() {
+            let palette_entry = &block.state;
             if palette_entry.name == "minecraft:structure_block"
                 && let Some(nbt) = &block.nbt
             {

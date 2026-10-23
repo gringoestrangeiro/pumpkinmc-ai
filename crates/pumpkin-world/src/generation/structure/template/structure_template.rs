@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use pumpkin_data::{Mirror, Rotation};
 use pumpkin_nbt::{compound::NbtCompound, nbt_compress::read_gzip_compound_tag, tag::NbtTag};
 use pumpkin_util::math::{block_box::BlockBox, vector3::Vector3};
+use pumpkin_util::random::{RandomImpl, hash_block_pos, legacy_rand::LegacyRand};
 use thiserror::Error;
 
 use super::processor::StructureProcessor;
@@ -182,9 +183,9 @@ impl StructurePlaceSettings {
         {
             return &palettes[idx];
         }
-        let index = ((pos.x.wrapping_add(pos.y).wrapping_add(pos.z)).unsigned_abs() as usize)
-            % palettes.len();
-        &palettes[index]
+        // Vanilla `getRandomPalette` with no fixed random: `RandomSource.create(Mth.getSeed(pos))`.
+        let mut random = LegacyRand::from_seed(hash_block_pos(pos.x, pos.y, pos.z) as u64);
+        &palettes[random.next_bounded_i32(palettes.len() as i32) as usize]
     }
 }
 
