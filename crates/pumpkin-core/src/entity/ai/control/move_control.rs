@@ -79,6 +79,7 @@ impl MoveControlTrait for MoveControl {
 
             let movement_speed = living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
             let speed = self.speed_modifier * movement_speed;
+            living_entity.mob_speed.store(Some(speed));
             living_entity
                 .movement_input
                 .store(Vector3::new(0.0, 0.0, speed));
@@ -94,11 +95,17 @@ impl MoveControlTrait for MoveControl {
         } else if self.operation == Operation::Jumping {
             let movement_speed = living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
             let speed = self.speed_modifier * movement_speed;
+            living_entity.mob_speed.store(Some(speed));
             living_entity
                 .movement_input
                 .store(Vector3::new(0.0, 0.0, speed));
 
-            if entity.on_ground.load(Ordering::Relaxed) {
+            // Vanilla also lands in liquid, or a mob that jumped into water would stay in
+            // `JUMPING` and ignore every new wanted position until it touched the bottom.
+            if entity.on_ground.load(Ordering::Relaxed)
+                || entity.touching_water.load(Ordering::Relaxed)
+                || entity.touching_lava.load(Ordering::Relaxed)
+            {
                 self.operation = Operation::Wait;
             }
         }

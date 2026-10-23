@@ -57,6 +57,10 @@ impl Mob for WitherSkeletonEntity {
         &self.entity.mob_entity
     }
 
+    fn get_min_attack_interval(&self) -> Option<i32> {
+        Some(self.entity.min_attack_interval())
+    }
+
     fn on_attack(&self, target: &dyn EntityBase) {
         if let Some(living) = target.get_living_entity() {
             living.add_effect(Effect {

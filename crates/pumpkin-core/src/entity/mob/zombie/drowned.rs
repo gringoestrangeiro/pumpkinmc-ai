@@ -17,17 +17,21 @@ use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
         Controls, Goal, ParentHandle,
-        active_target::ActiveTargetGoal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
         move_to_target_pos::{MoveToTargetPos, MoveToTargetPosGoal},
         ranged_attack::RangedAttackGoal,
-        swim::SwimGoal,
+        revenge::RevengeGoal,
+        wander_around::WanderAroundGoal,
         zombie_attack::ZombieAttackGoal,
     },
     ai::pathfinder::node::PathType,
     ai::pathfinder::{Navigator, NavigatorGoal},
     ai::util::default_random_pos,
     living::LivingEntity,
-    mob::{Mob, MobEntity, RangedAttackMob, zombie::ZombieEntityBase},
+    mob::{
+        Mob, MobEntity, RangedAttackMob,
+        zombie::{ZombieEntityBase, is_abstract_villager},
+    },
     passive::turtle::baby_on_land_selector,
     projectile::{arrow::ArrowPickup, trident::TridentEntity},
 };
@@ -40,12 +44,12 @@ pub struct DrownedEntity {
 
 impl DrownedEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        Self::with_base(ZombieEntityBase::new(entity))
+        Self::with_can_break_doors(entity, false)
     }
 
     #[must_use]
     pub fn with_can_break_doors(entity: Entity, can_break_doors: bool) -> Arc<Self> {
-        Self::with_base(ZombieEntityBase::with_can_break_doors(
+        Self::with_base(ZombieEntityBase::without_behaviour_goals(
             entity,
             can_break_doors,
         ))
@@ -97,22 +101,30 @@ impl DrownedEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            let _ = goal_selector.remove_goals::<ZombieAttackGoal>();
-            let _ = goal_selector.remove_goals::<SwimGoal>();
-
+            // Vanilla `Drowned.addBehaviourGoals`, replacing the zombie's.
             goal_selector.add_goal(1, Box::new(DrownedGoToWaterGoal::new(1.0)));
             goal_selector.add_goal(2, Box::new(DrownedTridentAttackGoal::new(ranged_weak)));
             goal_selector.add_goal(2, DrownedAttackGoal::new(drowned_weak.clone()));
             goal_selector.add_goal(5, DrownedGoToBeachGoal::new(1.0, drowned_weak.clone()));
             goal_selector.add_goal(6, Box::new(DrownedSwimUpGoal::new(drowned_weak)));
+            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(1.0)));
 
-            let _ = target_selector.remove_goals::<ActiveTargetGoal>();
+            target_selector.add_goal(
+                1,
+                Box::new(
+                    RevengeGoal::new(true)
+                        .ignoring(|entity_type| entity_type == &EntityType::DROWNED)
+                        .alerting_others_except(|entity_type| {
+                            entity_type == &EntityType::ZOMBIFIED_PIGLIN
+                        }),
+                ),
+            );
             target_selector.add_goal(
                 2,
                 Box::new(ActiveTargetGoal::new(
                     &mob_arc.entity.mob_entity,
                     &EntityType::PLAYER,
-                    10,
+                    DEFAULT_RANDOM_INTERVAL,
                     true,
                     false,
                     Some(|target: &LivingEntity, world: &World| {
@@ -122,10 +134,11 @@ impl DrownedEntity {
             );
             target_selector.add_goal(
                 3,
-                ActiveTargetGoal::with_default(
+                ActiveTargetGoal::predicated(
                     &mob_arc.entity.mob_entity,
-                    &EntityType::VILLAGER,
+                    DEFAULT_RANDOM_INTERVAL,
                     false,
+                    is_abstract_villager,
                 ),
             );
             target_selector.add_goal(
@@ -149,7 +162,7 @@ impl DrownedEntity {
                 Box::new(ActiveTargetGoal::new(
                     &mob_arc.entity.mob_entity,
                     &EntityType::TURTLE,
-                    10,
+                    DEFAULT_RANDOM_INTERVAL,
                     true,
                     false,
                     Some(baby_on_land_selector),

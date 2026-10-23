@@ -1,4 +1,4 @@
-use pumpkin_data::tag::{self, Taggable};
+use pumpkin_data::tag::{self, Tag, Taggable};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering::Relaxed;
@@ -13,21 +13,43 @@ const WATER_SEARCH_Y: i32 = 1;
 const HORIZONTAL_RANGE: i32 = 5;
 const VERTICAL_RANGE: i32 = 4;
 
+/// Picks the damage tag that makes a given mob panic.
+type PanicCausesFn = Box<dyn Fn(&dyn Mob) -> &'static Tag + Send + Sync>;
+
 pub struct EscapeDangerGoal {
     speed: f64,
     goal_control: Controls,
     target: Option<Vector3<f64>>,
     running: bool,
+    panic_causing_damage_types: PanicCausesFn,
 }
 
 impl EscapeDangerGoal {
     #[must_use]
     pub fn new(speed: f64) -> Box<Self> {
+        Self::with_panic_causes(speed, &tag::DamageType::MINECRAFT_PANIC_CAUSES)
+    }
+
+    /// Vanilla `PanicGoal(mob, speed, tag)`: wolves only panic from
+    /// `#minecraft:panic_environmental_causes`, so they fight back against attacks.
+    #[must_use]
+    pub fn with_panic_causes(speed: f64, panic_causing_damage_types: &'static Tag) -> Box<Self> {
+        Self::with_panic_causes_fn(speed, move |_| panic_causing_damage_types)
+    }
+
+    /// Vanilla `PanicGoal(mob, speed, Function<PathfinderMob, TagKey<DamageType>>)`, used by
+    /// polar bears whose cubs and adults panic from different damage.
+    #[must_use]
+    pub fn with_panic_causes_fn<F>(speed: f64, panic_causing_damage_types: F) -> Box<Self>
+    where
+        F: Fn(&dyn Mob) -> &'static Tag + Send + Sync + 'static,
+    {
         Box::new(Self {
             speed,
             goal_control: Controls::MOVE,
             target: None,
             running: false,
+            panic_causing_damage_types: Box::new(panic_causing_damage_types),
         })
     }
 
@@ -36,15 +58,14 @@ impl EscapeDangerGoal {
         self.running
     }
 
-    /// Only `#minecraft:panic_causes` damage makes a mob flee, and only while the source is still
+    /// Only damage in the panic tag makes a mob flee, and only while the source is still
     /// remembered.
-    fn should_panic(mob: &dyn Mob) -> bool {
+    fn should_panic(&self, mob: &dyn Mob) -> bool {
+        let panic_causing_damage_types = (self.panic_causing_damage_types)(mob);
         mob.get_mob_entity()
             .living_entity
             .get_last_damage_type()
-            .is_some_and(|damage_type| {
-                damage_type.has_tag(&tag::DamageType::MINECRAFT_PANIC_CAUSES)
-            })
+            .is_some_and(|damage_type| damage_type.has_tag(panic_causing_damage_types))
     }
 
     /// Nearest water within 5 blocks horizontally, only when the mob is not stuck in a block.
@@ -88,7 +109,7 @@ impl EscapeDangerGoal {
 
 impl Goal for EscapeDangerGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if !Self::should_panic(mob) {
+        if !self.should_panic(mob) {
             return false;
         }
 

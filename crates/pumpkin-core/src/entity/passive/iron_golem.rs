@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use pumpkin_data::attributes::Attributes;
-use pumpkin_data::entity::{EntityStatus, EntityType, MobCategory};
+use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
@@ -81,13 +81,12 @@ impl IronGolemEntity {
             target_selector.add_goal(1, DefendVillageTargetGoal::new());
             target_selector.add_goal(2, Box::new(RevengeGoal::new(true)));
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 3, 4, false);
-            // Mirrors NearestAttackableTargetGoal<Mob>: any monster but creepers.
+            // Mirrors NearestAttackableTargetGoal<Mob>: any `Enemy` but creepers.
             target_selector.add_goal(
                 3,
                 ActiveTargetGoal::predicated(&mob_arc.mob_entity, 5, false, |living, _world| {
                     let entity_type = living.entity.entity_type;
-                    entity_type.category == &MobCategory::MONSTER
-                        && entity_type != &EntityType::CREEPER
+                    entity_type.is_enemy && entity_type != &EntityType::CREEPER
                 }),
             );
         };

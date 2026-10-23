@@ -32,14 +32,13 @@ use crate::entity::{
         breed::BreedGoal,
         climb_on_top_of_powder_snow::ClimbOnTopOfPowderSnowGoal,
         escape_danger::EscapeDangerGoal,
-        follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal,
         melee_attack::MeleeAttackGoal,
         move_to_target_pos::{MoveToTargetPos, MoveToTargetPosGoal},
+        revenge::RevengeGoal,
         swim::SwimGoal,
         tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     attributes::{Modifier, ModifierOperation},
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
@@ -160,7 +159,7 @@ impl RabbitEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(ClimbOnTopOfPowderSnowGoal));
             goal_selector.add_goal(1, EscapeDangerGoal::new(2.2));
             goal_selector.add_goal(2, BreedGoal::new(0.8));
@@ -185,24 +184,12 @@ impl RabbitEntity {
                     rabbit_is_not_evil,
                 )),
             );
-            goal_selector.add_goal(
-                4,
-                Box::new(AvoidEntityGoal::with_gate(
-                    &EntityType::FOX,
-                    10.0,
-                    2.2,
-                    2.2,
-                    rabbit_is_not_evil,
-                )),
-            );
             goal_selector.add_goal(5, RaidGardenGoal::new(&mob_arc));
-            goal_selector.add_goal(5, Box::new(FollowParentGoal::new(0.8)));
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.6)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(0.6)));
             goal_selector.add_goal(
                 11,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 10.0),
             );
-            goal_selector.add_goal(11, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc
@@ -258,17 +245,14 @@ impl RabbitEntity {
                     .target_selector
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                target_selector.add_goal(1, Box::new(RevengeGoal::new(true).alerting_others()));
                 target_selector.add_goal(
-                    1,
+                    2,
                     ActiveTargetGoal::with_default(&self.mob_entity, &EntityType::PLAYER, true),
                 );
                 target_selector.add_goal(
                     2,
                     ActiveTargetGoal::with_default(&self.mob_entity, &EntityType::WOLF, true),
-                );
-                target_selector.add_goal(
-                    2,
-                    ActiveTargetGoal::with_default(&self.mob_entity, &EntityType::FOX, true),
                 );
             };
 
@@ -580,7 +564,6 @@ impl AgeableMob for RabbitEntity {
 impl Animal for RabbitEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_RABBIT_FOOD)
-            || TEMPT_ITEMS.iter().any(|i| i.id == item_stack.item.id)
     }
 }
 

@@ -13,6 +13,9 @@ use crate::entity::mob::Mob;
 use crate::entity::projectile::arrow::{ArrowEntity, ArrowPickup};
 use crate::entity::{Entity, EntityBase};
 
+/// The 30 degrees per tick vanilla `RangedBowAttackGoal` turns towards its target.
+const STRAFE_LOOK_SPEED: f32 = 30.0;
+
 /// Ranged bow attack used by skeletons and their variants.
 /// Mirrors vanilla `RangedBowAttackGoal`: the mob keeps its distance, draws the bow
 /// and releases an arrow once it has been drawn long enough.
@@ -253,14 +256,17 @@ impl Goal for BowAttackGoal {
                     if self.strafing_backwards { -0.5 } else { 0.5 },
                     if self.strafing_clockwise { 0.5 } else { -0.5 },
                 );
+            // Vanilla turns the body itself (`Mob.lookAt`), not just the head, so the strafe,
+            // which is relative to the body yaw, circles the target.
+            mob.get_mob_entity()
+                .look_at(target.as_ref(), STRAFE_LOOK_SPEED, STRAFE_LOOK_SPEED);
+        } else {
+            mob.get_mob_entity()
+                .look_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .look_at_entity_with_range(&target, STRAFE_LOOK_SPEED, STRAFE_LOOK_SPEED);
         }
-
-        // Always through the look control, which smooths towards the same angle.
-        mob.get_mob_entity()
-            .look_control
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .look_at_entity_with_range(&target, 30.0, 30.0);
 
         if self.drawing {
             if !has_line_of_sight && self.see_time < -60 {

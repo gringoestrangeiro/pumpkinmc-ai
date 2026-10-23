@@ -103,6 +103,10 @@ pub struct LivingEntity {
     pub entity_equipment: Arc<std::sync::Mutex<EntityEquipment>>,
     pub equipment_drop_chances: Arc<std::sync::Mutex<FxHashMap<EquipmentSlot, f32>>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
+    /// Vanilla `LivingEntity.speed` as set by a mob's navigation or move control this tick
+    /// (`Mob.setSpeed`). `None` falls back to the `movement_speed` attribute, which is what a
+    /// player's `aiStep` sets and what Pumpkin's direct movement code assumes.
+    pub mob_speed: AtomicCell<Option<f64>>,
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
 
     pub jumping: AtomicBool,
@@ -331,6 +335,7 @@ impl LivingEntity {
             last_hurt_by_mob_id: AtomicI32::new(0),
             last_hurt_by_mob_time: AtomicI64::new(0),
             movement_input: AtomicCell::new(Vector3::default()),
+            mob_speed: AtomicCell::new(None),
             water_movement_speed_multiplier,
             last_block_pos: AtomicCell::new(None),
             equipment_attribute_modifier_ids: std::sync::Mutex::new(FxHashMap::default()),
@@ -1826,10 +1831,17 @@ impl LivingEntity {
         self.entity.velocity.store(velo);
     }
 
+    /// Vanilla `LivingEntity.getSpeed`.
+    fn get_speed(&self) -> f64 {
+        self.mob_speed
+            .load()
+            .unwrap_or_else(|| self.get_attribute_value(&Attributes::MOVEMENT_SPEED))
+    }
+
     fn travel_in_air(&self, caller: &dyn EntityBase) {
         // applyMovementInput
 
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.get_speed();
 
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
@@ -1908,7 +1920,7 @@ impl LivingEntity {
 
         let falling = self.entity.velocity.load().y <= 0.0;
         let gravity = self.get_effective_gravity(caller);
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.get_speed();
 
         if water {
             let mut friction = if self.entity.sprinting.load(Relaxed) {

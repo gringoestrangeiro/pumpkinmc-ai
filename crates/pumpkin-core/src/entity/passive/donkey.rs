@@ -20,7 +20,8 @@ use crate::entity::{
         ambient_stand::AmbientStandGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, run_around_like_crazy::RunAroundLikeCrazyGoal,
-        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
+        swim::SwimGoal, tempt::TemptGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -81,7 +82,7 @@ impl DonkeyEntity {
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(0.7)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
@@ -207,13 +208,6 @@ impl AgeableMob for DonkeyEntity {
 impl Animal for DonkeyEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_HORSE_FOOD)
-            || item_stack.item == &Item::WHEAT
-            || item_stack.item == &Item::SUGAR
-            || item_stack.item == &Item::HAY_BLOCK
-            || item_stack.item == &Item::APPLE
-            || item_stack.item == &Item::GOLDEN_CARROT
-            || item_stack.item == &Item::GOLDEN_APPLE
-            || item_stack.item == &Item::ENCHANTED_GOLDEN_APPLE
     }
 }
 

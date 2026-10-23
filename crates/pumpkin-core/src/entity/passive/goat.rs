@@ -24,11 +24,10 @@ use crate::entity::{
         escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal,
         long_jump::{LongJumpGoal, default_acceptable_landing},
-        look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal,
         swim::SwimGoal,
         tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     combat::knockback_after_resistance,
     custom_sound::CustomSound,
@@ -113,12 +112,11 @@ impl GoatEntity {
                     default_acceptable_landing,
                 )),
             );
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
-            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc
@@ -561,7 +559,6 @@ impl CustomSound for GoatEntity {
 impl Animal for GoatEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_GOAT_FOOD)
-            || TEMPT_ITEMS.iter().any(|i| i.id == item_stack.item.id)
     }
 }
 

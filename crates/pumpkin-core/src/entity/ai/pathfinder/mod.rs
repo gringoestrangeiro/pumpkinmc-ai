@@ -523,13 +523,22 @@ impl PathNavigation {
     }
 
     pub fn set_progress(&mut self, goal: NavigatorGoal) {
+        // Vanilla `PathNavigation.createPath` hands back the current path while it is unfinished
+        // and still heads for the same block, so goals that re-issue `moveTo` every tick
+        // (tempting, following) keep walking it instead of restarting from a fresh path.
+        let keeps_path = self.path.as_ref().is_some_and(|path| !path.is_done())
+            && self.current_goal.is_some_and(|current| {
+                BlockPos::floored_v(current.destination) == BlockPos::floored_v(goal.destination)
+            });
         self.is_idle.store(false, Ordering::Relaxed);
         self.speed_modifier = goal.speed;
         self.last_stuck_check = self.tick_count;
         self.last_stuck_check_pos = goal.current_progress;
         self.current_goal = Some(goal);
-        self.path = None;
-        self.reset_stuck_timeout();
+        if !keeps_path {
+            self.path = None;
+            self.reset_stuck_timeout();
+        }
     }
 
     pub const fn set_speed(&mut self, speed: f64) {
@@ -1160,12 +1169,12 @@ impl PathNavigation {
                 let target_yaw =
                     current_yaw + yaw_diff.clamp(-MAX_YAW_TURN_PER_TICK, MAX_YAW_TURN_PER_TICK);
                 entity.entity.yaw.store(target_yaw);
-                entity.entity.head_yaw.store(target_yaw);
-                entity.entity.body_yaw.store(target_yaw);
 
                 let mob_speed =
                     goal.speed * entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
 
+                // Vanilla `Mob.setSpeed`: the same value is the walk speed and the forward input.
+                entity.mob_speed.store(Some(mob_speed));
                 entity
                     .movement_input
                     .store(Vector3::new(0.0, 0.0, mob_speed));
@@ -2154,11 +2163,10 @@ impl PathNavigationTrait for WallClimberNavigation {
             } else {
                 let desired_yaw = wrap_degrees((dz.atan2(dx) as f32).to_degrees() - 90.0);
                 entity.entity.yaw.store(desired_yaw);
-                entity.entity.head_yaw.store(desired_yaw);
-                entity.entity.body_yaw.store(desired_yaw);
 
                 let speed = self.inner.inner.speed_modifier
                     * entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+                entity.mob_speed.store(Some(speed));
                 entity.movement_input.store(Vector3::new(0.0, 0.0, speed));
                 if dy > 0.0 {
                     entity.jumping.store(true, Ordering::SeqCst);

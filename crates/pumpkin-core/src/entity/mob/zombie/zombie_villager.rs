@@ -60,7 +60,7 @@ impl ZombieVillagerEntity {
     #[must_use]
     pub fn with_can_break_doors(entity: Entity, can_break_doors: bool) -> Arc<Self> {
         let mob_entity = ZombieEntityBase::with_can_break_doors(entity, can_break_doors);
-        let zombie_villager = Arc::new(Self {
+        Arc::new(Self {
             mob_entity,
             villager_data: std::sync::Mutex::new(VillagerData::new(
                 pumpkin_data::villager::VillagerType::Plains,
@@ -74,22 +74,7 @@ impl ZombieVillagerEntity {
             villager_xp: AtomicI32::new(0),
             conversion_time: AtomicI32::new(0),
             conversion_starter: AtomicCell::new(None),
-        });
-        zombie_villager
-            .mob_entity
-            .mob_entity
-            .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .add_goal(
-                6,
-                Box::new(
-                    crate::entity::ai::goal::move_through_village::MoveThroughVillageGoal::new(
-                        1.0, true, 4.0,
-                    ),
-                ),
-            );
-        zombie_villager
+        })
     }
 
     #[must_use]

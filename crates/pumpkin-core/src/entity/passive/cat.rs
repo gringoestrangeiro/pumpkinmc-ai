@@ -6,7 +6,6 @@ use std::sync::{
 use pumpkin_data::cat_sound_variant::CatSoundVariant;
 use pumpkin_data::cat_variant::CatVariant;
 use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
-use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
@@ -42,8 +41,6 @@ use crate::entity::{
     player::Player,
 };
 use crate::world::World;
-
-const TEMPT_ITEMS: &[&Item] = &[&Item::COD, &Item::SALMON];
 
 /// Vanilla `Cat.WALK_SPEED_MOD`: breed, stroll and the avoid goal's walk speed; the avoid
 /// goal's sprint speed is `Cat.SPRINT_SPEED_MOD`.
@@ -129,9 +126,10 @@ impl CatEntity {
             goal_selector.add_goal(
                 4,
                 Box::new(
-                    TemptGoal::new(TEMPT_SPEED_MOD, TEMPT_ITEMS, true).with_can_use_gate(
-                        move |_mob| tempt_weak.upgrade().is_some_and(|cat| !cat.is_tame()),
-                    ),
+                    TemptGoal::with_tag(TEMPT_SPEED_MOD, &tag::Item::MINECRAFT_CAT_FOOD, true)
+                        .with_can_use_gate(move |_mob| {
+                            tempt_weak.upgrade().is_some_and(|cat| !cat.is_tame())
+                        }),
                 ),
             );
             // Goal 6: FollowOwnerGoal
@@ -359,7 +357,7 @@ impl CustomSound for CatEntity {
 impl Animal for CatEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         let item = item_stack.get_item();
-        item.has_tag(&tag::Item::MINECRAFT_CAT_FOOD) || item == &Item::COD || item == &Item::SALMON
+        item.has_tag(&tag::Item::MINECRAFT_CAT_FOOD)
     }
 }
 

@@ -31,6 +31,10 @@ impl Mob for StraySkeletonEntity {
         Some(Sound::EntityStrayAmbient)
     }
 
+    fn get_min_attack_interval(&self) -> Option<i32> {
+        Some(self.entity.min_attack_interval())
+    }
+
     fn get_arrow_projectile(&self) -> Option<ItemStack> {
         // Vanilla `Stray.getArrow`: slowness 600 on the fired arrow.
         let mut arrow = ItemStack::new(1, &Item::ARROW);

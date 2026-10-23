@@ -542,6 +542,13 @@ impl Animal for CamelEntity {
 }
 
 impl Mob for CamelEntity {
+    /// Vanilla `CamelBodyRotationControl`: a sitting camel keeps its body still.
+    fn tick_head_turn(&self, mob: &dyn Mob) {
+        if !self.refuse_to_move() {
+            self.mob_entity.tick_body_rotation_control(mob);
+        }
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }

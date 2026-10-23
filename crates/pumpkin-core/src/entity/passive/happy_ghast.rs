@@ -359,6 +359,16 @@ impl crate::entity::custom_sound::CustomSound for HappyGhastEntity {
 }
 
 impl Mob for HappyGhastEntity {
+    /// Vanilla `HappyGhastBodyRotationControl`: a ridden ghast faces where it flies.
+    fn tick_head_turn(&self, mob: &dyn Mob) {
+        let entity = &self.mob_entity.living_entity.entity;
+        if entity.has_passengers() {
+            entity.head_yaw.store(entity.yaw.load());
+            entity.body_yaw.store(entity.head_yaw.load());
+        }
+        self.mob_entity.tick_body_rotation_control(mob);
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }

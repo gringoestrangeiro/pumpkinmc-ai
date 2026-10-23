@@ -299,6 +299,13 @@ impl Animal for ArmadilloEntity {
 }
 
 impl Mob for ArmadilloEntity {
+    /// Vanilla `Armadillo.createBodyControl`: a rolled-up armadillo keeps its body still.
+    fn tick_head_turn(&self, mob: &dyn Mob) {
+        if !self.is_scared() {
+            self.mob_entity.tick_body_rotation_control(mob);
+        }
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }

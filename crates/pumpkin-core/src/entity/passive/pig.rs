@@ -20,19 +20,15 @@ use crate::entity::{
     ai::goal::{
         breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
         look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        tempt::TemptGoal, wander_around::WanderAroundGoal,
+        tempt::TemptGoal, water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
     player::Player,
 };
 
-const PIG_FOOD: &[&Item] = &[
-    &Item::CARROT,
-    &Item::POTATO,
-    &Item::BEETROOT,
-    &Item::CARROT_ON_A_STICK,
-];
+const PIG_FOOD: &[&Item] = &[&Item::CARROT, &Item::POTATO, &Item::BEETROOT];
+const CARROT_ON_A_STICK: &[&Item] = &[&Item::CARROT_ON_A_STICK];
 
 /// Represents a Pig, a common passive mob that provides porkchops.
 ///
@@ -75,15 +71,16 @@ impl PigEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.25));
-            goal_selector.add_goal(2, BreedGoal::new(1.0));
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(1.2, PIG_FOOD, false)));
-            goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.1)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(3, BreedGoal::new(1.0));
+            goal_selector.add_goal(4, Box::new(TemptGoal::new(1.2, CARROT_ON_A_STICK, false)));
+            goal_selector.add_goal(4, Box::new(TemptGoal::new(1.2, PIG_FOOD, false)));
+            goal_selector.add_goal(5, Box::new(FollowParentGoal::new(1.1)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             goal_selector.add_goal(
-                6,
+                7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
-            goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc
@@ -137,7 +134,6 @@ impl Animal for PigEntity {
         item_stack
             .item
             .has_tag(&pumpkin_data::tag::Item::MINECRAFT_PIG_FOOD)
-            || PIG_FOOD.iter().any(|i| i.id == item_stack.item.id)
     }
 }
 

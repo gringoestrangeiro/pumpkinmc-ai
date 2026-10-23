@@ -151,6 +151,10 @@ impl Mob for SkeletonEntity {
         self.tick_freezing();
     }
 
+    fn get_min_attack_interval(&self) -> Option<i32> {
+        Some(self.entity.min_attack_interval())
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         let freezing_time = self.freezing_time.load(Ordering::Relaxed);
         nbt.put_int(

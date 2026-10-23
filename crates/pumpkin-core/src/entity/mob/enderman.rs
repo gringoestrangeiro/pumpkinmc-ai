@@ -33,7 +33,8 @@ use crate::entity::{
             melee_attack::MeleeAttackGoal, pick_up_block::PickUpBlockGoal,
             place_block::PlaceBlockGoal, reset_universal_anger::ResetUniversalAngerGoal,
             revenge::RevengeGoal, swim::SwimGoal,
-            teleport_towards_player::TeleportTowardsPlayerGoal, wander_around::WanderAroundGoal,
+            teleport_towards_player::TeleportTowardsPlayerGoal,
+            water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
         },
         pathfinder::node::PathType,
     },
@@ -111,7 +112,11 @@ impl EndermanEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(ChasePlayerGoal::new(mob_arc.clone())));
             goal_selector.add_goal(2, Box::new(MeleeAttackGoal::new(1.0, false)));
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(1.0)));
+            // Vanilla passes probability 0, so an enderman never picks a possibly wet spot.
+            goal_selector.add_goal(
+                7,
+                Box::new(WaterAvoidingRandomStrollGoal::with_probability(1.0, 0.0)),
+            );
             goal_selector.add_goal(
                 8,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),

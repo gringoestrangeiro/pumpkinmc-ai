@@ -1,4 +1,7 @@
-use super::{Controls, Goal, to_goal_ticks, wander_around::DEFAULT_INTERVAL};
+use super::{
+    Controls, Goal, to_goal_ticks,
+    wander_around::{DEFAULT_INTERVAL, is_idle_too_long},
+};
 use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::util::{default_random_pos, land_random_pos};
 use crate::entity::mob::Mob;
@@ -66,10 +69,11 @@ impl Goal for WaterAvoidingRandomStrollGoal {
             return false;
         }
 
-        if mob
-            .get_random()
-            .random_range(0..to_goal_ticks(self.interval))
-            != 0
+        if is_idle_too_long(mob)
+            || mob
+                .get_random()
+                .random_range(0..to_goal_ticks(self.interval))
+                != 0
         {
             return false;
         }

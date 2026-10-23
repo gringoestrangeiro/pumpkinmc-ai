@@ -6,6 +6,7 @@ use std::sync::{
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
+use pumpkin_data::tag;
 use pumpkin_nbt::compound::NbtCompound;
 
 use crate::entity::{
@@ -13,7 +14,7 @@ use crate::entity::{
     ageable::{AgeableData, AgeableMob},
     ai::behavior::neutral::apply_targets,
     ai::goal::{
-        active_target::{ActiveTargetGoal, TargetCondition},
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL, TargetCondition},
         escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal,
         look_around::RandomLookAroundGoal,
@@ -23,6 +24,7 @@ use crate::entity::{
         swim::SwimGoal,
         wander_around::WanderAroundGoal,
     },
+    living::LivingEntity,
     mob::{
         Mob, MobEntity,
         neutral::{NeutralData, NeutralMob},
@@ -30,6 +32,12 @@ use crate::entity::{
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
+
+/// Vanilla `PolarBearAttackPlayersGoal`'s `randomInterval`.
+const ATTACK_PLAYERS_RANDOM_INTERVAL: i32 = 20;
+/// Vanilla `PolarBearAttackPlayersGoal.getFollowDistance` halves the follow range.
+const ATTACK_PLAYERS_FOLLOW_DISTANCE_SCALE: f64 = 0.5;
 
 fn is_baby(mob: &dyn Mob) -> bool {
     mob.as_ageable().is_some_and(AgeableMob::is_baby)
@@ -82,7 +90,16 @@ impl PolarBearEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(MeleeAttackGoal::new(1.25, true)));
-            goal_selector.add_goal(1, EscapeDangerGoal::new(2.0));
+            goal_selector.add_goal(
+                1,
+                EscapeDangerGoal::with_panic_causes_fn(2.0, |bear| {
+                    if is_baby(bear) {
+                        &tag::DamageType::MINECRAFT_PANIC_CAUSES
+                    } else {
+                        &tag::DamageType::MINECRAFT_PANIC_ENVIRONMENTAL_CAUSES
+                    }
+                }),
+            );
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
@@ -107,18 +124,37 @@ impl PolarBearEntity {
                         .alerting_only(|other| !is_baby(other)),
                 ),
             );
+            // The cub check only gates the search, like vanilla's `canUse` override: a charge
+            // keeps going after the cub wanders off.
+            let bear_weak = Arc::downgrade(&mob_arc);
             target_selector.add_goal(
                 2,
-                ActiveTargetGoal::predicated(&mob_arc.mob_entity, 20, true, |target, _world| {
-                    target.entity.entity_type == &EntityType::PLAYER
-                })
-                .gated_by(protects_cub),
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::PLAYER,
+                    ATTACK_PLAYERS_RANDOM_INTERVAL,
+                    true,
+                    true,
+                    Some(move |_target: &LivingEntity, _world: &World| {
+                        bear_weak
+                            .upgrade()
+                            .is_some_and(|bear| protects_cub(bear.as_ref()))
+                    }),
+                ))
+                .with_follow_distance_scale(ATTACK_PLAYERS_FOLLOW_DISTANCE_SCALE),
             );
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 3, 5, false);
             target_selector.add_goal(
                 4,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, true)
-                    .when(TargetCondition::Adult),
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::FOX,
+                    DEFAULT_RANDOM_INTERVAL,
+                    true,
+                    true,
+                    None::<fn(&LivingEntity, &World) -> bool>,
+                ))
+                .when(TargetCondition::Adult),
             );
         };
 

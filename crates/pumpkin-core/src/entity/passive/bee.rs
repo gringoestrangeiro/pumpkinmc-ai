@@ -23,10 +23,10 @@ use pumpkin_world::world::BlockFlags;
 
 use crate::block::entities::beehive::BeehiveBlockEntity;
 use crate::entity::ai::control::flying_move_control::FlyingMoveControl;
-use crate::entity::ai::goal::water_avoiding_random_flying::WaterAvoidingRandomFlyingGoal;
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::pathfinder::{Navigator, NavigatorGoal};
+use crate::entity::ai::util::{air_and_water_random_pos, hover_random_pos};
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
@@ -34,8 +34,6 @@ use crate::entity::{
         active_target::{ActiveTargetGoal, TargetCondition},
         breed::BreedGoal,
         follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal,
         melee_attack::MeleeAttackGoal,
         reset_universal_anger::ResetUniversalAngerGoal,
         revenge::RevengeGoal,
@@ -71,9 +69,26 @@ const GROW_CHANCE: i32 = 30;
 const POLLINATION_TICKS: i32 = 600;
 const MIN_POLLINATION_TICKS: i32 = 400;
 const FLOWER_SEARCH_RADIUS: i32 = 5;
+/// Bounds of the per-goal cooldown vanilla `ValidateHiveGoal`/`ValidateFlowerGoal` roll with
+/// `Mth.nextInt(random, 20, 40)`.
+const MIN_VALIDATE_COOLDOWN: i64 = 20;
+const MAX_VALIDATE_COOLDOWN: i64 = 40;
+/// Vanilla `BeeWanderGoal#canUse` start chance: `random.nextInt(10) == 0`.
+const WANDER_CHANCE: i32 = 10;
+/// Vanilla `BeeWanderGoal#getWanderThreshold` reductions of `TOO_FAR_DISTANCE`, without and
+/// with a known hive or flower.
+const WANDER_THRESHOLD_REDUCTION_NO_TARGETS: f64 = 16.0;
+const WANDER_THRESHOLD_REDUCTION: f64 = 24.0;
+const WANDER_HORIZONTAL_DISTANCE: i32 = 8;
 
 fn is_angry(mob: &dyn Mob) -> bool {
     mob.as_neutral().is_some_and(NeutralMob::is_angry)
+}
+
+/// Vanilla `Bee.BaseBeeGoal#canUse`/`canContinueToUse`: hive and flower chores pause while the
+/// bee is angry.
+fn calm_bee(bee: &Weak<BeeEntity>) -> Option<Arc<BeeEntity>> {
+    bee.upgrade().filter(|bee| !bee.is_angry())
 }
 
 /// Angry and still holding its stinger.
@@ -126,10 +141,6 @@ impl BeeEntity {
             blacklisted_hives: Mutex::new(Vec::new()),
         };
         let mob_arc = Arc::new(bee);
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
         let bee_weak = Arc::downgrade(&mob_arc);
 
         {
@@ -168,20 +179,24 @@ impl BeeEntity {
             );
             goal_selector.add_goal(1, Box::new(BeeEnterHiveGoal::new(bee_weak.clone())));
             goal_selector.add_goal(2, BreedGoal::new(1.0));
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, &[], false)));
+            goal_selector.add_goal(
+                3,
+                Box::new(TemptGoal::with_tag(
+                    1.25,
+                    &tag::Item::MINECRAFT_BEE_FOOD,
+                    false,
+                )),
+            );
+            goal_selector.add_goal(3, Box::new(ValidateHiveGoal::new(bee_weak.clone())));
+            goal_selector.add_goal(3, Box::new(ValidateFlowerGoal::new(bee_weak.clone())));
             goal_selector.add_goal(4, Box::new(BeePollinateGoal::new(bee_weak.clone())));
             goal_selector.add_goal(5, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(5, Box::new(BeeLocateHiveGoal::new(bee_weak.clone())));
             goal_selector.add_goal(5, Box::new(BeeGoToHiveGoal::new(bee_weak.clone())));
             goal_selector.add_goal(6, Box::new(BeeGoToKnownFlowerGoal::new(bee_weak.clone())));
-            goal_selector.add_goal(7, Box::new(BeeGrowCropGoal::new(bee_weak)));
-            goal_selector.add_goal(8, Box::new(WaterAvoidingRandomFlyingGoal::new(1.0)));
+            goal_selector.add_goal(7, Box::new(BeeGrowCropGoal::new(bee_weak.clone())));
+            goal_selector.add_goal(8, Box::new(BeeWanderGoal::new(bee_weak)));
             goal_selector.add_goal(9, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(
-                10,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
-            );
-            goal_selector.add_goal(11, Box::new(RandomLookAroundGoal::default()));
         };
 
         {
@@ -561,17 +576,9 @@ impl Mob for BeeEntity {
             });
         self.set_rolling(rolling);
 
-        if entity.age.load(Ordering::Relaxed) % 20 == 0 {
-            if self.has_hive() && !self.is_hive_valid() {
-                self.set_hive_pos(None);
-            }
-            if let Some(flower) = self.get_saved_flower_pos() {
-                let world = entity.world.load();
-                if world.is_loaded(&flower) && !attracts_bees(world.get_block_and_state(&flower).1)
-                {
-                    self.drop_flower();
-                }
-            }
+        if entity.age.load(Ordering::Relaxed) % 20 == 0 && self.has_hive() && !self.is_hive_valid()
+        {
+            self.set_hive_pos(None);
         }
     }
 
@@ -685,7 +692,7 @@ impl BeeEnterHiveGoal {
 
 impl Goal for BeeEnterHiveGoal {
     fn can_start(&mut self, _mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         let Some(hive) = bee.get_hive_pos() else {
@@ -777,7 +784,7 @@ impl BeeLocateHiveGoal {
 
 impl Goal for BeeLocateHiveGoal {
     fn can_start(&mut self, _mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         bee.remaining_cooldown_before_locating_new_hive
@@ -845,7 +852,7 @@ impl BeeGoToHiveGoal {
 
 impl Goal for BeeGoToHiveGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         let Some(hive) = bee.get_hive_pos() else {
@@ -944,7 +951,7 @@ impl BeeGoToKnownFlowerGoal {
 
 impl Goal for BeeGoToKnownFlowerGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         let Some(flower) = bee.get_saved_flower_pos() else {
@@ -1064,7 +1071,7 @@ impl BeePollinateGoal {
 
 impl Goal for BeePollinateGoal {
     fn can_start(&mut self, _mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         if bee
@@ -1088,7 +1095,7 @@ impl Goal for BeePollinateGoal {
     }
 
     fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         if bee.get_saved_flower_pos().is_none()
@@ -1196,6 +1203,179 @@ impl Goal for BeePollinateGoal {
     }
 }
 
+/// Vanilla `Bee.ValidateHiveGoal`: forgets a loaded hive that is gone, with the relocation
+/// cooldown that the plain `aiStep` check skips.
+struct ValidateHiveGoal {
+    bee: Weak<BeeEntity>,
+    validate_cooldown: i64,
+    last_validate_tick: i64,
+}
+
+impl ValidateHiveGoal {
+    fn new(bee: Weak<BeeEntity>) -> Self {
+        Self {
+            bee,
+            validate_cooldown: rand::random_range(MIN_VALIDATE_COOLDOWN..=MAX_VALIDATE_COOLDOWN),
+            last_validate_tick: -1,
+        }
+    }
+}
+
+impl Goal for ValidateHiveGoal {
+    fn can_start(&mut self, _mob: &dyn Mob) -> bool {
+        calm_bee(&self.bee).is_some_and(|bee| {
+            bee.get_entity().world.load().get_world_age()
+                > self.last_validate_tick + self.validate_cooldown
+        })
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        false
+    }
+
+    fn start(&mut self, _mob: &dyn Mob) {
+        let Some(bee) = self.bee.upgrade() else {
+            return;
+        };
+        let world = bee.get_entity().world.load();
+        if bee
+            .get_hive_pos()
+            .is_some_and(|hive| world.is_loaded(&hive) && !bee.is_hive_valid())
+        {
+            bee.drop_hive();
+        }
+        self.last_validate_tick = world.get_world_age();
+    }
+}
+
+/// Vanilla `Bee.ValidateFlowerGoal`: forgets a loaded flower that no longer attracts bees.
+struct ValidateFlowerGoal {
+    bee: Weak<BeeEntity>,
+    validate_cooldown: i64,
+    last_validate_tick: i64,
+}
+
+impl ValidateFlowerGoal {
+    fn new(bee: Weak<BeeEntity>) -> Self {
+        Self {
+            bee,
+            validate_cooldown: rand::random_range(MIN_VALIDATE_COOLDOWN..=MAX_VALIDATE_COOLDOWN),
+            last_validate_tick: -1,
+        }
+    }
+}
+
+impl Goal for ValidateFlowerGoal {
+    fn can_start(&mut self, _mob: &dyn Mob) -> bool {
+        calm_bee(&self.bee).is_some_and(|bee| {
+            bee.get_entity().world.load().get_world_age()
+                > self.last_validate_tick + self.validate_cooldown
+        })
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        false
+    }
+
+    fn start(&mut self, _mob: &dyn Mob) {
+        let Some(bee) = self.bee.upgrade() else {
+            return;
+        };
+        let world = bee.get_entity().world.load();
+        if bee.get_saved_flower_pos().is_some_and(|flower| {
+            world.is_loaded(&flower) && !attracts_bees(world.get_block_and_state(&flower).1)
+        }) {
+            bee.drop_flower();
+        }
+        self.last_validate_tick = world.get_world_age();
+    }
+}
+
+/// Vanilla `Bee.BeeWanderGoal`: hovers around, steering back once too far from a valid hive.
+struct BeeWanderGoal {
+    bee: Weak<BeeEntity>,
+}
+
+impl BeeWanderGoal {
+    const fn new(bee: Weak<BeeEntity>) -> Self {
+        Self { bee }
+    }
+
+    fn find_pos(bee: &BeeEntity) -> Option<Vector3<f64>> {
+        let wander_direction = match bee.get_hive_pos() {
+            Some(hive) if bee.is_hive_valid() && !Self::closer_than_threshold(bee, &hive) => {
+                (hive.to_centered_f64() - bee.get_entity().pos.load()).normalize()
+            }
+            _ => bee.get_looking_vector(),
+        };
+
+        hover_random_pos::get_pos(
+            bee,
+            WANDER_HORIZONTAL_DISTANCE,
+            7,
+            wander_direction.x,
+            wander_direction.z,
+            std::f64::consts::FRAC_PI_2,
+            3,
+            1,
+        )
+        .or_else(|| {
+            air_and_water_random_pos::get_pos(
+                bee,
+                WANDER_HORIZONTAL_DISTANCE,
+                4,
+                -2,
+                wander_direction.x,
+                wander_direction.z,
+                std::f64::consts::FRAC_PI_2,
+            )
+        })
+    }
+
+    /// Vanilla `Bee#closerThan(hivePos, getWanderThreshold())`.
+    fn closer_than_threshold(bee: &BeeEntity, hive: &BlockPos) -> bool {
+        let reduction = if !bee.has_hive() && !bee.has_saved_flower_pos() {
+            WANDER_THRESHOLD_REDUCTION_NO_TARGETS
+        } else {
+            WANDER_THRESHOLD_REDUCTION
+        };
+        let threshold = TOO_FAR_DISTANCE - reduction;
+        f64::from(hive.squared_distance(&bee.get_entity().block_pos.load())) < threshold * threshold
+    }
+}
+
+impl Goal for BeeWanderGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        mob.is_navigator_idle() && rand::random_range(0..WANDER_CHANCE) == 0
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_in_progress()
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        let Some(bee) = self.bee.upgrade() else {
+            return;
+        };
+        if let Some(target) = Self::find_pos(&bee) {
+            let mob_pos = mob.get_entity().pos.load();
+            mob.get_mob_entity()
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_progress(NavigatorGoal::new(mob_pos, target, 1.0));
+        }
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE
+    }
+}
+
 struct BeeGrowCropGoal {
     bee: Weak<BeeEntity>,
 }
@@ -1208,7 +1388,7 @@ impl BeeGrowCropGoal {
 
 impl Goal for BeeGrowCropGoal {
     fn can_start(&mut self, _mob: &dyn Mob) -> bool {
-        let Some(bee) = self.bee.upgrade() else {
+        let Some(bee) = calm_bee(&self.bee) else {
             return false;
         };
         bee.crops_grown_since_pollination.load(Ordering::Relaxed) < MAX_CROPS_GROWABLE

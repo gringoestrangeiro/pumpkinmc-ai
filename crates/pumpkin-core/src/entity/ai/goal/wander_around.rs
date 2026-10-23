@@ -3,8 +3,10 @@ use crate::entity::ai::util::default_random_pos;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob};
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
+use std::sync::atomic::Ordering::Relaxed;
 
 pub const DEFAULT_INTERVAL: i32 = 120;
+const MAX_NO_ACTION_TIME: i32 = 100;
 
 pub struct WanderAroundGoal {
     goal_control: Controls,
@@ -52,6 +54,12 @@ impl WanderAroundGoal {
     }
 }
 
+/// Vanilla `RandomStrollGoal.checkNoActionTime`: a mob that has been out of every player's
+/// no-despawn range (and unhurt) for 100 ticks stops picking stroll targets.
+pub(super) fn is_idle_too_long(mob: &dyn Mob) -> bool {
+    mob.get_mob_entity().no_action_time.load(Relaxed) >= MAX_NO_ACTION_TIME
+}
+
 fn land_position(mob: &dyn Mob) -> Option<Vector3<f64>> {
     default_random_pos::get_pos(mob, 10, 7)
 }
@@ -68,7 +76,10 @@ impl Goal for WanderAroundGoal {
         }
 
         if !self.force_trigger {
-            // TODO: also bail out on a long no-action time, which needs the despawn bookkeeping.
+            if is_idle_too_long(mob) {
+                return false;
+            }
+
             if mob
                 .get_random()
                 .random_range(0..to_goal_ticks(self.interval))
