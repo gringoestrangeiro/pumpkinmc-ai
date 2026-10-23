@@ -23,14 +23,15 @@ use crate::entity::{
         swim::SwimGoal, tempt::TemptGoal,
         water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
-    mob::{Mob, MobEntity},
+    mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 use super::horse::{
-    AbstractHorse, FLAG_SADDLE, FLAG_TAME, drop_horse_inventory, open_mount_screen,
-    read_horse_inventory, write_horse_inventory,
+    AbstractHorse, FLAG_SADDLE, FLAG_TAME, drop_horse_inventory, finalize_abstract_horse_spawn,
+    open_mount_screen, read_horse_inventory, write_horse_inventory,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[
@@ -213,6 +214,14 @@ impl Animal for MuleEntity {
 impl Mob for MuleEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        finalize_abstract_horse_spawn(self, group_data)
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

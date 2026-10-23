@@ -161,7 +161,6 @@ impl Mob for SalmonEntity {
         _world: &Arc<crate::world::World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
         let roll = rand::random_range(0..95);
         let size = if roll < 30 {
             SalmonSize::Small
@@ -171,7 +170,7 @@ impl Mob for SalmonEntity {
             SalmonSize::Large
         };
         self.set_variant(size);
-        group_data
+        fish::finalize_school_spawn(&self.mob_entity, &self.fish_data, group_data)
     }
 
     fn mob_init_data_tracker(&self) {

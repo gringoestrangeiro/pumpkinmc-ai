@@ -232,6 +232,16 @@ impl Mob for SulfurCubeEntity {
         Some(self)
     }
 
+    /// Vanilla sulfur cubes are cube mobs, not `AgeableMob`s, so a group never rolls babies.
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        self.entity.finalize_spawn_base();
+        group_data
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         nbt.put_int("Size", self.get_size() - 1);
         nbt.put_bool("wasOnGround", self.was_on_ground.load(Ordering::Relaxed));

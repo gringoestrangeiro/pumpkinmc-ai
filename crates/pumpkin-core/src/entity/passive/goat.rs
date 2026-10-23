@@ -31,7 +31,10 @@ use crate::entity::{
     },
     combat::knockback_after_resistance,
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        spawn::{SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
@@ -609,7 +612,6 @@ impl Mob for GoatEntity {
         _world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
         let mut rng = rand::rng();
         self.set_screaming(rng.random::<f64>() < 0.02);
         self.age_boundary_reached();
@@ -621,7 +623,7 @@ impl Mob for GoatEntity {
             }
         }
         self.reset_ram_cooldown();
-        group_data
+        finalize_ageable_spawn(self, group_data)
     }
 
     fn mob_init_data_tracker(&self) {

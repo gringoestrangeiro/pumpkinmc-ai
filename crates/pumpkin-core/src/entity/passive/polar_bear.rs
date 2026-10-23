@@ -28,6 +28,7 @@ use crate::entity::{
     mob::{
         Mob, MobEntity,
         neutral::{NeutralData, NeutralMob},
+        spawn,
     },
     passive::animal::Animal,
     player::Player,
@@ -197,6 +198,17 @@ impl NeutralMob for PolarBearEntity {
 impl Mob for PolarBearEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<spawn::SpawnGroupData>,
+    ) -> Option<spawn::SpawnGroupData> {
+        let group_data = group_data.unwrap_or(spawn::SpawnGroupData::Ageable(
+            spawn::AgeableMobGroupData::with_baby_spawn_chance(1.0),
+        ));
+        spawn::finalize_ageable_spawn(self, Some(group_data))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

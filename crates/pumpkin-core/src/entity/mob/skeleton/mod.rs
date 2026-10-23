@@ -20,7 +20,7 @@ use crate::entity::{
         revenge::RevengeGoal,
         water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
-    mob::{Mob, MobEntity, equipment::RegionalDifficulty},
+    mob::{Mob, MobEntity, equipment::RegionalDifficulty, spawn::SpawnGroupData},
     passive::turtle::baby_on_land_selector,
 };
 use crate::world::World;
@@ -128,6 +128,17 @@ impl SkeletonEntityBase {
         } else {
             Self::ATTACK_INTERVAL
         }
+    }
+
+    /// Vanilla `AbstractSkeleton.finalizeSpawn`. Equipment and `canPickUpLoot` come from the
+    /// spawn equipment registry instead.
+    pub fn finalize_skeleton_spawn(
+        &self,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.mob_entity.finalize_spawn_base();
+        self.mob_entity.maybe_wear_halloween_head();
+        group_data
     }
 }
 

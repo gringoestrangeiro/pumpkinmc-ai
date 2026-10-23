@@ -5,11 +5,13 @@ use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::potion::Effect;
 
 use crate::entity::mob::equipment::RegionalDifficulty;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::mob::zombie::ZombieEntityBase;
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity},
 };
+use crate::world::World;
 use pumpkin_nbt::compound::NbtCompound;
 
 pub struct HuskEntity {
@@ -38,6 +40,14 @@ impl Mob for HuskEntity {
 
     fn spawn_as_baby(&self) -> bool {
         self.entity.spawn_as_baby()
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.entity.finalize_zombie_spawn(self, world, group_data)
     }
 
     fn get_base_experience_reward(&self) -> u32 {

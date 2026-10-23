@@ -563,6 +563,18 @@ impl Mob for HoglinEntity {
         true
     }
 
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        if rand::random::<f32>() < 0.2 {
+            self.spawn_as_baby();
+        }
+        // Vanilla hoglins are `Animal`s, so the group baby roll of `AgeableMob` follows.
+        crate::entity::mob::spawn::finalize_ageable_spawn(self, group_data)
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         if self.is_immune_to_zombification() {
             nbt.put_bool("IsImmuneToZombification", true);

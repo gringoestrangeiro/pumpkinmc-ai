@@ -28,7 +28,7 @@ use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
-    ageable::{AgeableData, AgeableMob},
+    ageable::{AgeableData, AgeableMob, BABY_START_AGE},
     ai::goal::{
         Controls, Goal, ParentHandle,
         active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
@@ -46,7 +46,11 @@ use crate::entity::{
         water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     ai::pathfinder::node::PathType,
-    mob::{Mob, MobEntity, equipment::RegionalDifficulty, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        equipment::RegionalDifficulty,
+        spawn::{AgeableMobGroupData, SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::{animal::Animal, tamable::TamableAnimal, turtle::baby_on_land_selector},
     player::Player,
 };
@@ -1380,20 +1384,26 @@ impl Mob for FoxEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
-        let pos = self.get_entity().block_pos.load();
-        let biome = world.get_biome(&pos);
-        self.set_variant(
-            if biome.has_tag(&tag::WorldgenBiome::MINECRAFT_SPAWNS_SNOW_FOXES) {
+        let (fox_data, variant) = if let Some(SpawnGroupData::Fox(fox_data, variant)) = group_data {
+            (fox_data, variant)
+        } else {
+            let biome = world.get_biome(&self.get_entity().block_pos.load());
+            let variant = if biome.has_tag(&tag::WorldgenBiome::MINECRAFT_SPAWNS_SNOW_FOXES) {
                 FoxVariant::Snow
             } else {
                 FoxVariant::Red
-            },
-        );
+            };
+            (AgeableMobGroupData::with_should_spawn_baby(false), variant)
+        };
+        self.set_variant(variant);
         self.set_target_goals();
+        // The size counts the foxes before this one, so every fox from the third on is a baby.
+        if fox_data.group_size() >= 2 {
+            self.set_age(BABY_START_AGE);
+        }
         let difficulty = RegionalDifficulty::at(world, self.get_entity().pos.load());
         self.populate_default_equipment_slots(world, &difficulty);
-        group_data
+        finalize_ageable_spawn(self, Some(SpawnGroupData::Fox(fox_data, variant)))
     }
 
     fn mob_init_data_tracker(&self) {

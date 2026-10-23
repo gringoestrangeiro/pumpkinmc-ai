@@ -129,6 +129,14 @@ impl Mob for SkeletonEntity {
         &self.entity.mob_entity
     }
 
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        self.entity.finalize_skeleton_spawn(group_data)
+    }
+
     fn get_ambient_sound(&self) -> Option<Sound> {
         Some(Sound::EntitySkeletonAmbient)
     }

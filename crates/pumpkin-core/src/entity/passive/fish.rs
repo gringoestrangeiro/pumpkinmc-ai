@@ -21,6 +21,7 @@ use crate::entity::ai::goal::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::pathfinder::{Navigator, NavigatorGoal};
 use crate::entity::breath::{MAX_AIR, tick_mob_air_supply};
+use crate::entity::mob::spawn::{SchoolSpawnGroupData, SpawnGroupData};
 use crate::entity::mob::{Mob, MobEntity};
 use crate::world::World;
 
@@ -446,4 +447,24 @@ pub fn check_spawn_obstruction(mob: &dyn Mob, world: &World) -> bool {
     world
         .get_entities_at_box(&mob.get_entity().bounding_box.load())
         .is_empty()
+}
+
+/// Vanilla `AbstractSchoolingFish.finalizeSpawn`: every later fish of a spawn group follows
+/// the first one.
+pub fn finalize_school_spawn(
+    mob_entity: &MobEntity,
+    fish_data: &FishData,
+    group_data: Option<SpawnGroupData>,
+) -> Option<SpawnGroupData> {
+    mob_entity.finalize_spawn_base();
+    let Some(group_data) = group_data else {
+        return Some(SpawnGroupData::School(SchoolSpawnGroupData::default()));
+    };
+    if let Some(leader) = group_data
+        .school()
+        .and_then(|school| school.leader.as_ref())
+    {
+        fish_data.start_following(leader);
+    }
+    Some(group_data)
 }

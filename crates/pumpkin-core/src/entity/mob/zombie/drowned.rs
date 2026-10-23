@@ -30,6 +30,7 @@ use crate::entity::{
     living::LivingEntity,
     mob::{
         Mob, MobEntity, RangedAttackMob,
+        spawn::SpawnGroupData,
         zombie::{ZombieEntityBase, is_abstract_villager},
     },
     passive::turtle::baby_on_land_selector,
@@ -240,6 +241,29 @@ impl Mob for DrownedEntity {
 
     fn spawn_as_baby(&self) -> bool {
         self.entity.spawn_as_baby()
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let group_data = self.entity.finalize_zombie_spawn(self, world, group_data);
+        let mob_entity = &self.entity.mob_entity;
+        let empty_off_hand = mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&EquipmentSlot::OFF_HAND)
+            .is_empty();
+        if empty_off_hand && rand::random::<f32>() < 0.03 {
+            mob_entity.set_item_slot_and_drop_when_killed(
+                &EquipmentSlot::OFF_HAND,
+                ItemStack::new(1, &Item::NAUTILUS_SHELL),
+            );
+        }
+        group_data
     }
 
     fn get_base_experience_reward(&self) -> u32 {

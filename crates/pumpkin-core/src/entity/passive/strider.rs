@@ -3,6 +3,7 @@ use std::sync::{Arc, Weak};
 
 use pumpkin_data::Block;
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::fluid::Fluid;
 use pumpkin_data::item::Item;
@@ -13,6 +14,7 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
+use uuid::Uuid;
 
 use crate::block::PathComputationType;
 use crate::entity::ai::pathfinder::node::PathType;
@@ -33,9 +35,17 @@ use crate::entity::{
     },
     attributes::{Modifier, ModifierOperation},
     item_steerable::{ItemBasedSteering, ItemSteerable},
-    mob::{Mob, MobEntity},
+    mob::{
+        Mob, MobEntity,
+        spawn::{
+            AgeableMobGroupData, SpawnGroupData, ZombieGroupData, finalize_ageable_spawn,
+            finalize_spawn,
+        },
+        zombie::ZombieEntityBase,
+    },
     passive::animal::Animal,
     player::Player,
+    r#type::from_type,
 };
 use crate::world::World;
 
@@ -297,6 +307,21 @@ impl AgeableMob for StriderEntity {
     }
 }
 
+/// Vanilla `Strider.spawnJockey`: queues `jockey` to ride the strider once it enters the world.
+fn spawn_jockey(
+    strider: &StriderEntity,
+    world: &Arc<World>,
+    jockey: &Arc<dyn EntityBase>,
+    jockey_group_data: Option<SpawnGroupData>,
+) -> SpawnGroupData {
+    jockey
+        .get_entity()
+        .set_rotation(strider.get_entity().yaw.load(), 0.0);
+    finalize_spawn(jockey, world, jockey_group_data);
+    strider.mob_entity.add_pending_rider(jockey.clone());
+    SpawnGroupData::Ageable(AgeableMobGroupData::with_baby_spawn_chance(0.0))
+}
+
 impl Animal for StriderEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_STRIDER_FOOD)
@@ -307,6 +332,46 @@ impl Animal for StriderEntity {
 impl Mob for StriderEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        if self.is_baby() {
+            return finalize_ageable_spawn(self, group_data);
+        }
+
+        let mut rng = rand::rng();
+        let pos = self.get_entity().pos.load();
+        // Vanilla replaces any shared data here, so every adult strider starts a new group and
+        // the 0.5 baby chance below never gets a second member to roll for.
+        let group_data = if rng.random_range(0..30) == 0 && world.should_spawn_monsters() {
+            let jockey = from_type(&EntityType::ZOMBIFIED_PIGLIN, pos, world, Uuid::new_v4());
+            let jockey_group_data = SpawnGroupData::Zombie(ZombieGroupData {
+                is_baby: ZombieEntityBase::get_spawn_as_baby_odds(),
+                can_spawn_jockey: false,
+            });
+            let group_data = spawn_jockey(self, world, &jockey, Some(jockey_group_data));
+            if let Some(mob) = jockey.get_mob() {
+                mob.get_mob_entity().set_item_slot(
+                    &EquipmentSlot::MAIN_HAND,
+                    ItemStack::new(1, &Item::WARPED_FUNGUS_ON_A_STICK),
+                );
+            }
+            self.set_saddled(true);
+            group_data
+        } else if rng.random_range(0..10) == 0 {
+            let jockey = from_type(&EntityType::STRIDER, pos, world, Uuid::new_v4());
+            if let Some(mob) = jockey.get_mob() {
+                mob.spawn_as_baby();
+            }
+            spawn_jockey(self, world, &jockey, None)
+        } else {
+            SpawnGroupData::Ageable(AgeableMobGroupData::with_baby_spawn_chance(0.5))
+        };
+        finalize_ageable_spawn(self, Some(group_data))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

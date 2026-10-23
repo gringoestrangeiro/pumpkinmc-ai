@@ -133,7 +133,7 @@ impl Mob for WitherSkeletonEntity {
         _world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.entity.mob_entity.finalize_spawn_base();
+        let group_data = self.entity.finalize_skeleton_spawn(group_data);
         self.entity
             .mob_entity
             .living_entity

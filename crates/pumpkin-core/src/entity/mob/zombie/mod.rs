@@ -1,3 +1,4 @@
+use super::spawn::{RANDOM_SPAWN_BONUS_ID, SpawnGroupData, ZombieGroupData};
 use super::{Mob, MobEntity};
 use crate::entity::ai::goal::active_target::DEFAULT_RANDOM_INTERVAL;
 use crate::entity::ai::goal::break_door::BreakDoorGoal;
@@ -24,6 +25,7 @@ use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::Difficulty;
+use rand::RngExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -47,6 +49,8 @@ pub struct ZombieEntityBase {
 
 impl ZombieEntityBase {
     const SPEED_MODIFIER_BABY_ID: &str = "minecraft:baby";
+    pub const ZOMBIE_LEADER_CHANCE: f32 = 0.05;
+    const BREAK_DOOR_CHANCE: f32 = 0.1;
 
     pub fn new(entity: Entity) -> Arc<Self> {
         Self::with_can_break_doors(entity, false)
@@ -208,6 +212,48 @@ impl ZombieEntityBase {
         self.is_baby.load(Ordering::Relaxed)
     }
 
+    /// Vanilla `Zombie.getSpawnAsBabyOdds`.
+    #[must_use]
+    pub fn get_spawn_as_baby_odds() -> bool {
+        rand::random::<f32>() < 0.05
+    }
+
+    /// Vanilla `Zombie.finalizeSpawn` for the zombie-family mob `mob` built on this base.
+    /// Equipment and `canPickUpLoot` come from the spawn equipment registry instead.
+    pub fn finalize_zombie_spawn(
+        &self,
+        mob: &dyn Mob,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.mob_entity.finalize_spawn_base();
+        let difficulty_modifier =
+            RegionalDifficulty::at(world, self.mob_entity.living_entity.entity.pos.load())
+                .special_multiplier;
+        let group_data = group_data.unwrap_or_else(|| {
+            SpawnGroupData::Zombie(ZombieGroupData {
+                is_baby: Self::get_spawn_as_baby_odds(),
+                can_spawn_jockey: true,
+            })
+        });
+        if let SpawnGroupData::Zombie(zombie_data) = &group_data {
+            if zombie_data.is_baby {
+                self.set_baby(true);
+            }
+            self.set_can_break_doors(
+                rand::random::<f32>() < difficulty_modifier * Self::BREAK_DOOR_CHANCE,
+                mob,
+            );
+        }
+        self.mob_entity.maybe_wear_halloween_head();
+        // Vanilla `Zombie.randomizeReinforcementsChance`.
+        let reinforcements_chance = rand::random::<f64>() * 0.1;
+        if handle_attributes(&self.mob_entity, difficulty_modifier, reinforcements_chance) {
+            self.set_can_break_doors(true, mob);
+        }
+        Some(group_data)
+    }
+
     #[must_use]
     pub fn get_base_experience_reward(&self) -> u32 {
         let xp = self
@@ -223,6 +269,59 @@ impl ZombieEntityBase {
             xp
         }
     }
+}
+
+/// Vanilla `Zombie.handleAttributes`, given the subclass's `randomizeReinforcementsChance`
+/// roll. Returns whether the zombie rolled the leader bonus, which also lets vanilla zombies
+/// break doors.
+pub fn handle_attributes(
+    mob_entity: &MobEntity,
+    difficulty_modifier: f32,
+    reinforcements_chance: f64,
+) -> bool {
+    const LEADER_ZOMBIE_BONUS_ID: &str = "minecraft:leader_zombie_bonus";
+    const ZOMBIE_RANDOM_SPAWN_BONUS_ID: &str = "minecraft:zombie_random_spawn_bonus";
+
+    let living = &mob_entity.living_entity;
+    let mut rng = rand::rng();
+    living.set_attribute_base(&Attributes::SPAWN_REINFORCEMENTS, reinforcements_chance);
+    living.update_attribute(&Attributes::KNOCKBACK_RESISTANCE, |knockback_resistance| {
+        knockback_resistance.add_or_replace_modifier(Modifier {
+            id: RANDOM_SPAWN_BONUS_ID.to_string(),
+            amount: rng.random::<f64>() * 0.05,
+            operation: ModifierOperation::Add,
+        });
+    });
+    let follow_range_modifier = rng.random::<f64>() * 1.5 * f64::from(difficulty_modifier);
+    if follow_range_modifier > 1.0 {
+        living.update_attribute(&Attributes::FOLLOW_RANGE, |follow_range| {
+            follow_range.add_or_replace_modifier(Modifier {
+                id: ZOMBIE_RANDOM_SPAWN_BONUS_ID.to_string(),
+                amount: follow_range_modifier,
+                operation: ModifierOperation::MultiplyTotal,
+            });
+        });
+    }
+
+    if rng.random::<f32>() >= difficulty_modifier * ZombieEntityBase::ZOMBIE_LEADER_CHANCE {
+        return false;
+    }
+    living.update_attribute(&Attributes::SPAWN_REINFORCEMENTS, |spawn_reinforcements| {
+        spawn_reinforcements.add_or_replace_modifier(Modifier {
+            id: LEADER_ZOMBIE_BONUS_ID.to_string(),
+            amount: rng.random::<f64>().mul_add(0.25, 0.5),
+            operation: ModifierOperation::Add,
+        });
+    });
+    living.update_attribute(&Attributes::MAX_HEALTH, |max_health| {
+        max_health.add_or_replace_modifier(Modifier {
+            id: LEADER_ZOMBIE_BONUS_ID.to_string(),
+            amount: rng.random::<f64>().mul_add(3.0, 1.0),
+            operation: ModifierOperation::MultiplyTotal,
+        });
+    });
+    living.set_health(living.get_max_health());
+    true
 }
 
 impl Mob for ZombieEntityBase {

@@ -28,7 +28,10 @@ use crate::entity::{
         water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     living::LivingEntity,
-    mob::{Mob, MobEntity, RangedAttackMob},
+    mob::{
+        Mob, MobEntity, RangedAttackMob,
+        spawn::{AgeableMobGroupData, SpawnGroupData},
+    },
     passive::animal::{Animal, get_carpet_color_from_item},
     passive::trader_llama::TraderLlamaEntity,
     player::Player,
@@ -37,8 +40,8 @@ use crate::entity::{
 use crate::world::World;
 
 use super::horse::{
-    AbstractHorse, drop_horse_inventory, open_mount_screen, read_horse_inventory,
-    write_horse_inventory,
+    AbstractHorse, drop_horse_inventory, finalize_abstract_horse_spawn, open_mount_screen,
+    read_horse_inventory, write_horse_inventory,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::HAY_BLOCK];
@@ -509,6 +512,22 @@ impl Animal for LlamaEntity {
 impl Mob for LlamaEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let (llama_data, variant) = match group_data {
+            Some(SpawnGroupData::Llama(llama_data, variant)) => (llama_data, variant),
+            _ => (
+                AgeableMobGroupData::with_should_spawn_baby(true),
+                LlamaVariant::random_variant(),
+            ),
+        };
+        self.set_variant(variant);
+        finalize_abstract_horse_spawn(self, Some(SpawnGroupData::Llama(llama_data, variant)))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

@@ -41,6 +41,7 @@ use crate::entity::{
     mob::{
         Mob, MobEntity,
         neutral::{NeutralData, NeutralMob},
+        spawn,
     },
     passive::{
         animal::Animal,
@@ -278,6 +279,30 @@ impl NeutralMob for WolfEntity {
 impl Mob for WolfEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<spawn::SpawnGroupData>,
+    ) -> Option<spawn::SpawnGroupData> {
+        let (pack_data, variant) = match group_data {
+            Some(spawn::SpawnGroupData::WolfPack(pack_data, variant)) => (pack_data, variant),
+            // Pumpkin has no wolf variant spawn conditions yet, so a pack keeps the variant
+            // its first wolf was created with.
+            _ => (
+                spawn::AgeableMobGroupData::with_should_spawn_baby(false),
+                WolfVariant::all()
+                    .get(usize::from(self.variant.load(Ordering::Relaxed)))
+                    .copied()
+                    .unwrap_or(WolfVariant::Pale),
+            ),
+        };
+        self.set_variant(variant);
+        spawn::finalize_ageable_spawn(
+            self,
+            Some(spawn::SpawnGroupData::WolfPack(pack_data, variant)),
+        )
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

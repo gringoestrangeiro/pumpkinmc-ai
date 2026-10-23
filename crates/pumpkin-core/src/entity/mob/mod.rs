@@ -1292,14 +1292,18 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
-    /// Vanilla `Mob.finalizeSpawn`, run before the mob enters the world on spawns that
-    /// vanilla finalizes. Overrides call `finalize_spawn_base` first. Riders queued with
+    /// Vanilla `Mob.finalizeSpawn` (`AgeableMob.finalizeSpawn` for ageable mobs), run before
+    /// the mob enters the world on spawns that vanilla finalizes. Overrides end with
+    /// `finalize_spawn_base` or `spawn::finalize_ageable_spawn`. Riders queued with
     /// `add_pending_rider` are added by the world together with the mob.
     fn finalize_spawn(
         &self,
         _world: &Arc<World>,
         group_data: Option<spawn::SpawnGroupData>,
     ) -> Option<spawn::SpawnGroupData> {
+        if self.as_ageable().is_some() {
+            return spawn::finalize_ageable_spawn(self, group_data);
+        }
         self.get_mob_entity().finalize_spawn_base();
         group_data
     }

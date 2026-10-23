@@ -41,7 +41,10 @@ use crate::entity::{
         water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     attributes::{Modifier, ModifierOperation},
-    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        spawn::{AgeableMobGroupData, SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
@@ -613,10 +616,18 @@ impl Mob for RabbitEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
-        let biome = world.get_biome(&self.get_entity().block_pos.load());
-        self.set_variant(variant_for_biome(biome));
-        group_data
+        let (rabbit_data, variant) =
+            if let Some(SpawnGroupData::Rabbit(rabbit_data, variant)) = group_data {
+                (rabbit_data, variant)
+            } else {
+                let biome = world.get_biome(&self.get_entity().block_pos.load());
+                (
+                    AgeableMobGroupData::with_baby_spawn_chance(1.0),
+                    variant_for_biome(biome),
+                )
+            };
+        self.set_variant(variant);
+        finalize_ageable_spawn(self, Some(SpawnGroupData::Rabbit(rabbit_data, variant)))
     }
 
     fn mob_init_data_tracker(&self) {
