@@ -477,6 +477,7 @@ impl World {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut newly_active = Vec::new();
         let mut current_players = FxHashSet::default();
+        let mut player_chunks = Vec::with_capacity(players.len());
 
         let spectators_generate_chunks =
             self.level_info.load().game_rules.spectators_generate_chunks;
@@ -487,6 +488,7 @@ impl World {
             }
             let id = player.gameprofile.id;
             current_players.insert(id);
+            player_chunks.push(player.get_entity().chunk_pos.load());
             tracker.update_player(
                 id,
                 ActivePlayerArea {
@@ -539,7 +541,9 @@ impl World {
                 self.migrate_pending_block_entities(pos);
             }
         }
-        let spawnable_chunks = tracker.loaded_active_chunks.len() as i32;
+        // The global mob cap scales with vanilla's fixed 8-chunk spawn radius around
+        // players, not with the configured simulation distance.
+        let spawnable_chunks = natural_spawner::natural_spawn_chunk_count(&player_chunks);
         drop(active_chunks);
         drop(tracker);
 
@@ -2136,10 +2140,25 @@ impl World {
             spawn_passives,
         ));
 
-        // 5. Parallel Chunk Spawners via Rayon
-        if !spawn_list.is_empty() {
+        // 5. Parallel Chunk Spawners via Rayon. Vanilla ticks the spawning chunks even
+        // with nothing to spawn, because `tickSpawningChunk` also rolls thunder strikes.
+        if !spawn_list.is_empty() || self.is_thundering() {
+            // Vanilla `ChunkMap.collectSpawningChunks`: only chunks a non-spectator
+            // player is close enough to can spawn, so skip the rest before reading them.
+            let spawn_player_positions: Vec<_> = self
+                .players
+                .load()
+                .iter()
+                .filter(|player| !player.is_spectator())
+                .map(|player| player.position())
+                .collect();
             let mut spawning_chunks = Vec::new();
             for pos in active_chunks.iter() {
+                if !spawn_player_positions.iter().any(|player_pos| {
+                    natural_spawner::is_close_enough_for_spawning(*pos, player_pos)
+                }) {
+                    continue;
+                }
                 if let Some(chunk) = self.level.read_chunk_sync(pos, std::clone::Clone::clone) {
                     spawning_chunks.push((*pos, chunk));
                 }

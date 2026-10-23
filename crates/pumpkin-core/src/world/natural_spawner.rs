@@ -23,11 +23,8 @@ use pumpkin_util::math::get_section_cord;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
-use pumpkin_util::random::xoroshiro128::Xoroshiro;
-use pumpkin_util::random::{RandomImpl, get_seed};
 use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
-use rand::seq::IndexedRandom;
 use rand::{RngExt, rng};
 use std::fmt;
 use std::sync::Arc;
@@ -35,6 +32,52 @@ use std::sync::atomic::{AtomicI32, Ordering::Relaxed};
 use uuid::Uuid;
 
 const MAGIC_NUMBER: i32 = 17 * 17;
+/// Vanilla `NaturalSpawner.SPAWN_DISTANCE_CHUNK`.
+pub const SPAWN_DISTANCE_CHUNK: i32 = 8;
+/// Vanilla `NaturalSpawner.SPAWN_DISTANCE_BLOCK`.
+const SPAWN_DISTANCE_BLOCK: f64 = 128.0;
+
+/// Vanilla `DistanceManager.getNaturalSpawnChunkCount`.
+///
+/// Every chunk within [`SPAWN_DISTANCE_CHUNK`] (chessboard distance) of a player's chunk,
+/// counted once, loaded or not. This is what scales the global mob cap.
+#[must_use]
+pub fn natural_spawn_chunk_count(player_chunks: &[Vector2<i32>]) -> i32 {
+    let side = 2 * SPAWN_DISTANCE_CHUNK + 1;
+    if let [_] = player_chunks {
+        return side * side;
+    }
+    let mut chunks = rustc_hash::FxHashSet::default();
+    for center in player_chunks {
+        for dx in -SPAWN_DISTANCE_CHUNK..=SPAWN_DISTANCE_CHUNK {
+            for dz in -SPAWN_DISTANCE_CHUNK..=SPAWN_DISTANCE_CHUNK {
+                chunks.insert(Vector2::new(center.x + dx, center.y + dz));
+            }
+        }
+    }
+    chunks.len() as i32
+}
+
+/// Vanilla `ChunkMap.playerIsCloseEnoughForSpawning`: the chunk centre is within
+/// [`SPAWN_DISTANCE_BLOCK`] of the (non-spectator) player, ignoring height.
+#[must_use]
+pub fn is_close_enough_for_spawning(chunk_pos: Vector2<i32>, player_pos: &Vector3<f64>) -> bool {
+    LocalMobCapCalculator::calc_distance(chunk_pos, player_pos)
+        < SPAWN_DISTANCE_BLOCK * SPAWN_DISTANCE_BLOCK
+}
+
+/// Vanilla `WeightedList.getRandom`.
+fn get_random_weighted(spawners: &'static [Spawner]) -> Option<&'static Spawner> {
+    let total_weight: i32 = spawners.iter().map(|spawner| spawner.weight).sum();
+    if total_weight <= 0 {
+        return None;
+    }
+    let mut selection = rng().random_range(0..total_weight);
+    spawners.iter().find(|spawner| {
+        selection -= spawner.weight;
+        selection < 0
+    })
+}
 
 pub struct MobCounts([AtomicI32; 8]);
 
@@ -133,7 +176,7 @@ impl LocalMobCapCalculator {
             if player.gamemode.load() == GameMode::Spectator {
                 continue;
             }
-            if Self::calc_distance(chunk_pos, &player.position()) < 16384.0 {
+            if is_close_enough_for_spawning(chunk_pos, &player.position()) {
                 players.push(player.entity_id());
             }
         }
@@ -544,17 +587,22 @@ pub fn get_random_pos_within(
     chunk_pos: &Vector2<i32>,
     chunk: &Arc<ChunkData>,
 ) -> BlockPos {
-    let mut rng = Xoroshiro::from_seed(get_seed());
+    let mut rng = rng();
 
-    let x = (chunk_pos.x << 4) + rng.next_bounded_i32(16);
-    let z = (chunk_pos.y << 4) + rng.next_bounded_i32(16);
-    let temp_y = chunk
+    let x = (chunk_pos.x << 4) + rng.random_range(0..16);
+    let z = (chunk_pos.y << 4) + rng.random_range(0..16);
+    let top_empty_y = chunk
         .heightmap
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(ChunkHeightmapType::WorldSurface, x, z, chunk.section.min_y)
         + 1;
-    let y = rng.next_inbetween_i32(min_y, temp_y);
+    // `Mth.randomBetweenInclusive`.
+    let y = if min_y >= top_empty_y {
+        min_y
+    } else {
+        rng.random_range(min_y..=top_empty_y)
+    };
     BlockPos::new(x, y, z)
 }
 
@@ -668,7 +716,7 @@ pub fn spawn_mobs_for_chunk_generation(
     let zo = chunk_z << 4;
 
     while rand::random::<f32>() < biome.creature_spawn_probability {
-        let Some(spawner_data) = creatures.choose(&mut rand::rng()) else {
+        let Some(spawner_data) = get_random_weighted(creatures) else {
             continue;
         };
 
@@ -920,10 +968,12 @@ pub fn spawn_category_for_position(
                         .get_entity()
                         .set_rotation(rng().random::<f32>() * 360.0, 0.0);
 
+                    // Vanilla `isValidPositionForMob`.
                     let is_valid_for_mob = entity.get_mob().is_none_or(|mob| {
                         let despawn_dist = f64::from(entity_type.category.despawn_distance);
                         !(player_distance_sq > despawn_dist * despawn_dist
                             && mob.remove_when_far_away(player_distance_sq))
+                            && mob.check_spawn_obstruction(world)
                     });
 
                     if is_valid_for_mob {
@@ -936,7 +986,11 @@ pub fn spawn_category_for_position(
                             return batch_buffer;
                         }
 
-                        if entity_type.resource_name == "tropical_fish" && group_size >= 8 {
+                        if batch_buffer
+                            .last()
+                            .and_then(|entity| entity.get_mob())
+                            .is_some_and(|mob| mob.is_max_group_size_reached(group_size))
+                        {
                             break;
                         }
                     }
@@ -1042,7 +1096,7 @@ pub fn get_random_spawn_mob_at(
     {
         None
     } else {
-        match category.id {
+        get_random_weighted(match category.id {
             id if id == MobCategory::MONSTER.id => biome.spawners.monster,
             id if id == MobCategory::CREATURE.id => biome.spawners.creature,
             id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
@@ -1054,8 +1108,7 @@ pub fn get_random_spawn_mob_at(
             id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
             id if id == MobCategory::MISC.id => biome.spawners.misc,
             _ => biome.spawners.misc,
-        }
-        .choose(&mut rng())
+        })
     }
 }
 

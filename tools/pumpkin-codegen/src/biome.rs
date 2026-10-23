@@ -64,6 +64,13 @@ pub struct Biome {
 
 impl Biome {
     fn apply_natural_mob_spawns(&mut self) {
+        if let Some(probability) = self
+            .attributes
+            .get("minecraft:gameplay/creature_world_gen_spawn_probability")
+            .and_then(Value::as_f64)
+        {
+            self.creature_spawn_probability = Some(probability as f32);
+        }
         let Some(attr) = self.attributes.get("minecraft:gameplay/natural_mob_spawns") else {
             return;
         };
@@ -121,6 +128,8 @@ struct Spawner {
     min_count: i32,
     /// Maximum number of entities in a spawn group.
     max_count: i32,
+    /// Selection weight within the spawn group's weighted list.
+    weight: i32,
 }
 
 impl<'de> Deserialize<'de> for Spawner {
@@ -134,6 +143,8 @@ impl<'de> Deserialize<'de> for Spawner {
             max_count: Option<i32>,
             #[serde(default)]
             count: Option<Value>,
+            #[serde(default)]
+            weight: Option<i32>,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -159,6 +170,7 @@ impl<'de> Deserialize<'de> for Spawner {
             r#type: raw.r#type,
             min_count,
             max_count,
+            weight: raw.weight.unwrap_or(1),
         })
     }
 }
@@ -169,11 +181,13 @@ impl Spawner {
         let r#type = &self.r#type;
         let min_count = &self.min_count;
         let max_count = &self.max_count;
+        let weight = &self.weight;
         quote! {
             Spawner {
                 r#type: #r#type,
                 min_count: #min_count,
                 max_count: #max_count,
+                weight: #weight,
             }
         }
     }
@@ -540,6 +554,7 @@ pub fn build() -> TokenStream {
             pub r#type: &'static str,
             pub min_count: i32,
             pub max_count: i32,
+            pub weight: i32,
         }
 
         impl PartialEq for Biome {
