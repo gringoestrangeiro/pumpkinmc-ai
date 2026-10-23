@@ -615,7 +615,8 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         let mut dx = other_entity.pos.load().x - self_entity.pos.load().x;
         let mut dz = other_entity.pos.load().z - self_entity.pos.load().z;
         let mut d = dx.abs().max(dz.abs());
-        if d >= 0.01 {
+        // Vanilla compares and scales with the float literals `0.01F` and `0.05F`.
+        if d >= f64::from(0.01f32) {
             d = d.sqrt();
             dx /= d;
             dz /= d;
@@ -625,8 +626,8 @@ pub trait EntityBase: Send + Sync + std::any::Any {
             }
             dx *= d2;
             dz *= d2;
-            dx *= 0.05;
-            dz *= 0.05;
+            dx *= f64::from(0.05f32);
+            dz *= f64::from(0.05f32);
 
             if !self_entity.has_passengers() && self.is_pushable() {
                 let mut vel = self_entity.velocity.load();
@@ -1072,6 +1073,9 @@ pub struct Entity {
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
     /// Vanilla `needsSync`: tracker resyncs position and velocity of entities
     pub velocity_dirty: AtomicBool,
+    /// Vanilla `syncVelocity`, set by `markHurt`: the velocity also goes to the entity
+    /// itself, which is the only way a player gets its own velocity from the server.
+    pub sync_velocity: AtomicBool,
     /// Set when an Entity is to be removed but could still be referenced
     pub removed: AtomicBool,
     /// The last sent yaw value (encoded as u8) for change detection
@@ -1210,6 +1214,7 @@ impl Entity {
             synched_data: synched_entity_data::SynchedEntityData::new(),
             movement_multiplier: AtomicCell::new(Vector3::default()),
             velocity_dirty: AtomicBool::new(true),
+            sync_velocity: AtomicBool::new(false),
             removed: AtomicBool::new(false),
             last_sent_yaw: AtomicU8::new(0),
             last_sent_pitch: AtomicU8::new(0),
@@ -1393,7 +1398,31 @@ impl Entity {
         self.set_synced_data(tracked_data::entity::DATA_NO_GRAVITY, no_gravity);
     }
 
-    /// Vanilla `hurtMarked` path: immediate, to watchers and self.
+    /// Vanilla `Entity.markHurt`.
+    pub fn mark_hurt(&self) {
+        self.sync_velocity.store(true, Ordering::SeqCst);
+    }
+
+    /// Vanilla `needsSync` motion broadcast for players: `ServerEntity.sendChanges`
+    /// sends it to the players tracking this one, never to the player itself.
+    pub fn send_velocity_to_trackers(&self) {
+        let velocity = self.velocity.load();
+        let diff = (velocity - self.last_sent_velocity.load()).length_squared();
+        if diff > 1.0e-7 || (diff > 0.0 && velocity.length_squared() == 0.0) {
+            self.last_sent_velocity.store(velocity);
+            self.world.load().send_to_tracking_players_editioned(
+                self,
+                &CEntityVelocity::new(self.entity_id.into(), velocity),
+                &CSetActorMotion {
+                    target_runtime_id: VarULong(self.entity_id as u64),
+                    motion: Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
+                    tick: VarULong(0),
+                },
+            );
+        }
+    }
+
+    /// Vanilla `syncVelocity` path: immediate, to watchers and self.
     pub fn send_velocity(&self) {
         let velocity = self.velocity.load();
         self.last_sent_velocity.store(velocity);
