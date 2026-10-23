@@ -219,9 +219,7 @@ impl Goal for MeleeAttackGoal {
             }
 
             mob.get_mob_entity().living_entity.swing_hand();
-            let damaged = mob
-                .get_mob_entity()
-                .try_attack(mob.get_entity(), target.as_ref());
+            let damaged = mob.do_hurt_target(target.as_ref());
             if damaged {
                 mob.on_attack(target.as_ref());
             }

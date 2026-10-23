@@ -3,12 +3,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::{EntityStatus, EntityType, MobCategory};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::GameMode;
+use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
@@ -169,6 +172,33 @@ impl Mob for IronGolemEntity {
 
     fn as_iron_golem(&self) -> Option<&crate::entity::passive::iron_golem::IronGolemEntity> {
         Some(self)
+    }
+
+    /// Vanilla `IronGolem.doHurtTarget`: a randomized hit that tosses the target up
+    /// instead of the default extra knockback.
+    fn do_hurt_target(&self, target: &dyn EntityBase) -> bool {
+        let living = &self.mob_entity.living_entity;
+        let attack_damage = living.get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+        let damage = if attack_damage as i32 > 0 {
+            attack_damage / 2.0 + rand::rng().random_range(0..attack_damage as i32) as f32
+        } else {
+            attack_damage
+        };
+        let hurt = self.mob_entity.hurt_target(&living.entity, target, damage);
+        if hurt {
+            let resistance = target.get_living_entity().map_or(0.0, |living_target| {
+                living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE)
+            });
+            let scale = (1.0 - resistance).max(0.0);
+            let target_entity = target.get_entity();
+            let velocity = target_entity.velocity.load();
+            target_entity.velocity.store(Vector3::new(
+                velocity.x,
+                f64::from(0.4f32).mul_add(scale, velocity.y),
+                velocity.z,
+            ));
+        }
+        hurt
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {

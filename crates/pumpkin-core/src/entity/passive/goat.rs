@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -29,6 +30,7 @@ use crate::entity::{
         tempt::TemptGoal,
         wander_around::WanderAroundGoal,
     },
+    combat::knockback_after_resistance,
     custom_sound::CustomSound,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::animal::Animal,
@@ -442,13 +444,39 @@ impl Goal for RamGoal {
                 })
                 .inspect(|candidate| {
                     let damaged = mob.get_mob_entity().try_attack(entity, candidate.as_ref());
-                    if damaged {
-                        candidate.get_entity().knockback(
-                            goat.ram_knockback_force(),
-                            self.ram_direction.x,
-                            self.ram_direction.z,
-                        );
-                    }
+                    // Vanilla `RamTarget.tick` knocks the target back whether or not the hit
+                    // landed, halved when a shield blocked it, scaled by the goat's speed and
+                    // through `LivingEntity.knockback`, so knockback resistance applies.
+                    let Some(living_target) = candidate.get_living_entity() else {
+                        return;
+                    };
+                    let living = &mob.get_mob_entity().living_entity;
+                    let effect_level = |effect| {
+                        living
+                            .get_effect(effect)
+                            .map_or(0, |effect| effect.amplifier + 1)
+                    };
+                    let speed_boost = 0.25
+                        * (effect_level(&StatusEffect::SPEED)
+                            - effect_level(&StatusEffect::SLOWNESS))
+                            as f32;
+                    let speed = living.get_attribute_value(&Attributes::MOVEMENT_SPEED) * RAM_SPEED;
+                    let speed_factor = (speed as f32 * 1.65).clamp(0.2, 3.0) + speed_boost;
+                    let blocking_factor = if !damaged && living_target.is_blocking() {
+                        0.5
+                    } else {
+                        1.0
+                    };
+                    let resistance =
+                        living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+                    living_target.entity.apply_knockback(
+                        knockback_after_resistance(
+                            f64::from(blocking_factor * speed_factor) * goat.ram_knockback_force(),
+                            resistance,
+                        ),
+                        self.ram_direction.x,
+                        self.ram_direction.z,
+                    );
                 })
         };
 

@@ -672,18 +672,32 @@ impl MobEntity {
         Self::check_surface_water_animal_spawn_rules(world, pos)
     }
 
+    /// Vanilla `Mob.doHurtTarget`.
     pub fn try_attack(&self, caller: &dyn EntityBase, target: &dyn EntityBase) -> bool {
+        let attack_damage: f32 =
+            self.living_entity
+                .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+        let damaged = self.hurt_target(caller, target, attack_damage);
+        if damaged {
+            self.cause_extra_knockback(target, self.get_knockback());
+        }
+        damaged
+    }
+
+    /// The `hurtServer` call shared by every mob melee hit, plus `setLastHurtMob`.
+    pub fn hurt_target(
+        &self,
+        caller: &dyn EntityBase,
+        target: &dyn EntityBase,
+        damage: f32,
+    ) -> bool {
         if self.living_entity.dead.load(Relaxed) {
             return false;
         }
 
-        let attack_damage: f32 =
-            self.living_entity
-                .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
-
         let damaged = target.damage_with_context(
             target,
-            attack_damage,
+            damage,
             DamageType::MOB_ATTACK,
             // Vanilla `hurtServer` reads the attacker position from the damage source,
             // which is what the shield block direction check uses.
@@ -702,6 +716,42 @@ impl MobEntity {
         }
 
         damaged
+    }
+
+    /// Vanilla `LivingEntity.getKnockback`: the attack knockback attribute plus the
+    /// weapon's knockback enchantment, halved.
+    fn get_knockback(&self) -> f32 {
+        let knockback = self
+            .living_entity
+            .get_attribute_value(&Attributes::ATTACK_KNOCKBACK) as f32;
+        let weapon = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&EquipmentSlot::MAIN_HAND);
+        crate::enchantment::EnchantmentHelper::modify_knockback(&weapon, knockback) / 2.0
+    }
+
+    /// Vanilla `LivingEntity.causeExtraKnockback`.
+    fn cause_extra_knockback(&self, target: &dyn EntityBase, knockback: f32) {
+        let Some(living_target) = target.get_living_entity() else {
+            return;
+        };
+        if knockback <= 0.0 {
+            return;
+        }
+        let resistance = living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+        let entity = &self.living_entity.entity;
+        let yaw = entity.yaw.load().to_radians();
+        living_target.entity.apply_knockback(
+            crate::entity::combat::knockback_after_resistance(f64::from(knockback), resistance),
+            f64::from(yaw.sin()),
+            f64::from(-yaw.cos()),
+        );
+        entity
+            .velocity
+            .store(entity.velocity.load().multiply(0.6, 1.0, 0.6));
     }
 
     fn get_attack_box(&self, attack_range: f64) -> BoundingBox {
@@ -1026,6 +1076,17 @@ pub trait Mob: EntityBase + Send + Sync {
 
     /// Vanilla `Mob.dropCustomDeathLoot`: extra drops that are not part of the entity loot table.
     fn drop_custom_death_loot(&self, _params: &LootContextParameters) {}
+
+    /// Vanilla `Mob.isMaxGroupSizeReached`: lets a mob end its natural spawn group early.
+    fn is_max_group_size_reached(&self, _group_size: i32) -> bool {
+        false
+    }
+
+    /// Vanilla `Mob.doHurtTarget`: a melee hit. Mobs with their own hit (hoglins,
+    /// zoglins, iron golems) override this.
+    fn do_hurt_target(&self, target: &dyn EntityBase) -> bool {
+        self.get_mob_entity().try_attack(self.get_entity(), target)
+    }
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 

@@ -15,7 +15,10 @@ use crate::entity::{
         swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     living::LivingEntity,
-    mob::{Mob, MobEntity, hoglin::throw_target},
+    mob::{
+        Mob, MobEntity,
+        hoglin::{hurt_and_throw_target, throw_target},
+    },
 };
 use crate::world::World;
 
@@ -165,11 +168,13 @@ impl Mob for ZoglinEntity {
         self.set_baby(nbt.get_bool("IsBaby").unwrap_or(false));
     }
 
-    fn on_attack(&self, target: &dyn EntityBase) {
-        // Vanilla HoglinBase.hurtAndThrowTarget: babies don't throw.
-        if self.is_baby() {
-            return;
+    fn do_hurt_target(&self, target: &dyn EntityBase) -> bool {
+        hurt_and_throw_target(&self.mob_entity, self.is_baby(), target)
+    }
+
+    fn blocked_by_item(&self, defender: &dyn EntityBase) {
+        if !self.is_baby() {
+            throw_target(&self.mob_entity.living_entity, defender);
         }
-        throw_target(&self.mob_entity.living_entity.entity, target);
     }
 }
