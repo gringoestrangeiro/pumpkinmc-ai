@@ -1,6 +1,7 @@
 use crate::block::PathComputationType;
 use crate::entity::EntityBase;
 use crate::entity::mob::spawn::finalize_spawn;
+use crate::entity::player::Player;
 use crate::entity::r#type::{SpawnLevelReader, check_spawn_rules, from_type};
 use crate::world::World;
 use arc_swap::ArcSwap;
@@ -26,6 +27,7 @@ use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
 use rand::{RngExt, rng};
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering::Relaxed};
@@ -121,17 +123,17 @@ impl MobCounts {
 }
 
 pub struct LocalMobCapCalculator {
-    player_mob_counts: DashMap<i32, MobCounts>,
-    players_near_chunk: DashMap<Vector2<i32>, Arc<[i32]>>,
+    player_mob_counts: DashMap<i32, MobCounts, FxBuildHasher>,
+    players_near_chunk: DashMap<Vector2<i32>, Arc<[i32]>, FxBuildHasher>,
 }
 
 impl Clone for LocalMobCapCalculator {
     fn clone(&self) -> Self {
-        let player_mob_counts = DashMap::new();
+        let player_mob_counts = DashMap::with_hasher(FxBuildHasher);
         for r in &self.player_mob_counts {
             player_mob_counts.insert(*r.key(), r.value().clone());
         }
-        let players_near_chunk = DashMap::new();
+        let players_near_chunk = DashMap::with_hasher(FxBuildHasher);
         for r in &self.players_near_chunk {
             players_near_chunk.insert(*r.key(), r.value().clone());
         }
@@ -145,8 +147,8 @@ impl Clone for LocalMobCapCalculator {
 impl Default for LocalMobCapCalculator {
     fn default() -> Self {
         Self {
-            player_mob_counts: DashMap::new(),
-            players_near_chunk: DashMap::new(),
+            player_mob_counts: DashMap::with_hasher(FxBuildHasher),
+            players_near_chunk: DashMap::with_hasher(FxBuildHasher),
         }
     }
 }
@@ -171,18 +173,21 @@ impl LocalMobCapCalculator {
             return players.value().clone();
         }
 
-        let mut players = Vec::new();
-        for player in world.players.load().iter() {
-            if player.gamemode.load() == GameMode::Spectator {
-                continue;
-            }
-            if is_close_enough_for_spawning(chunk_pos, &player.position()) {
-                players.push(player.entity_id());
-            }
-        }
-        let players: Arc<[i32]> = players.into();
+        let players = Self::compute_players_near(&world.players.load(), chunk_pos);
         self.players_near_chunk.insert(chunk_pos, players.clone());
         players
+    }
+
+    /// Entity ids of the non-spectator players close enough to spawn mobs in `chunk_pos`.
+    fn compute_players_near(players: &[Arc<Player>], chunk_pos: Vector2<i32>) -> Arc<[i32]> {
+        players
+            .iter()
+            .filter(|player| {
+                player.gamemode.load() != GameMode::Spectator
+                    && is_close_enough_for_spawning(chunk_pos, &player.position())
+            })
+            .map(|player| player.entity_id())
+            .collect()
     }
 
     pub fn add_mob(&self, chunk_pos: Vector2<i32>, world: &World, category: &'static MobCategory) {
@@ -404,14 +409,20 @@ impl SpawnState {
         self.mob_category_counts.remove(entity_type.category);
     }
 
+    /// Vanilla `NaturalSpawner.createState`, rebuilt every tick. The counts are gathered in
+    /// plain maps on this thread and only moved into the shared structures at the end.
     pub fn new(
         chunk_count: i32,
         entities: &ArcSwap<Vec<Arc<dyn EntityBase>>>,
         world: &World,
     ) -> Self {
-        let potential = PotentialCalculator::default();
-        let local_mob_cap = LocalMobCapCalculator::default();
-        let counter = MobCounts::default();
+        let mut charges = Vec::new();
+        let mut category_counts = [0; 8];
+        let mut player_mob_counts: FxHashMap<i32, [i32; 8]> = FxHashMap::default();
+        let mut players_near_chunk: FxHashMap<Vector2<i32>, Arc<[i32]>> = FxHashMap::default();
+        // Keyed by biome address and entity type id: one `spawn_costs` lookup per pair.
+        let mut spawn_charges: FxHashMap<(usize, u16), Option<f64>> = FxHashMap::default();
+        let players = world.players.load();
         let active_chunks = world
             .active_chunks
             .read()
@@ -432,21 +443,44 @@ impl SpawnState {
             if !active_chunks.contains(&chunk_pos) {
                 continue;
             }
-            let entity_pos = base_entity.block_pos.load();
-            let biome = base_entity.current_biome.load();
-            if let Some(cost) = biome.spawn_costs.get(entity_type.resource_name) {
-                potential.add_charge(&entity_pos, cost.charge);
+            let biome: &'static Biome = **base_entity.current_biome.load();
+            let charge = *spawn_charges
+                .entry((std::ptr::from_ref(biome).addr(), entity_type.id))
+                .or_insert_with(|| {
+                    biome
+                        .spawn_costs
+                        .get(entity_type.resource_name)
+                        .map(|cost| cost.charge)
+                });
+            if let Some(charge) = charge
+                && charge != 0.0
+            {
+                charges.push(PointCharge(base_entity.block_pos.load(), charge));
             }
+            let category = entity_type.category.id;
             if entity.get_mob().is_some() || entity_type.mob {
-                local_mob_cap.add_mob(chunk_pos, world, entity_type.category);
+                let near = players_near_chunk.entry(chunk_pos).or_insert_with(|| {
+                    LocalMobCapCalculator::compute_players_near(&players, chunk_pos)
+                });
+                for &player in near.iter() {
+                    player_mob_counts.entry(player).or_default()[category] += 1;
+                }
             }
-            counter.add(entity_type.category);
+            category_counts[category] += 1;
         }
+
+        let local_mob_cap_calculator = LocalMobCapCalculator {
+            player_mob_counts: player_mob_counts
+                .into_iter()
+                .map(|(player, counts)| (player, MobCounts(counts.map(AtomicI32::new))))
+                .collect(),
+            players_near_chunk: players_near_chunk.into_iter().collect(),
+        };
         Self {
             spawnable_chunk_count: chunk_count,
-            mob_category_counts: counter,
-            spawn_potential: potential,
-            local_mob_cap_calculator: local_mob_cap,
+            mob_category_counts: MobCounts(category_counts.map(AtomicI32::new)),
+            spawn_potential: PotentialCalculator(std::sync::Mutex::new(charges)),
+            local_mob_cap_calculator,
             last_checked: AtomicCell::new(None),
         }
     }

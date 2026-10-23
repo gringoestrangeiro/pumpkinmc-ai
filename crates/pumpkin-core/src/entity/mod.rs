@@ -3241,24 +3241,27 @@ impl Entity {
         }
 
         let java_recipients = self.java_metadata_recipients(&world, &players);
+        self.send_dirty_entity_data_to(java_recipients.iter().filter_map(|p| p.client.java()));
+    }
 
-        if java_recipients.is_empty() {
-            // Vanilla `packDirty` clears even without recipients.
-            self.synched_data.clear_dirty();
-            return;
-        }
-
-        let recipients_by_version =
-            World::collect_java_recipients_by_version(java_recipients.into_iter());
-
-        for (version, recipients) in recipients_by_version {
-            if let Some(buf) = self.synched_data.pack_dirty_for_version(&version) {
-                let packet = CSetEntityMetadata::new(self.entity_id.into(), buf);
-                if let Ok(packet_data) = JavaClient::serialize_packet_for_version(&packet, version)
-                {
-                    for recipient in recipients {
-                        recipient.try_enqueue_packet(packet_data.clone());
-                    }
+    /// Sends the dirty synced values to `java_recipients`, then clears them. Vanilla
+    /// `packDirty` clears even without recipients.
+    pub(crate) fn send_dirty_entity_data_to<'a>(
+        &self,
+        java_recipients: impl IntoIterator<Item = &'a JavaClient>,
+    ) {
+        let mut java_recipients = java_recipients.into_iter().peekable();
+        if java_recipients.peek().is_some()
+            && let Some(buf) = self
+                .synched_data
+                .pack_dirty_for_version(&CURRENT_MC_VERSION)
+        {
+            let packet = CSetEntityMetadata::new(self.entity_id.into(), buf);
+            if let Ok(packet_data) =
+                JavaClient::serialize_packet_for_version(&packet, CURRENT_MC_VERSION)
+            {
+                for recipient in java_recipients {
+                    recipient.try_enqueue_packet(packet_data.clone());
                 }
             }
         }

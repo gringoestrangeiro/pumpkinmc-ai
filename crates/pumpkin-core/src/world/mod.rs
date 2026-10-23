@@ -61,7 +61,7 @@ use crate::{
 use active_chunks::{ActiveChunkTracker, ActivePlayerArea};
 use arc_swap::ArcSwap;
 use border::Worldborder;
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 pub use explosion::{
     BlockInteraction, DefaultExplosionDamageCalculator, Explosion, ExplosionDamageCalculator,
     ExplosionInteraction, SimpleExplosionDamageCalculator,
@@ -245,6 +245,12 @@ impl PumpkinError for GetBlockError {
 pub(crate) type EntityIndex = entity_index::SectionIndex<Arc<dyn EntityBase>>;
 pub(crate) type EntityIndexSlot = entity_index::IndexSlot<Arc<dyn EntityBase>>;
 
+/// An entity filed under its UUID, and how many indexed entities share that UUID.
+struct UuidEntry {
+    entity: Arc<dyn EntityBase>,
+    count: u32,
+}
+
 /// Represents a Minecraft world, containing entities, players, and the underlying level data.
 ///
 /// Each dimension (Overworld, Nether, End) typically has its own `World`.
@@ -272,6 +278,11 @@ pub struct World {
     entity_index: Arc<EntityIndex>,
     /// `entities` by entity id, kept in step with `entity_index`.
     entities_by_id: DashMap<i32, Arc<dyn EntityBase>, FxBuildHasher>,
+    /// `entities` by UUID, kept in step with `entity_index`. See [`UuidEntry`].
+    entities_by_uuid: DashMap<Uuid, UuidEntry, FxBuildHasher>,
+    /// Taken by every writer of `entities`, so a writer never copies the list and then loses the
+    /// swap to another one.
+    entities_writer: std::sync::Mutex<()>,
     /// The world's scoreboard, used for tracking scores, objectives, and display information.
     pub scoreboard: std::sync::Mutex<Scoreboard>,
     /// The world's worldborder, defining the playable area and controlling its expansion or contraction.
@@ -432,6 +443,8 @@ impl World {
             lookup_only_entities: ArcSwap::new(Arc::new(Vec::new())),
             entity_index: Arc::new(EntityIndex::default()),
             entities_by_id: DashMap::with_hasher(FxBuildHasher),
+            entities_by_uuid: DashMap::with_hasher(FxBuildHasher),
+            entities_writer: std::sync::Mutex::new(()),
             scoreboard: std::sync::Mutex::new(Scoreboard::default()),
             worldborder: std::sync::Mutex::new(Worldborder::new(
                 0.0,
@@ -1054,19 +1067,21 @@ impl World {
         recipients_by_version
     }
 
+    /// Serializes `packet` once, and only if there is at least one recipient.
     pub fn broadcast_java_clients<'a, P: ClientPacket>(
         packet: &P,
         recipients: impl Iterator<Item = &'a JavaClient>,
     ) {
-        let mut recipients_by_version: BTreeMap<JavaMinecraftVersion, Vec<&JavaClient>> =
-            BTreeMap::new();
-        for client in recipients {
-            recipients_by_version
-                .entry(CURRENT_MC_VERSION)
-                .or_default()
-                .push(client);
+        let mut recipients = recipients.peekable();
+        if recipients.peek().is_none() {
+            return;
         }
-        Self::broadcast_java_grouped(packet, recipients_by_version);
+        let Some(packet_data) = Self::serialize_java_broadcast(packet, CURRENT_MC_VERSION) else {
+            return;
+        };
+        for recipient in recipients {
+            recipient.try_enqueue_packet(packet_data.clone());
+        }
     }
 
     fn broadcast_java_grouped<P: ClientPacket>(
@@ -1074,24 +1089,31 @@ impl World {
         recipients_by_version: BTreeMap<JavaMinecraftVersion, Vec<&JavaClient>>,
     ) {
         for (version, recipients) in recipients_by_version {
-            let packet_data = match JavaClient::serialize_packet_for_version(packet, version) {
-                Ok(packet_data) => packet_data,
-                Err(pumpkin_protocol::ser::WritingError::UnsupportedVersion(_)) => {
-                    continue;
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to serialize packet {} for version {:?}: {}",
-                        std::any::type_name::<P>(),
-                        version,
-                        err
-                    );
-                    continue;
-                }
+            let Some(packet_data) = Self::serialize_java_broadcast(packet, version) else {
+                continue;
             };
 
             for recipient in recipients {
                 recipient.try_enqueue_packet(packet_data.clone());
+            }
+        }
+    }
+
+    fn serialize_java_broadcast<P: ClientPacket>(
+        packet: &P,
+        version: JavaMinecraftVersion,
+    ) -> Option<Bytes> {
+        match JavaClient::serialize_packet_for_version(packet, version) {
+            Ok(packet_data) => Some(packet_data),
+            Err(pumpkin_protocol::ser::WritingError::UnsupportedVersion(_)) => None,
+            Err(err) => {
+                error!(
+                    "Failed to serialize packet {} for version {:?}: {}",
+                    std::any::type_name::<P>(),
+                    version,
+                    err
+                );
+                None
             }
         }
     }
@@ -1714,7 +1736,7 @@ impl World {
             });
         let entity_elapsed = t_entities.elapsed();
 
-        self.entity_tracker.update_all(self);
+        self.entity_tracker.update_all(self, &handle);
 
         let mut block_entities: Vec<Arc<dyn BlockEntity>> = Vec::new();
         if self.block_entities.len() < active_chunks.len() {
@@ -4525,11 +4547,9 @@ impl World {
     ///
     /// An `Option<Arc<dyn EntityBase>>` containing the player if found, or `None` if not.
     pub fn get_entity_by_uuid(&self, id: uuid::Uuid) -> Option<Arc<dyn EntityBase>> {
-        self.entities
-            .load()
-            .iter()
-            .find(|p| p.get_entity().entity_uuid == id)
-            .cloned()
+        self.entities_by_uuid
+            .get(&id)
+            .map(|entry| entry.entity.clone())
     }
 
     /// Gets a list of players whose location equals the given position in the world.
@@ -4583,15 +4603,44 @@ impl World {
     ) -> HashMap<uuid::Uuid, Arc<dyn EntityBase>> {
         let radius_squared = radius.powi(2);
 
-        self.entities
-            .load()
-            .iter()
-            .filter_map(|entity| {
-                let entity_pos = entity.get_entity().pos.load();
-                (entity_pos.squared_distance_to_vec(&pos) <= radius_squared)
-                    .then(|| (entity.get_entity().entity_uuid, entity.clone()))
-            })
-            .collect()
+        self.with_entities_near_pos(pos, radius, |entities| {
+            entities
+                .iter()
+                .filter_map(|entity| {
+                    let entity_pos = entity.get_entity().pos.load();
+                    (entity_pos.squared_distance_to_vec(&pos) <= radius_squared)
+                        .then(|| (entity.get_entity().entity_uuid, entity.clone()))
+                })
+                .collect()
+        })
+    }
+
+    /// Runs `f` on a slice, in `entities` order, holding every non-player entity whose position
+    /// is within `radius` of `pos` (plus some farther ones). Uses the entity index when the area
+    /// is small enough, the whole list otherwise.
+    fn with_entities_near_pos<R>(
+        &self,
+        pos: Vector3<f64>,
+        radius: f64,
+        f: impl FnOnce(&[Arc<dyn EntityBase>]) -> R,
+    ) -> R {
+        // The index files entities by bounding box, these callers match on position. A few
+        // writers move `pos` without the box (new projectiles, minecarts snapping to a rail),
+        // never more than about a block sideways, so look a bit past the radius.
+        const POS_QUERY_MARGIN: f64 = 2.0;
+        let reach = radius.abs() + POS_QUERY_MARGIN;
+        let area = BoundingBox::new(
+            pos.add_raw(-reach, -reach, -reach),
+            pos.add_raw(reach, reach, reach),
+        );
+        let candidates = self.entity_index.query(&area, |entity| {
+            let entity_pos = entity.get_entity().pos.load();
+            BoundingBox::new(entity_pos, entity_pos)
+        });
+        match candidates {
+            Some(candidates) => f(&candidates),
+            None => f(&self.entities.load()),
+        }
     }
 
     /// Closest player that satisfies `predicate`. Unlike [`Self::get_closest_player`], a nearer
@@ -4624,19 +4673,21 @@ impl World {
         predicate: impl Fn(&Arc<dyn EntityBase>) -> bool,
     ) -> Option<Arc<dyn EntityBase>> {
         let radius_squared = radius.powi(2);
-        self.entities
-            .load()
-            .iter()
-            .filter_map(|entity| {
-                let base_entity = entity.get_entity();
-                let distance = base_entity.pos.load().squared_distance_to_vec(&pos);
-                (distance <= radius_squared
-                    && entity_types.is_none_or(|types| types.contains(&base_entity.entity_type))
-                    && predicate(entity))
-                .then_some((distance, entity))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, entity)| entity.clone())
+        self.with_entities_near_pos(pos, radius, |entities| {
+            entities
+                .iter()
+                .filter_map(|entity| {
+                    let base_entity = entity.get_entity();
+                    let distance = base_entity.pos.load().squared_distance_to_vec(&pos);
+                    (distance <= radius_squared
+                        && entity_types
+                            .is_none_or(|types| types.contains(&base_entity.entity_type))
+                        && predicate(entity))
+                    .then_some((distance, entity))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, entity)| entity.clone())
+        })
     }
 
     pub fn get_closest_player(&self, pos: Vector3<f64>, radius: f64) -> Option<Arc<Player>> {
@@ -4943,8 +4994,9 @@ impl World {
         self.spawn_state.load().add_entity(self, entity.as_ref());
 
         self.index_entity(&entity);
-        self.entities.rcu(|current_entities| {
-            let mut new_entities = (**current_entities).clone();
+        self.update_entities(|current_entities| {
+            let mut new_entities = Vec::with_capacity(current_entities.len() + 1);
+            new_entities.extend(current_entities.iter().cloned());
             new_entities.push(entity.clone());
             new_entities
         });
@@ -5019,11 +5071,7 @@ impl World {
         // Guard against duplicate entities with the same UUID.
         // This can happen when chunk entity data is loaded while the entity
         // already exists in the world (e.g. another player is still tracking it).
-        let already_exists = self
-            .entities
-            .load()
-            .iter()
-            .any(|e| e.get_entity().entity_uuid == base_entity.entity_uuid);
+        let already_exists = self.entities_by_uuid.contains_key(&base_entity.entity_uuid);
         if already_exists {
             for owned in entity.get_owned_entities() {
                 self.remove_lookup_only_entity(owned.as_ref());
@@ -5038,8 +5086,9 @@ impl World {
         self.entity_tracker.add_entity(&entity, self);
 
         self.index_entity(&entity);
-        self.entities.rcu(|current_entities| {
-            let mut new_entities = (**current_entities).clone();
+        self.update_entities(|current_entities| {
+            let mut new_entities = Vec::with_capacity(current_entities.len() + 1);
+            new_entities.extend(current_entities.iter().cloned());
             new_entities.push(entity.clone());
             new_entities
         });
@@ -5062,6 +5111,13 @@ impl World {
             .insert(entity.clone(), &base_entity.bounding_box.load());
         self.entities_by_id
             .insert(base_entity.entity_id, entity.clone());
+        self.entities_by_uuid
+            .entry(base_entity.entity_uuid)
+            .and_modify(|entry| entry.count += 1)
+            .or_insert_with(|| UuidEntry {
+                entity: entity.clone(),
+                count: 1,
+            });
         *slot = Some(EntityIndexSlot {
             index: Arc::downgrade(&self.entity_index),
             key,
@@ -5081,15 +5137,58 @@ impl World {
                 Some(own) if std::ptr::eq(own.index.as_ptr(), Arc::as_ptr(&self.entity_index)) => (
                     self.entity_index.remove(own.seq, own.key),
                     self.entities_by_id.remove(&entity.get_entity().entity_id),
+                    self.unindex_entity_uuid(entity.get_entity()),
                 ),
                 other => {
                     *slot = other;
-                    (None, None)
+                    (None, None, None)
                 }
             }
         };
         // Dropped outside the locks, they may hold the last reference to the entity.
         drop(removed);
+    }
+
+    /// Drops `entity` from `entities_by_uuid`. When it was the entry for its UUID and another
+    /// entity still shares that UUID, the first such entity in `entities` takes over, the one a
+    /// scan of the list would have found. Returns the dropped entry.
+    fn unindex_entity_uuid(&self, entity: &Entity) -> Option<Arc<dyn EntityBase>> {
+        let uuid = entity.entity_uuid;
+        let mut entry = self.entities_by_uuid.get_mut(&uuid)?;
+        entry.count = entry.count.saturating_sub(1);
+        if entry.entity.get_entity().entity_id != entity.entity_id {
+            return None;
+        }
+        if entry.count > 0
+            && let Some(successor) = self.entities.load().iter().find(|other| {
+                let other = other.get_entity();
+                other.entity_uuid == uuid && other.entity_id != entity.entity_id
+            })
+        {
+            return Some(std::mem::replace(&mut entry.entity, successor.clone()));
+        }
+        drop(entry);
+        self.entities_by_uuid
+            .remove_if(&uuid, |_, entry| {
+                entry.entity.get_entity().entity_id == entity.entity_id
+            })
+            .map(|(_, entry)| entry.entity)
+    }
+
+    /// Replaces `entities` with `update(current)`. Writers take turns (see `entities_writer`).
+    fn update_entities(
+        &self,
+        update: impl FnOnce(&[Arc<dyn EntityBase>]) -> Vec<Arc<dyn EntityBase>>,
+    ) {
+        let writer = self
+            .entities_writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let new_entities = update(&self.entities.load());
+        let old_entities = self.entities.swap(Arc::new(new_entities));
+        drop(writer);
+        // Outside the lock, it may hold the last reference to a removed entity.
+        drop(old_entities);
     }
 
     /// Registers an entity for `get_entity_by_id` only: no tracking, ticking, or persistence.
@@ -5127,9 +5226,8 @@ impl World {
         self.spawn_state.load().remove_entity(self, entity);
         self.entity_tracker.remove_entity(entity, self);
         let mut removed = Vec::new();
-        self.entities.rcu(|current_entities| {
-            removed.clear();
-            let mut new_entities = (**current_entities).clone();
+        self.update_entities(|current_entities| {
+            let mut new_entities = current_entities.to_vec();
             new_entities.retain(|e| {
                 let keep = e.get_entity().entity_uuid != base_entity.entity_uuid;
                 if !keep {
@@ -5163,9 +5261,8 @@ impl World {
         }
         let mut entities_to_remove = Vec::new();
 
-        self.entities.rcu(|current_entities| {
-            entities_to_remove.clear();
-            let mut new_entities = (**current_entities).clone();
+        self.update_entities(|current_entities| {
+            let mut new_entities = current_entities.to_vec();
             new_entities.retain(|entity| {
                 let base_entity = entity.get_entity();
                 let pos = base_entity.chunk_pos.load();
