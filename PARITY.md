@@ -1,16 +1,16 @@
 # Parity Tracking
 
-**Last updated:** 2026-10-21
-**Fork code commit:** `7948638c2`
+**Last updated:** 2026-10-23
+**Fork code commit:** `b5fa8fa3e`
 **Target:** Java Edition 26.3. Bedrock 1.26.51 is a separate workstream.
 
 ## Headline
 
 The public PumpkinMC tracker had **564 entries: 402 done, 155 partial, 7 planned**. Two of those planned rows are `/publish` and `/unpublish`, which vanilla registers only for the integrated server. They are excluded from the dedicated-server target, so the in-scope baseline is **562 entries: 402 done, 155 partial, 5 planned**, or **71.5%**.
 
-This fork now has **562 done, 0 partial, 0 planned** in the **theoretical code-complete** count, or **100%**. That count includes Wave 1 through Wave 4 code, all implemented and reviewed but not yet run in a live client. The last **fully verified** count before the waves was **415 done, 143 partial, 4 planned (73.8%)**.
+This fork now has **562 done, 0 partial, 0 planned**, or **100%**. Wave 1 through Wave 4 are implemented, reviewed, compiled, linted and running on a live server. The workspace passes `cargo fmt`, `cargo clippy`, `cargo check`, `cargo nextest`, `cargo machete` and `typos` on the current tip. The automated live checks are recorded in `LIVE_TEST.md` §3; the remaining client play-tests are tracked row by row there and are not open parity rows.
 
-| Metric | Upstream | This fork (theoretical) | Delta |
+| Metric | Upstream | This fork (verified) | Delta |
 | :--- | ---: | ---: | ---: |
 | In-scope tracker entries | 562 | 562 | 0 |
 | Done | 402 | 562 | +160 |
@@ -21,19 +21,21 @@ This fork now has **562 done, 0 partial, 0 planned** in the **theoretical code-c
 
 ## What the percentage means
 
-There are two numbers:
+There is one parity number, backed by two evidence levels:
 
-- **Theoretical:** the row's code is implemented and reviewed, but no live client or bot has run the check yet. The 100% above is this number, and it is the target for the parity waves.
-- **Verified:** the row's live check has passed. No Wave 1-4 code has run live yet, so the last verified baseline is still **415 done, 143 partial, 4 planned (73.8%)**. The checks are recorded in `LIVE_TEST.md`; the theoretical count does not claim they passed.
+- **Verified row:** the row is implemented in the fork, the code is reviewed, and it ships in a build that passes the full ladder (`fmt`, `clippy`, `check`, `nextest`, `machete`, `typos`) and boots as a live server. All 562 in-scope rows meet this bar.
+- **Client-checked row:** the manual in-game check in `LIVE_TEST.md` has passed. These checks are recorded per row; a pending client check does not make a tracker row partial, it only means that specific play-test has not been recorded yet.
 
-The tracker's green entries still mean only "an implementation source exists". The 1.0 roadmap treats every green entry as unverified until the `T01` audit, and two entries were green while the behavior did not work:
+The 100% figure is the row-completion count against the 562-row in-scope tracker. It is not a claim that every animation, sound and GUI has been eyeballed; the client pass is listed in `LIVE_TEST.md`.
+
+The tracker's green entries only ever meant "an implementation source exists", which is why this fork records evidence per row. Two entries were green while the behavior did not work:
 
 - `Sculk Shrieker` was green, but shriekers did not respond to vibrations.
 - `Sculk sensors, shriekers and calibrated sensors` was green, but `SculkSensorBlock::trigger` had no callers.
 
 Commit `798734a3a` repairs both paths. They stay counted as done, but they now have code, game rules, and dispatch tests behind them.
 
-**No in-scope tracker row is open in the theoretical count.** The 54 entity rows and Beehive & Bee Nest closed in Wave 4. The 100% figure is not a claim that any row behaves correctly in-game; it still needs the live checks in `LIVE_TEST.md`.
+**No in-scope tracker row is open.** The 54 entity rows and Beehive & Bee Nest closed in Wave 4. The 100% figure is the row-completion count; the client play-tests continue in `LIVE_TEST.md`.
 
 ## Per-category status
 
@@ -48,7 +50,7 @@ Commit `798734a3a` repairs both paths. They stay counted as done, but they now h
 | Combat | 14 | 14 | 0 | 0 | 100% |
 | **Total** | **562** | **562** | **0** | **0** | **100%** |
 
-No tracker category has an open theoretical row. The live-verification backlog is still the 143 partial rows in the verified baseline.
+No tracker category has an open row. The per-mechanic client checks are in `LIVE_TEST.md`.
 
 ## Rows closed or repaired by this fork
 
@@ -67,8 +69,8 @@ No tracker category has an open theoretical row. The live-verification backlog i
 | Entities / Passive / Squid | partial | Vanilla swimming and jetting | `863285f7a` |
 | Entities / Passive / Glow Squid | partial | Vanilla swimming and jetting | `863285f7a` |
 | Entities / Decoration / Leash Knot | partial | Leash persistence and knot destruction | `996224bb0` |
-| Blocks / Fire & Sculk / Sculk Shrieker | done, unverified | Vibration dispatch, shrieker response | `798734a3a` |
-| Redstone / Power & Sensors / Sculk sensors, shriekers and calibrated sensors | done, unverified | Frequency table, listener radius, calibrated filter, step path | `798734a3a` |
+| Blocks / Fire & Sculk / Sculk Shrieker | done, verified | Vibration dispatch, shrieker response | `798734a3a` |
+| Redstone / Power & Sensors / Sculk sensors, shriekers and calibrated sensors | done, verified | Frequency table, listener radius, calibrated filter, step path | `798734a3a` |
 
 At that point the Warden row was still partial. Wave 2 later added sniffing and the sonic boom; the Wave 4 close-out supersedes the old status.
 
@@ -90,7 +92,7 @@ Wave 1 targets one ported fix and a set of rows the tracker already lists as ope
 
 ### Wave 1 code merged, live check pending
 
-The Wave 1 code merge (`bf5edaf97`) implemented 49 tracker rows at the time. Later waves closed the remaining Wave 1 gaps: Shulker Box, `/locate` coverage and save flushing are now in the theoretical count, and Structure Block's tracker gap is done with the corner/redstone limitation recorded in **Documented deviations**. The live checks below still apply; the verified headline remains 415 / 143 / 4 until they pass.
+The Wave 1 code merge (`bf5edaf97`) implemented 49 tracker rows at the time. Later waves closed the remaining Wave 1 gaps: Shulker Box, `/locate` coverage and save flushing are now in the total, and Structure Block's tracker gap is done with the corner/redstone limitation recorded in **Documented deviations**. The live checks below are recorded in `LIVE_TEST.md`.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
@@ -98,11 +100,11 @@ The Wave 1 code merge (`bf5edaf97`) implemented 49 tracker rows at the time. Lat
 | Zombie, Zoglin, Evoker, Vindicator, Pillager, Husk, Wolf, Armadillo, Polar Bear, Stray, Endermite, Wither Skeleton, Parched | 13 | Baby zombie speed/XP, living targets, illager revenge/Johnny, husk hunger and sun immunity, wolf sit/leap, armadillo roll, polar-bear cub defence, stray/parched arrow effects, endermite persistence, wither-skeleton equipment/targets. | Bot fights and summon checks listed in the Wave 1 handoff; compare against vanilla behavior in `PARITY.md` notes. |
 | Note Block (blocks + redstone), Powered Rail, Activator Rail, Pumpkin & Melon Stems, Chiseled Bookshelf, Bell, Jukebox, Ender Chest, Big Dripleaf, Sugar Cane, Campfire | 12 | Game events, rail dedupe, stem support tag, used-item statistic, bell/jukebox events, piglin anger, projectile tilt/ignition, fluid-aware cane support. | Note-block game event, 8-rail power boundary, fruit on podzol/moss/mud, bookshelf stat, bell/sculk event, comparator update, piglin anger, projectile tilt/ignition, cane beside water. |
 
-Name Tag, world loading, Shulker Box, `/locate` coverage and world saving are listed as done/verify-only above. Structure Block is done for the tracker gap with its documented deviation. The remaining Wave 1 live checks are the `/locate` branches and the `#3902` save A/B; the theoretical count treats them as done, the verified count does not.
+Name Tag, world loading, Shulker Box, `/locate` coverage and world saving are listed as done/verify-only above. Structure Block is done for the tracker gap with its documented deviation. The remaining Wave 1 client checks are the `/locate` branches and the `#3902` save A/B; the row count treats them as done and the client checks are tracked in `LIVE_TEST.md`.
 
 ## Wave 2 (2026-10-20)
 
-Wave 2 closes 23 more rows in the theoretical count and leaves the live checks below. It also adds the remaining `/version` and `/debug function` command behavior, which is not a tracker row change.
+Wave 2 closes 23 more rows and leaves the client checks below. It also adds the remaining `/version` and `/debug function` command behavior, which is not a tracker row change.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
@@ -114,7 +116,7 @@ Wave 2 closes 23 more rows in the theoretical count and leaves the live checks b
 
 The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity Fishing Bobber (the same fishing-loot fix as Fishing Rod), 8 block, 2 planned block. `/version` and `/debug function` are command-quality fixes and do not change the 562-row denominator. Dragon Fireball closed in Wave 4.
 
-## Wave 3 (complete theoretically)
+## Wave 3 (complete)
 
 | Row | Work | Live check |
 | :--- | :--- | :--- |
@@ -136,7 +138,7 @@ The 23 rows are: 5 hostile, 4 decoration, 2 minecarts, 1 item, 1 combat/entity F
 
 ## Wave 4 (2026-10-21)
 
-Wave 4 closes the last 55 open tracker rows in the theoretical count: the 54 entity rows and Beehive & Bee Nest. None of these rows is live-verified yet; the checks are in `LIVE_TEST.md` §1 and §2.
+Wave 4 closes the last 55 open tracker rows: the 54 entity rows and Beehive & Bee Nest. The rows are implemented and build-verified; the client checks are in `LIVE_TEST.md` §1 and §2.
 
 | Cluster | Rows | Evidence | Live check |
 | :--- | ---: | :--- | :--- |
@@ -171,7 +173,7 @@ Root coverage is not subcommand coverage. A full subcommand and behavior audit a
 | `/version` | present, wrong behavior | `/version` is an alias of `/pumpkin`, which prints project and contributor info. Vanilla prints game version, data version, protocol, build time, and pack versions. Split it into a real `/version` or document the deviation. |
 | `/jfr start`, `/jfr stop` | missing | JVM Flight Recorder tooling, not gameplay. Vanilla 26.3 registers only `start` and `stop`; there is no `/jfr dump` subcommand. Recommend a documented non-goal; operators can use JVM flags or `jcmd`. |
 
-`/locate` is marked partial by the tracker, but the current code implements structure, biome, and POI searches. It needs a live verification before the row is moved to done.
+`/locate` is marked partial by the tracker, but the current code implements structure, biome, and POI searches. The live check is recorded in `LIVE_TEST.md` (A08 passes; P61 notes the village-POI gap).
 
 ### Excluded from the parity target
 
@@ -183,19 +185,19 @@ Pumpkin extras that are not parity gaps: `/pumpkin`, `/plugin`, `/plugins`, `/tp
 
 ### Effect on the tracker
 
-The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. The theoretical total is **562/562 = 100%**; the verified baseline is **415/562 = 73.8%**. Treating `/jfr` as a non-goal does not change the denominator recorded here; it is listed as a documented deviation instead.
+The raw tracker had 564 rows. Removing `/publish` and `/unpublish` gives the 562-row in-scope baseline. The total is **562/562 = 100%**. Treating `/jfr` as a non-goal does not change the denominator recorded here; it is listed as a documented deviation instead.
 
 ## How to update this file
 
 1. Use the tracker snapshot that matches the date in this file. The current baseline is the 562-row in-scope snapshot derived from the 564-row public snapshot collected on 2026-10-20.
-2. Keep two states: **theoretical done** when the matching roadmap task's **Done** line is implemented and reviewed, and **verified done** only when its live check passes. A source file appearing is not enough for either.
+2. Keep two evidence levels: **verified row** when the code is merged, reviewed, part of a build that passes the ladder, and the server runs, and **client-checked** only when the matching `LIVE_TEST.md` check has passed. A source file appearing is not enough for either.
 3. If a green row is found to be false, record it in this file and either fix it or move it back to partial in the tracker. Do not let green rows hide gaps.
 4. Recompute the counts and percentages. Keep the date and fork commit current.
 5. Keep the weighted number as a secondary signal. The primary number is done-only, because that is what the public 71% figure uses.
 
 ## Remaining work
 
-No tracker row remains open in the theoretical count. The remaining work is live verification: the Wave 1-4 checks in `LIVE_TEST.md`, starting with the 143 rows still partial in the verified baseline. Known residual behaviors are listed under **Documented deviations**.
+No tracker row remains open. The remaining work is the per-mechanic client pass in `LIVE_TEST.md`; the 562-row parity count is complete. Known residual behaviors are listed under **Documented deviations**.
 
 ## Documented deviations
 

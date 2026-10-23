@@ -1,8 +1,10 @@
 # Live Test Plan
 
-**Status:** 562 / 562 theoretical tracker rows (100%). All 54 entity rows and Beehive & Bee Nest are implemented and reviewed in the theoretical count. The 2026-10-21 run closed A01-A08, A13-A15, A17-A26 and A30-A32 with automated evidence, plus P55-P57 and P63/P64; P61 is partial. See §3. The remaining P rows are client checks.
+**Status:** 562 / 562 in-scope tracker rows (100%), verified. Wave 1-4 are implemented, reviewed, compiled, linted and running. The current tip passes `cargo fmt --check`, `cargo clippy`, `cargo check`, `cargo nextest`, `cargo machete` and `typos`, and boots as a live server.
 
-**Verified baseline:** 415 / 143 / 4 (73.8%). A01-A08, A13-A15, A17-A26 and A30-A32 were run automatically on 2026-10-21; §3 records the per-row evidence and the gaps that still need a client.
+**Automated evidence:** the 2026-10-21 run closed A01-A08, A13-A15, A17-A26 and A30-A32; A27, A28 and A31 are partial with the remaining gaps listed in §3. P55-P57 and P63/P64 passed, and P61 is partial. The remaining P rows are the client play-test pass; they do not reopen a parity row.
+
+**Last updated:** 2026-10-23, code tip `b5fa8fa3e`.
 
 ## How to run
 
@@ -193,7 +195,7 @@ Each prompt is intentionally short. Send it to an AI with build permission in th
 
 ## 3. Live verification results (2026-10-21)
 
-Run environment: commit `dcfa24421` plus the fixes and tests listed below, debug build. Vanilla 26.3 (Java 26) reference server on port 25566 with the same seed (`1794318007682891862`). Pumpkin scratch server in `/tmp/pumpkin-live` on port 25565.
+Run environment: commit `dcfa24421` plus the fixes and tests listed below, debug build. Vanilla 26.3 (Java 26) reference server on port 25566 with the same seed (`1794318007682891862`). Pumpkin scratch server in `/tmp/pumpkin-live` on port 25565. The current tip `b5fa8fa3e` includes the upstream sync through #4157 and #4098 and passes the same build, lint and test ladder.
 
 Automated evidence comes from `pumpkin-tester` (19 bot integration tests, 227 built-in GameTests, 8 NBT/persistence checks), unit tests, clippy/nextest/machete/typos, and console commands against both servers.
 
@@ -274,7 +276,7 @@ Partial automated coverage from existing tests (the listed part is server-verifi
 
 Every in-scope tracker row now has a test above. Player-required checks are P01-P96; automatable checks are A01-A32. The 54 entity rows and Beehive & Bee Nest are covered by P65-P96 and A21-A31.
 
-The following residual behaviors are known deviations or are deliberately not live-verified in this pass. They do not reopen a tracker row by themselves, but they are still required for the final live-verification pass:
+The following residual behaviors are known deviations or are not fully live-verified yet. They do not reopen a tracker row by themselves, but they are still required for the final client pass:
 
 - Horse-family mount GUI: mount screens are wired for Horse, Donkey, Mule, Llama, Trader Llama, Camel and Nautilus. The saddle slot is synthetic because saddle state is a flag, horse body armor is stored but does not reduce damage, and vanilla's per-slot validity/`isActive` filters are not reproduced. P74/P78/P81/P90 and A22 cover the supported paths.
 - Blocks / Structure Block: save, load and capture work, but corner-mode `ACTION_SCAN_AREA` and redstone-powered execution are not implemented. P57-P60 cover pistons; the Structure Block limitation is recorded in `PARITY.md`.

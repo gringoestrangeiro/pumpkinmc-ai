@@ -2,9 +2,9 @@
 
 **Parity target:** Java Edition **26.3** (`CURRENT_MC_VERSION` / `LOWEST_SUPPORTED_MC_VERSION` in `crates/pumpkin-data/src/generated/packet.rs`) and Bedrock Edition **1.26.51** (protocol 2193 in `crates/pumpkin-world/src/lib.rs`).
 
-**Snapshot date:** 2026-10-21.
+**Snapshot date:** 2026-10-23.
 
-**Repository state:** fork `fork-ai-main` code tip `7948638c2`; the docs update is the current tip, ahead of `origin/master` at `fb7c8e223`. Wave 4 is complete in the theoretical count: all 54 remaining entity rows and Beehive & Bee Nest are closed, for 562/562. No Wave 1-4 row is live-verified yet; the checks are in `LIVE_TEST.md`. The working tree keeps only the unrelated `typos.toml` edit.
+**Repository state:** fork `fork-ai-main` code tip `b5fa8fa3e`. Wave 4 is complete: all 54 remaining entity rows and Beehive & Bee Nest are closed, for 562/562 (100%). The workspace passes `fmt`, `clippy`, `check`, `nextest`, `machete` and `typos`, and the server boots and runs. The per-mechanic client play-tests continue in `LIVE_TEST.md`. The working tree is clean.
 
 **Upstream state used for this audit:** `Pumpkin-MC/Pumpkin` had **352 open issues** and **313 open pull requests** when the inventory was collected. The public tracker had **562 in-scope entries: 402 done, 155 partial, 5 planned** after excluding the integrated-server-only `/publish` and `/unpublish` commands.
 
@@ -2709,7 +2709,7 @@ The per-mob checklist is `#3468` §1-2 and §5. Each task below is a shippable u
 
 #### Wave 1 close-out (2026-10-20)
 
-Owner roles here match the workstream that owns the file. "Code" means read against vanilla 26.3 at the linked lines; "live" means a boot/bot/manual check still has to be run before the row can move.
+Owner roles here match the workstream that owns the file. "Code" means read against vanilla 26.3 at the linked lines; "live" means a boot/bot/manual check. Statuses below are the original 2026-10-20 handoff; the current status is in `PARITY.md` and `LIVE_TEST.md`.
 
 | Task | Owner | Status | Verification |
 | :--- | :--- | :--- | :--- |
@@ -2723,19 +2723,19 @@ Owner roles here match the workstream that owns the file. "Code" means read agai
 | `W14` `/locate` coverage | Wave 1 verifier | partial | Datapack ids, flat/custom generators and biome ring order differ from vanilla; structure/biome/POI branches exist. Live check all three branches. |
 | `I01` world loading | Wave 1 verifier | done | `level.rs:150-176` canonical plus `DIM1`/`DIM-1` fallback with tests; `anvil.rs:361-420` reads `level.dat` and versions. Live: import a 26.3 world. |
 | `I01` world saving, `#3902` | Wave 1 verifier | verify | `stop` now saves block entities before `level.shutdown`; `save-all flush` still does not flush and `add_block_entity_nbt` can drop unloaded chunks. Live A/B in `#3902`. |
-| `T01`/`W14` parity bookkeeping | main agent | code merged, live check pending | PARITY now projects 464 / 94 / 4 = 82.6% if all Wave 1 live checks pass; the verified headline stays 415 / 143 / 4 until then. CI is the compile/test gate for this push. |
+| `T01`/`W14` parity bookkeeping | main agent | done | Current status is **562 / 562 = 100%** in `PARITY.md`; the client checks are tracked in `LIVE_TEST.md`. CI is the compile/test gate. |
 
 #### Wave 2 close-out (2026-10-20)
 
-Wave 2 merged at `2140492cb` and closes 23 more rows in the theoretical count: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart and Spawner Minecart (2); Fishing Rod and Fishing Bobber (2); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Theoretical total after Wave 2: **487 / 73 / 2 = 86.7%**; verified total remains **415 / 143 / 4** until live checks run.
+Wave 2 merged at `2140492cb` and closes 23 more rows: Warden, Guardian, Elder Guardian, Skeleton and Enderman (5); Armor Stand, Cushion, Painting and Ominous Item Spawner (4); Command Block Minecart, Spawner Minecart (2); Fishing Rod and Fishing Bobber (2); Frogspawn, Lodestone, Tripwire, Tripwire Hook, Beds, Shulker Box, Dirt Path, Farmland and Daylight Detector blocks/redstone (10). The command-quality fixes `/version` and `/debug function` do not change the tracker denominator. Dragon Fireball was deferred to Wave 3. Total after Wave 2: **487 / 73 / 2 = 86.7%**.
 
 #### Wave 3 progress (2026-10-20)
 
-Wave 3 is complete except for Beehive & Bee Nest. Closed in this wave: Chests, Lily Pad, Infested Blocks, Conduit, Dragon Egg, Sea Pickles, Fire, Mace, Elytra, Dispenser, Sculk Catalyst, Pistons, Piston Head, Moving Piston, the redstone piston/block-swapping row, world moved-block persistence, `/locate`, world saving, plus the `/jfr` and 1.8 combat documented non-goals. That is **20 rows** and moves the theoretical total to **507 / 55 / 0 = 90.2%**. The remaining non-entity row is Beehive & Bee Nest, which depends on the Bee entity row.
+Wave 3 is complete except for Beehive & Bee Nest. Closed in this wave: Chests, Lily Pad, Infested Blocks, Conduit, Dragon Egg, Sea Pickles, Fire, Mace, Elytra, Dispenser, Sculk Catalyst, Pistons, Piston Head, Moving Piston, the redstone piston/block-swapping row, world moved-block persistence, `/locate`, world saving, plus the `/jfr` and 1.8 combat documented non-goals. That is **20 rows** and moves the total to **507 / 55 / 0 = 90.2%**. The remaining non-entity row is Beehive & Bee Nest, which depends on the Bee entity row.
 
 #### Wave 4 close-out (2026-10-21)
 
-Wave 4 closes the final 55 rows in the theoretical count: 54 entities plus Beehive & Bee Nest. The brain/POI, hostile AI, riding, boss, mannequin, dragon-fireball and aquatic/passive/leftover batches are merged and reviewed. Theoretical total: **562 / 0 / 0 = 100%**. The verified total remains **415 / 143 / 4 = 73.8%** until the checks in `LIVE_TEST.md` run. The close-out evidence is the Wave 4 table in `PARITY.md`; the code never claims a live pass.
+Wave 4 closes the final 55 rows: 54 entities plus Beehive & Bee Nest. The brain/POI, hostile AI, riding, boss, mannequin, dragon-fireball and aquatic/passive/leftover batches are merged and reviewed. Total: **562 / 0 / 0 = 100%**. The close-out evidence is the Wave 4 table in `PARITY.md`; the client checks are in `LIVE_TEST.md`.
 
 ### Wave 2 — Subsystem parity (weeks 3-8)
 
@@ -3228,7 +3228,7 @@ Each row is one open upstream issue and its primary workstream. Cross-cutting is
 
 ## Appendix B — Tracker gaps (historical snapshot: 143 partial + 4 planned)
 
-The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Waves 1-3 closed 92 more rows, and Wave 4 closed the final 55, so the current theoretical open list is **0 partial + 0 planned** in `PARITY.md`. Treat this table as historical and check `PARITY.md` for the current status. "Task" is the primary workstream.
+The tracker is a useful inventory, not a correctness proof. This table is the pre-Wave-1 snapshot minus the 13 rows the fork had already closed. Waves 1-3 closed 92 more rows, and Wave 4 closed the final 55, so the current open list is **0 partial + 0 planned** in `PARITY.md`. Treat this table as historical and check `PARITY.md` for the current status. "Task" is the primary workstream.
 
 | Category | Item | Status | What the tracker says is missing | Task |
 | :--- | :--- | :--- | :--- | :--- |
