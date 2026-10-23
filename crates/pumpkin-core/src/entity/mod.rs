@@ -947,6 +947,7 @@ impl LeashRef {
 }
 
 /// Represents a non-living Entity (e.g. Item, Egg, Snowball...)
+#[repr(C)]
 pub struct Entity {
     /// A unique identifier for the entity
     pub entity_id: i32,
