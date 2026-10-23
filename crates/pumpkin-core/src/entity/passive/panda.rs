@@ -348,13 +348,8 @@ impl PandaEntity {
 
     /// Vanilla `Panda.setGeneFromParents`.
     fn set_gene_from_parents(&self, parent1: &Self, parent2: &Self) {
-        if rand::random::<bool>() {
-            self.set_main_gene(parent1.get_one_of_genes_randomly());
-            self.set_hidden_gene(parent2.get_one_of_genes_randomly());
-        } else {
-            self.set_main_gene(parent2.get_one_of_genes_randomly());
-            self.set_hidden_gene(parent1.get_one_of_genes_randomly());
-        }
+        self.set_main_gene(parent1.get_one_of_genes_randomly());
+        self.set_hidden_gene(parent2.get_one_of_genes_randomly());
         if rand::random_range(0..32) == 0 {
             self.set_main_gene(PandaGene::random_gene());
         }

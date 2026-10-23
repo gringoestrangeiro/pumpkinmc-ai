@@ -140,7 +140,9 @@ impl Goal for SpearUseGoal {
         };
         target.get_entity().is_alive()
             && Self::kinetic_weapon(mob).is_some()
-            && (self.fleeing_ticks > 0 || self.engaged || self.charging_ticks > 0)
+            && mob.get_mob_entity().get_target().is_some_and(|current| {
+                current.get_entity().entity_id == target.get_entity().entity_id
+            })
     }
 
     fn start(&mut self, mob: &dyn Mob) {
@@ -169,7 +171,6 @@ impl Goal for SpearUseGoal {
         let mob_pos = mob.get_entity().pos.load();
         let target_pos = target.get_entity().pos.load();
         let distance = mob_pos.squared_distance_to_vec(&target_pos).sqrt();
-
         if self.fleeing_ticks > 0 {
             self.fleeing_ticks -= 1;
             if let Some(position) = self.flee_position {
@@ -187,10 +188,13 @@ impl Goal for SpearUseGoal {
             self.charging_ticks -= 1;
             if self.charging_ticks <= 0 {
                 Self::stop_using(mob);
-                target.damage(
-                    mob.get_entity(),
+                target.damage_with_context(
+                    target.as_ref(),
                     Self::attack_damage(mob),
                     DamageType::SPEAR,
+                    Some(mob.get_entity().pos.load()),
+                    Some(mob.get_entity()),
+                    Some(mob.get_entity()),
                 );
                 let away = mob_pos - target_pos;
                 let horizontal = Vector3::new(away.x, 0.0, away.z);

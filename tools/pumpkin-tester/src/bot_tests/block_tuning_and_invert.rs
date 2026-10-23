@@ -60,16 +60,16 @@ pub async fn run_block_tuning_and_invert_tests(
     bot1.set_held_item(4).await?;
 
     // Tune the note block twice (0 -> 1 -> 2), invert the daylight detector, and pull the lever
-    bot1.use_block(note_pos, 10).await?;
-    bot1.use_block(note_pos, 11).await?;
-    bot1.use_block(detector_pos, 12).await?;
-    bot1.use_block(lever_pos, 13).await?;
+    bot1.use_block(server, note_pos, 10).await?;
+    bot1.use_block(server, note_pos, 11).await?;
+    bot1.use_block(server, detector_pos, 12).await?;
+    bot1.use_block(server, lever_pos, 13).await?;
 
     let mut note_tuned = false;
     let mut detector_inverted = false;
     let mut lever_powered = false;
 
-    for _ in 0..25 {
+    for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
 

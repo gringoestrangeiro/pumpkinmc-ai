@@ -59,7 +59,7 @@ use crate::generation::surface::rule::try_apply_material_rule;
 use crate::{
     chunk::CHUNK_AREA,
     generation::{biome, positions::chunk_pos},
-    world::{BlockAccessor, WorldPortalExt},
+    world::{BlockAccessor, WorldPortalExt, fluid_state_from_block_state},
 };
 use pumpkin_data::tag::get_tag_ids;
 use pumpkin_nbt::compound::NbtCompound;
@@ -92,6 +92,9 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
         self.get_top_y(&HeightMap::OceanFloorWg, x, z)
     }
     fn is_air(&self, local_pos: &Vector3<i32>) -> bool;
+    /// Sky and block light of a generated chunk, matching `WorldGenRegion.getBrightness`.
+    fn get_sky_light(&self, pos: &Vector3<i32>) -> u8;
+    fn get_block_light(&self, pos: &Vector3<i32>) -> u8;
     fn get_biome_for_terrain_gen(&self, x: i32, y: i32, z: i32) -> &'static Biome;
     fn get_blending_data(
         &self,
@@ -199,6 +202,29 @@ impl ProtoChunk {
     #[must_use]
     pub const fn get_sea_level(&self) -> i32 {
         self.sea_level
+    }
+
+    /// Light stored in this chunk's own sections. Positions in other chunks read as dark.
+    fn get_light(&self, pos: &Vector3<i32>, sky: bool) -> u8 {
+        if pos.x >> 4 != self.x || pos.z >> 4 != self.z {
+            return 0;
+        }
+        let Some(section) = usize::try_from((pos.y - i32::from(self.bottom_y())) >> 4).ok() else {
+            return 0;
+        };
+        let light = if sky {
+            &self.light.sky_light
+        } else {
+            &self.light.block_light
+        };
+        let Some(container) = light.get(section) else {
+            return 0;
+        };
+        container.get(
+            (pos.x & 15) as usize,
+            (pos.y & 15) as usize,
+            (pos.z & 15) as usize,
+        )
     }
 
     #[cfg(test)]
@@ -995,16 +1021,19 @@ impl ProtoChunk {
                 for y in (0..volume.size_y).rev() {
                     let block_y = volume.block_y(y);
                     let index = volume.index_unchecked(x, y, z);
-                    let block_state = noise_sampler
-                        .sample_block_state(
-                            ore_random_deriver,
-                            &Vector3::new(block_x, block_y, block_z),
-                            densities.density[index],
-                            densities.vein_sample(index).as_ref(),
-                            surface_height_estimate_sampler,
-                        )
-                        .unwrap_or(generator.default_block);
+                    let (state, should_schedule_fluid_update) = noise_sampler.sample_block_state(
+                        ore_random_deriver,
+                        &Vector3::new(block_x, block_y, block_z),
+                        densities.density[index],
+                        densities.vein_sample(index).as_ref(),
+                        surface_height_estimate_sampler,
+                    );
+                    let block_state = state.unwrap_or(generator.default_block);
                     self.set_block_state(block_x, block_y, block_z, block_state);
+                    if should_schedule_fluid_update && block_state.is_liquid() {
+                        let (fluid, _) = fluid_state_from_block_state(block_state.id);
+                        self.schedule_fluid_tick(block_x, block_y, block_z, fluid);
+                    }
                 }
             }
         }
@@ -1873,6 +1902,12 @@ impl GenerationCache for ProtoChunk {
     }
     fn is_air(&self, local_pos: &Vector3<i32>) -> bool {
         self.is_air(local_pos)
+    }
+    fn get_sky_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.get_light(pos, true)
+    }
+    fn get_block_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.get_light(pos, false)
     }
     fn get_biome_for_terrain_gen(&self, x: i32, y: i32, z: i32) -> &'static Biome {
         let biome_pos = self.get_terrain_gen_biome_pos(x, y, z);

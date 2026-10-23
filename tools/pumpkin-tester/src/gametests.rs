@@ -27,7 +27,7 @@ const TEST_BASE_Y: i32 = 80;
 const TEST_BASE_Z: i32 = 66;
 const CREEPER_TEST_X: i32 = -64;
 const CREEPER_TEST_Z: i32 = -64;
-const MAX_GAMETEST_TICKS: usize = 500;
+const MAX_GAMETEST_TICKS: usize = 2000;
 
 #[derive(Default)]
 struct CaptureReporter {

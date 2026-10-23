@@ -19,6 +19,12 @@ use crate::generation::{
     section_coords,
 };
 
+/// Vanilla `NoiseBasedAquifer.FLOWING_UPDATE_SIMULARITY`, i.e. `similarity(10², 12²)`.
+///
+/// Fluids closer than this are treated as one body and do not need a post-processing
+/// fluid tick; anything further apart does, which is what makes carved lava spread.
+const FLOWING_UPDATE_SIMILARITY: f32 = 1.0 - (12.0 * 12.0 - 10.0 * 10.0) / 25.0;
+
 #[derive(Clone)]
 pub struct FluidLevel {
     max_y: i32,
@@ -641,8 +647,7 @@ impl WorldAquiferSampler {
         let sim12 = Self::max_distance(nearest[0].1, nearest[1].1);
 
         if sim12 <= 0.0 {
-            let should_schedule = if sim12 >= -0.12 {
-                // FLOWING_UPDATE_SIMILARITY
+            let should_schedule = if sim12 >= FLOWING_UPDATE_SIMILARITY {
                 let fluid_level3 = self.get_water_level(nearest[1].0, router, height_estimator);
                 fluid_level2.block != fluid_level3.block || fluid_level2.max_y != fluid_level3.max_y
             } else {
@@ -711,10 +716,10 @@ impl WorldAquiferSampler {
 
         let may_flow12 =
             fluid_level2.block != fluid_level3.block || fluid_level2.max_y != fluid_level3.max_y;
-        let may_flow23 = sim23 >= -0.12
+        let may_flow23 = sim23 >= FLOWING_UPDATE_SIMILARITY
             && (fluid_level3.block != fluid_level4.block
                 || fluid_level3.max_y != fluid_level4.max_y);
-        let may_flow13 = sim13 >= -0.12
+        let may_flow13 = sim13 >= FLOWING_UPDATE_SIMILARITY
             && (fluid_level2.block != fluid_level4.block
                 || fluid_level2.max_y != fluid_level4.max_y);
 
@@ -722,8 +727,8 @@ impl WorldAquiferSampler {
             true
         } else {
             let fluid_level5 = self.get_water_level(nearest[3].0, router, height_estimator);
-            sim13 >= -0.12
-                && Self::max_distance(nearest[0].1, nearest[3].1) >= -0.12
+            sim13 >= FLOWING_UPDATE_SIMILARITY
+                && Self::max_distance(nearest[0].1, nearest[3].1) >= FLOWING_UPDATE_SIMILARITY
                 && (fluid_level2.block != fluid_level5.block
                     || fluid_level2.max_y != fluid_level5.max_y)
         };

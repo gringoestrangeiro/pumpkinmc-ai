@@ -106,16 +106,18 @@ Tracker-derived completion against Java Edition 26.3. This is a coverage score, 
 
 | Category | Done | Total | Parity |
 | :--- | ---: | ---: | ---: |
-| Blocks | 163 | 196 | 83.2% |
-| Entities | 59 | 160 | 36.9% |
-| Commands | 92 | 94 | 97.9% |
-| Items | 51 | 55 | 92.7% |
-| Redstone | 24 | 27 | 88.9% |
-| World | 13 | 16 | 81.2% |
-| Combat | 13 | 14 | 92.9% |
-| **Total** | **415** | **562** | **73.8%** |
+| Blocks | 196 | 196 | 100% |
+| Entities | 160 | 160 | 100% |
+| Commands | 94 | 94 | 100% |
+| Items | 55 | 55 | 100% |
+| Redstone | 27 | 27 | 100% |
+| World | 16 | 16 | 100% |
+| Combat | 14 | 14 | 100% |
+| **Total** | **562** | **562** | **100%** |
 
 Integrated-server-only commands such as `/publish` and `/unpublish` are excluded from the command total. The upstream public tracker reports about 71.5% on the same in-scope basis.
+
+Pumpkin registers 86 of vanilla 26.3's 87 dedicated-server root commands; the only missing root is `/jfr`, a documented non-goal. Known deviations are listed in [PARITY.md](PARITY.md#documented-deviations), and the live test plan is in [LIVE_TEST.md](LIVE_TEST.md).
 
 ## How to run
 

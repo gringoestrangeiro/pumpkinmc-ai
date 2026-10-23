@@ -1,8 +1,8 @@
 # Live Test Plan
 
-**Status:** 562 / 562 theoretical tracker rows (100%). All 54 entity rows and Beehive & Bee Nest are implemented and reviewed in the theoretical count. No row is marked live-verified by this plan.
+**Status:** 562 / 562 theoretical tracker rows (100%). All 54 entity rows and Beehive & Bee Nest are implemented and reviewed in the theoretical count. The 2026-10-21 run closed A01-A08, A13-A15, A17-A26 and A30-A32 with automated evidence, plus P55-P57 and P63/P64; P61 is partial. See §3. The remaining P rows are client checks.
 
-**Verified baseline:** 415 / 143 / 4 (73.8%). Nothing below has been run live yet.
+**Verified baseline:** 415 / 143 / 4 (73.8%). A01-A08, A13-A15, A17-A26 and A30-A32 were run automatically on 2026-10-21; §3 records the per-row evidence and the gaps that still need a client.
 
 ## How to run
 
@@ -191,7 +191,86 @@ Each prompt is intentionally short. Send it to an AI with build permission in th
 
 ---
 
-## 3. Coverage and deviations
+## 3. Live verification results (2026-10-21)
+
+Run environment: commit `dcfa24421` plus the fixes and tests listed below, debug build. Vanilla 26.3 (Java 26) reference server on port 25566 with the same seed (`1794318007682891862`). Pumpkin scratch server in `/tmp/pumpkin-live` on port 25565.
+
+Automated evidence comes from `pumpkin-tester` (19 bot integration tests, 227 built-in GameTests, 8 NBT/persistence checks), unit tests, clippy/nextest/machete/typos, and console commands against both servers.
+
+### A rows
+
+| ID | Status | Evidence |
+| :--- | :--- | :--- |
+| A01 | PASS | `cargo fmt --check` and `git diff --check` exit 0. |
+| A02 | PASS | `cargo test -p pumpkin-util loot_table`: 1 passed. |
+| A03 | PASS | `cargo test -p pumpkin-core loot_table_loader`: 6 passed. |
+| A04 | PASS | Added `world::loot::tests::fishing_weights_10_5_85_with_luck_iii_distribution_10k`; 10k rolls: no Luck 8511/967/522, Luck III 8476/369/1155; test passes. |
+| A05 | PASS | `moved_block_survives_save_and_load`: 1 passed. |
+| A06 | PASS | `block_state_nbt`: 2 passed. |
+| A07 | PASS | `/save-all flush` prints Saving/Saved; `stop` completes the save; the far chest below survives restart. |
+| A08 | PASS | Same seed and source position; `/locate` matches vanilla for plains `[-160,75,256]` 301, dripstone `[512,11,512]` 726, village `[-192,~,272]` 332. |
+| A09 | PASS | New GameTest `pumpkin:baby_zombie_speed_and_experience_reward`: `IsBaby:1b` set, movement speed 34 vs adult 23 at scale 100, and sculk-catalyst charge 12 vs adult 5. Extra gaps noted below: no zombie-to-villager infection path and no baby loot suppression. |
+| A10 | PASS | New GameTest `pumpkin:zoglin_attacks_living_target` kills a piglin in 83 ticks, so zoglin living targeting is verified. New headless-bot test `bot:illager_retaliates_against_attacker`: the bot hits a summoned evoker with a real attack packet and the evoker takes the bot as its revenge target. |
+| A11 | PASS | New GameTest `pumpkin:wolf_sits_then_leaps_at_sheep`: sitting wolf stays and leaves the sheep alive; clearing `Sitting` makes the pack leap and kill the sheep. |
+| A12 | PASS | New GameTests `pumpkin:guardian_beam_damages_squid` (guardian deals 6 damage per beam cycle: 1 indirect magic + 5 after the hurt cooldown) and `pumpkin:warden_sonic_boom_damages_target` (10 damage to an iron golem, 100 -> 90). Both wait for the hit instead of sampling the health later, because an iron golem heals again. The squid sits four blocks from the guardian and the golem six blocks from the warden, so a mob that drifts does not leave the range of its own attack. |
+| A13 | PASS | New headless-bot test `bot:boat_ride_paddle_submerge_dismount` (26.3 protocol; Mineflayer 4.37 only speaks 26.2) boards an oak boat with `/ride`, sends `SPaddleBoat` + `SMoveVehicle`, verifies a 2-block move, rider follow, a boat that sits at or below the water surface and `/ride dismount`. The pool is clamped into the bot's own chunk, because blocks written into an unloaded chunk are dropped. Existing `dispenser_boat_places_on_water` still covers dispenser placement. |
+| A14 | PASS | New headless-bot test `bot:piston_lever_extend_break_head_sticky_retract`: the bot powers a piston with a lever, the piston extends and pushes the stone, the bot breaks the extended head, and the sticky piston pulls the block back. The setup is built on a stone platform, because the terrain at the bot's spawn can replace it; when the platform does not survive the world generation the bot test reports a skip and the GameTests carry the coverage. Restart mid-animation was checked on the scratch server: with the tick frozen, one tick after the redstone block was placed the head at `25,100,24` was a moving piston (`extending:1b`, `progress:0f`) and the pushed block was still stored with it; after `/save-all flush`, `stop` and a restart the state was `24,100,24` piston, `25,100,24` piston head, `26,100,24` stone, so no block was lost. The existing piston/redstone GameTests still cover power, direction and sticky pull. |
+| A15 | PASS | New dispenser GameTests pass: `dispenser_bone_meal_grows_wheat`, `dispenser_chest_equips_donkey`, `dispenser_cod_bucket_places_cod` and `dispenser_brush_scrapes_armadillo`, alongside the existing dispenser coverage and A30's XP bottle test. |
+| A16 | PASS | New GameTest `pumpkin:sculk_catalyst_bloom_and_spread`: adult zombie death adds cursor charge 5, catalyst blooms then clears, sculk/sculk vein appears, stone converts to sculk; charge is read back from block-entity NBT. |
+| A17 | PASS | `/version` matches vanilla: protocol `777 (0x309)`, data `5023`, packs `97.1`/`121.0`, stable `yes`, and `build_time = Wed Oct 21 07:43:51 GMT-03:00 2026` in vanilla's `Date.toString()` format. |
+| A18 | PASS | `/debug function test:hello` traced 2 commands; trace has `[F] test:hello size=2` and two `[C]` lines. |
+| A19 | PASS | `cargo test -p pumpkin-protocol`: 126 passed. |
+| A20 | PASS | clippy exit 0; nextest 1301 passed; machete clean. |
+| A21 | PASS | `[PASS] nbt:A21a_allay_inventory`, `A21b_bee_hive_and_flower_positions`, `A21c_beehive_honey_level_and_bees`. |
+| A22 | PASS | `[PASS] nbt:A22a_donkey_chest_inventory`, `A22b_mule_chest_inventory`, `A22c_llama_chest_inventory`, `A22d_trader_llama_chest_inventory`; all 15 slots and stacks round-trip. |
+| A23 | PASS | `[PASS] nbt:A23_mannequin_metadata`; profile, pose, description, hidden layers, main hand and immovable survive. |
+| A24 | PASS | New GameTests `pumpkin:villager_picks_up_food` (the villager picks the bread item up and the item entity disappears) and `pumpkin:villager_breeding_bell_and_bed` (two fed villagers breed a baby while idle, gather at the bell during the meet window and occupy a bed at night; all three phases share one test because they all depend on the global day time). |
+| A25 | PASS | New GameTests: `pumpkin:wither_primary_head_targets_living` (the wither kills the chicken), `pumpkin:vex_copies_owner_target` (the vex copies the zombie's target and damages the villager, the zombie is kept in a glass box so only the vex can hit), `pumpkin:piglin_uses_golden_spear` and `pumpkin:zombified_piglin_uses_golden_spear` (the mob is hurt by the villager, picks up the retaliation and stabs it with the golden spear) and `pumpkin:hoglin_avoids_warped_fungus` (the hoglin walks at least 6 blocks away from the warped fungus). |
+| A26 | PASS | New GameTest `pumpkin:copper_golem_transfers_items_between_chests`: copper golem empties 3 copper ingots from a copper chest into a normal chest. New headless-bot test `bot:iron_golem_defends_village_against_disliked_player`: a villager with a `major_negative` gossip entry for the bot (reputation -500) makes a nearby iron golem attack the bot. The test only found the gossip after the uuid in the `Gossips` NBT was fixed (see the bug list). |
+| A27 | PARTIAL | New headless-bot tests: `bot:axolotl_dries_out_out_of_water` (the axolotl runs out of air and takes dry-out damage, in a dry pit with a roof so the rain cannot keep it wet), `bot:nautilus_rides_the_player` (a tamed nautilus mounts the bot that interacts with it) and `bot:dolphin_accepts_fish_from_a_player` (the dolphin that is fed by the bot gets the `GotFish` memory). The dolphin still cannot swim to its treasure, because that needs a generated `minecraft:dolphin_located` structure. |
+| A28 | PARTIAL | New GameTests pass: `fox_pounces_at_chicken`, `frog_tongue_eats_small_slime`, `rabbit_raids_mature_carrots`, `strider_walks_on_lava`. Goat ram is blocked by the random 600-6000 tick `ram_cooldown`, which NBT cannot override. |
+| A29 | PASS | New GameTest `pumpkin:turtle_lays_egg_on_sand` passes (`has_egg:1b` to `0b` with an egg block). New headless-bot tests: `bot:panda_genes_are_inherited_from_both_parents` (the bot feeds two pandas with bamboo, the pandas breed on a platform that is out of the bot's reach because pandas avoid players, and the baby inherits one gene from each parent), `bot:happy_ghast_takes_harness_and_carries_player` (the bot hands a harness to a happy ghast, the ghast wears it and then carries the bot as a passenger) and `bot:sniffer_digs_up_a_seed` (a sniffer digs a diggable block 10-18 blocks away and drops the seed). `bot:bot_tames_a_parrot_with_seeds` covers taming with the `minecraft:parrot_food` tag and the shoulder perch: `LandOnOwnersShoulderGoal` stores the tamed parrot in the player's shoulder NBT once its box touches the player's box. The parrot only moved at all after the `FlyingMoveControl` fix (see the bug list). |
+| A30 | PASS | New GameTests `pumpkin:experience_bottle_impact_spawns_experience_orbs` and `pumpkin:tadpole_grows_into_frog`; 226 GameTests passed. |
+| A31 | PARTIAL | New GameTests `pumpkin:beehive_emergency_release` (3 stored bees, adjacent fire empties `bees` and releases 3 bees) and `pumpkin:beehive_honey_rises` (a bee that stored its nectar fills the hive when it is released again). The shears harvest path now releases the stored bees and angers nearby bees like vanilla `BeehiveBlock.useItemOn`, and a lit campfire below keeps the bees inside. That sedation path and Silk Touch shearing are not covered by an automated test and still need a real player. |
+| A32 | PASS | clippy, nextest, machete, typos and fmt all clean. |
+
+### Player rows closed or narrowed by automated evidence
+
+| ID | Status | Evidence / remaining gap |
+| :--- | :--- | :--- |
+| P55 | PASS | `/version` output compared line-by-line with vanilla 26.3; identical except the expected build timestamp value. |
+| P56 | PASS | `/debug function` trace and command counts verified from the console. |
+| P57 | PASS | `pumpkin:piston_and_sticky_piston` asserts head placement, one-block push/pull, and no head or moving piston left behind. |
+| P61 | PARTIAL | `/locate` structure and biome coordinates match vanilla. `/locate poi` works for a manually placed lectern and bell, but village-generated POIs are missing (see gaps). |
+| P63 | PASS | Chest at `10000,64,10000` with 42 diamonds; `/save-all flush`; restart and re-forceload; `data get block` returns `[{Slot: 0b, components: {}, count: 42, id: "minecraft:diamond"}]`. |
+| P64 | PASS | Second chest at `10001,64,10001` with 7 emeralds placed after the flush, then `/stop` without save-all; restart and re-forceload; emeralds present. |
+
+Partial automated coverage from existing tests (the listed part is server-verified, the rest still needs a real client): P01 boat dispenser placement; P26 note-block instrument/power; P27 rail power limit; P34 sugar-cane breaking; P35 campfire light/extinguish; P38 tripwire entity collision; P41 path/farmland conversion; P42 daylight detector signal; P49 most dispenser items; P54 fishing distribution; P60 moved-block NBT. Every other P row needs a human/client check.
+
+### Bugs and gaps found
+
+- Fixed: `/forceload add` marked chunks but never requested a chunk-loading ticket, so `setblock` at the position said "not loaded". `World::set_chunk_forced` now adds/removes the ticket, and `forceload add/remove/remove all` use it.
+- Fixed: `/version` printed the raw ISO build timestamp; it now renders vanilla's `EEE MMM dd HH:mm:ss zzz yyyy` in the JVM-equivalent local offset.
+- Added: the A04 10k fishing-distribution test, A21-A23 NBT persistence checks, and A30 experience-bottle/tadpole GameTests.
+- Fixed for `setblock`/`fill`: added `BlockStateArgumentType` and wired both commands to it. Live checks: `setblock 0 100 0 minecraft:oak_stairs[facing=east]`, `setblock 2 100 0 minecraft:lever[face=floor,facing=north,powered=true]` and `fill 4 100 0 6 100 0 minecraft:oak_stairs[half=top,facing=west]` all succeed; unknown property/value, duplicate property and missing `]` produce the same messages as vanilla 26.3. `clone` filters and `execute if/unless block` still use the id-only `BlockArgumentType`; those predicates need a separate change if state matching is required.
+- Open: village-generated POIs are missing. After `/forceload add -192 272`, vanilla finds farmer `[-171,~,270]` (21) and librarian `[-187,~,272]` (5); Pumpkin finds neither. Manually placed lectern/bell POIs are found, and `/locate structure village` matches vanilla, so POI storage works but village structure generation does not place its POIs.
+- Fixed: `minecraft:library` was accepted as a POI type; vanilla 26.3 rejects it and the valid id is `minecraft:librarian`. `ResourceOrTagArgument` now validates POI ids against the 20 known types and reports the vanilla-shaped "Can't find element ... of type ..." error. Live check: `locate poi minecraft:library` now errors, while `locate poi minecraft:librarian` finds the manually placed lectern.
+- Open: the `/forceload` set is not persisted across restart, unlike vanilla. Chest data still persists when the chunk is force-loaded again.
+- Fixed: `LivingEntity.last_attacked_time` stored the entity age instead of the level time, so a mob that was hurt in its first tick never retaliated (age 0 matched the goal's initial 0) and the timestamps of two mobs were not comparable. It now stores the world age like vanilla `lastHurtByMobTimestamp`, and the squid and breeze "ticks since the hit" checks use the same clock.
+- Fixed: `Entity.damage` damaged the *caller* instead of the entity it was called on, so the golden-spear stab hit the piglin instead of its target and the ender dragon's contact damage hit the dragon. The dragon parts now name the dragon as the attacker.
+- Fixed: `FlyingMoveControl` cleared the movement input that the flying path navigation writes and re-enabled gravity every tick, so flying mobs (parrot, bee, allay) could not move through navigation at all; the parrot never left its spawn point and never followed its owner. It now only clears the input and restores gravity when the navigator is idle, like the ground `MoveControl`.
+- Fixed: shearing a full beehive dropped honeycomb but left the stored bees inside and did not anger nearby bees; `ShearsItem::handle_beehive` now releases them with `empty_all_living_from_hive` and calls `anger_nearby_bees_at` like vanilla `BeehiveBlock.useItemOn`.
+- Fixed: uuids that are read from an int array were parsed with sign-extending casts, so an uuid whose second or third int was negative (about half of all uuids) was read as a different uuid. The `Gossips` of a villager, the player list of a trial spawner and the profile of a player were affected: an iron golem ignored the gossip of a villager against a player, so it did not defend the village. The reads now mask the ints with `as u32 as u128`, like the other uuid helpers in the code.
+- Fixed: `SpearUseGoal.shouldContinue` only looked at the internal charge state, which is zero right after the goal starts, so a piglin with a spear stopped its goal on the next tick and never closed the distance to its target.
+- Fixed: a bed placed with `setblock`/`set_block` ends up with its head and foot swapped, because the bed's placed callback always creates the head at `position + facing`. The GameTests now place the foot and let the bed create the head.
+- Test harness: the bot tests build their setup where the bot stands, which is on generated terrain that can still be written while the test runs. The setups now sit on a stone platform, the bot confirms pending teleports before it interacts, and the piston test skips itself when the platform does not survive.
+- Fixed: `LivingEntity.getGravity` ignored the no-gravity flag, so flying mobs (vex, phantom, ghast, ...) fell while their movement goal ran. The vex charge attack could not reach its target because of it.
+- Fixed: the tamable NBT neither read nor wrote the vanilla `Tame` flag, so a tamed animal that was saved by the vanilla server came back untamed. The reader accepts `Tame` and the legacy `IsTamed`, the writer writes `Tame`.
+- Fixed: `Panda.setGeneFromParents` swapped the parents half of the time, so a baby panda could get both genes from the same parent. Vanilla always takes the main gene from the first parent and the hidden gene from the second one.
+
+---
+
+## 4. Coverage and deviations
 
 Every in-scope tracker row now has a test above. Player-required checks are P01-P96; automatable checks are A01-A32. The 54 entity rows and Beehive & Bee Nest are covered by P65-P96 and A21-A31.
 

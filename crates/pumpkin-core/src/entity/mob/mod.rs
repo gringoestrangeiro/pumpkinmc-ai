@@ -9,6 +9,7 @@ use crate::entity::ai::sensing::Sensing;
 use crate::entity::player::Player;
 use crate::entity::predicate::EntityPredicate;
 use crate::entity::projectile::arrow::ArrowEntity;
+use crate::entity::r#type::SpawnLevelReader;
 use crate::server::Server;
 use crate::world::World;
 use crate::world::brightness::DAYLIGHT_BRIGHTNESS;
@@ -98,6 +99,9 @@ pub struct MobEntity {
     pub breeding_cooldown: AtomicI32,
     pub breeder: AtomicCell<Option<Uuid>>,
     pub persistence_required: AtomicBool,
+    /// Vanilla `Mob.noActionTime`: ticks the mob has spent more than its no-despawn
+    /// distance away from every player. Reset when a player comes close.
+    pub no_action_time: AtomicI32,
     pub ambient_sound_time: AtomicI32,
     pending_riders: std::sync::Mutex<Vec<Arc<dyn EntityBase>>>,
     mob_flags: AtomicU8,
@@ -186,6 +190,7 @@ impl MobEntity {
             breeding_cooldown: AtomicI32::new(0),
             breeder: AtomicCell::new(None),
             persistence_required: AtomicBool::new(false),
+            no_action_time: AtomicI32::new(0),
             ambient_sound_time: AtomicI32::new(0),
             pending_riders: std::sync::Mutex::new(Vec::new()),
             mob_flags: AtomicU8::new(0),
@@ -244,6 +249,8 @@ impl MobEntity {
 
     /// Vanilla `Mob.serverAiStep`: sensing, goals, navigation and controls.
     pub fn server_ai_step(&self, mob: &dyn Mob, caller: &dyn EntityBase) {
+        self.no_action_time.fetch_add(1, Relaxed);
+
         let age = self.living_entity.entity.age.load(Relaxed);
         let entity_id = self.living_entity.entity.entity_id;
 
@@ -556,13 +563,17 @@ impl MobEntity {
         min_range <= 0.0 || !self.get_attack_box(min_range).intersects(&target_hitbox)
     }
 
-    pub fn is_dark_enough_to_spawn(world: &World, pos: &BlockPos, is_thundering: bool) -> bool {
+    pub fn is_dark_enough_to_spawn(
+        world: &dyn SpawnLevelReader,
+        pos: &BlockPos,
+        is_thundering: bool,
+    ) -> bool {
         let sky_light = world.get_sky_light_level(pos);
         if sky_light > rand::random_range(0..32) {
             return false;
         }
 
-        let dimension = &world.dimension;
+        let dimension = world.dimension();
         let block_light_limit = dimension.monster_spawn_block_light_limit;
 
         let block_light = world.get_block_light_level(pos).unwrap_or(0);
@@ -570,10 +581,13 @@ impl MobEntity {
             return false;
         }
 
+        // Vanilla `Monster.isDarkEnoughToSpawn`: the normal check uses the world's
+        // local raw brightness, which already subtracts the night sky darkening.
+        // The thunder branch passes a fixed darkening of 10 instead.
         let current_brightness = if is_thundering {
-            (sky_light - 10).max(block_light)
+            sky_light.saturating_sub(10).max(block_light)
         } else {
-            sky_light.max(block_light)
+            world.get_max_local_raw_brightness(pos)
         };
 
         // TODO
@@ -581,14 +595,18 @@ impl MobEntity {
         current_brightness <= dimension.monster_spawn_light_level.get(&mut random) as u8
     }
 
-    pub fn check_mob_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_mob_spawn_rules(world: &dyn SpawnLevelReader, pos: &BlockPos) -> bool {
         let below = pos.down();
         let state = world.get_block_state(&below);
         state.is_side_solid(BlockDirection::Up)
     }
 
-    pub fn check_monster_spawn_rules(world: &World, pos: &BlockPos, is_thundering: bool) -> bool {
-        if world.level_info.load().difficulty == Difficulty::Peaceful {
+    pub fn check_monster_spawn_rules(
+        world: &dyn SpawnLevelReader,
+        pos: &BlockPos,
+        is_thundering: bool,
+    ) -> bool {
+        if world.difficulty() == Difficulty::Peaceful {
             return false;
         }
 
@@ -599,8 +617,11 @@ impl MobEntity {
         Self::check_mob_spawn_rules(world, pos)
     }
 
-    pub fn check_any_light_monster_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        if world.level_info.load().difficulty == Difficulty::Peaceful {
+    pub fn check_any_light_monster_spawn_rules(
+        world: &dyn SpawnLevelReader,
+        pos: &BlockPos,
+    ) -> bool {
+        if world.difficulty() == Difficulty::Peaceful {
             return false;
         }
 
@@ -608,14 +629,14 @@ impl MobEntity {
     }
 
     pub fn check_surface_monsters_spawn_rules(
-        world: &World,
+        world: &dyn SpawnLevelReader,
         pos: &BlockPos,
         is_thundering: bool,
     ) -> bool {
         Self::check_monster_spawn_rules(world, pos, is_thundering) && world.can_see_sky(pos)
     }
 
-    pub fn check_animal_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_animal_spawn_rules(world: &dyn SpawnLevelReader, pos: &BlockPos) -> bool {
         let below = pos.down();
         world
             .get_block(&below)
@@ -623,12 +644,15 @@ impl MobEntity {
             && Self::is_bright_enough_to_spawn(world, pos)
     }
 
-    pub fn is_bright_enough_to_spawn(world: &World, pos: &BlockPos) -> bool {
+    pub fn is_bright_enough_to_spawn(world: &dyn SpawnLevelReader, pos: &BlockPos) -> bool {
         world.get_max_local_raw_brightness(pos) > 8
     }
 
-    pub fn check_surface_water_animal_spawn_rules(world: &World, pos: &BlockPos) -> bool {
-        let sea_level = world.sea_level;
+    pub fn check_surface_water_animal_spawn_rules(
+        world: &dyn SpawnLevelReader,
+        pos: &BlockPos,
+    ) -> bool {
+        let sea_level = world.sea_level();
         let min_spawn_level = sea_level - 13;
         pos.0.y >= min_spawn_level
             && pos.0.y <= sea_level
@@ -641,7 +665,10 @@ impl MobEntity {
                     .has_tag(&tag::Fluid::MINECRAFT_WATER))
     }
 
-    pub fn check_surface_ageable_water_creature_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_surface_ageable_water_creature_spawn_rules(
+        world: &dyn SpawnLevelReader,
+        pos: &BlockPos,
+    ) -> bool {
         Self::check_surface_water_animal_spawn_rules(world, pos)
     }
 
@@ -801,8 +828,17 @@ impl MobEntity {
             return;
         }
 
-        if nearest_dist_sq > 32.0 * 32.0 && rand::random::<i32>().wrapping_abs() % 800 == 0 {
-            mob.get_entity().remove();
+        // Vanilla `Mob.checkDespawn` only rolls the random despawn after the mob spent
+        // 600 ticks beyond the 32 block no-despawn distance.
+        let no_despawn_distance_sq = 32.0 * 32.0;
+        if nearest_dist_sq > no_despawn_distance_sq {
+            if self.no_action_time.load(Relaxed) > 600
+                && rand::random::<i32>().wrapping_abs() % 800 == 0
+            {
+                mob.get_entity().remove();
+            }
+        } else if nearest_dist_sq < no_despawn_distance_sq {
+            self.no_action_time.store(0, Relaxed);
         }
     }
 }

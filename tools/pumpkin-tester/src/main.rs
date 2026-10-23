@@ -2,6 +2,7 @@ mod bot;
 mod bot_tests;
 mod gametests;
 mod harness;
+mod wave4_nbt;
 
 use std::{net::SocketAddr, process::ExitCode, sync::Arc, time::Instant};
 
@@ -16,6 +17,8 @@ async fn run_all_suites(server: &Arc<Server>, addr: SocketAddr) -> Result<Vec<St
 
     bot_tests::run_bot_tests(server, addr, &mut runner, &mut summary_lines).await?;
     gametests::run_gametests(server, &mut runner, &mut summary_lines).await?;
+
+    summary_lines.extend(wave4_nbt::run_wave4_nbt_tests(server).await?);
 
     Ok(summary_lines)
 }

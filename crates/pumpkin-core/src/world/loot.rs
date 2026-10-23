@@ -710,3 +710,164 @@ fn shuffle_and_split_items(
         result.swap(i, j);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DynamicLootCondition, DynamicLootEntry, DynamicLootPool, DynamicLootTable,
+        LootContextParameters, generate_dynamic_loot_with_context,
+    };
+
+    const ROLLS: usize = 10_000;
+
+    fn fishing_entry(
+        item: &str,
+        weight: i32,
+        quality: i32,
+        condition: DynamicLootCondition,
+    ) -> DynamicLootEntry {
+        DynamicLootEntry {
+            item: item.to_string(),
+            weight,
+            quality,
+            min_count: 1,
+            max_count: 1,
+            condition,
+            bonus_formula: None,
+            damage: None,
+            potion: None,
+            table_id: None,
+            table: None,
+        }
+    }
+
+    /// Vanilla `gameplay/fishing` category pool: fish 85 quality -1,
+    /// junk 10 quality -2, treasure 5 quality +2 in open water only.
+    fn fishing_category_table() -> DynamicLootTable {
+        DynamicLootTable {
+            pools: vec![DynamicLootPool {
+                entries: vec![
+                    fishing_entry("minecraft:cod", 85, -1, DynamicLootCondition::None),
+                    fishing_entry("minecraft:lily_pad", 10, -2, DynamicLootCondition::None),
+                    fishing_entry(
+                        "minecraft:bow",
+                        5,
+                        2,
+                        DynamicLootCondition::FishingHookInOpenWater,
+                    ),
+                ],
+                min_rolls: 1,
+                max_rolls: 1,
+                empty_weight: 0,
+                condition: DynamicLootCondition::None,
+            }],
+        }
+    }
+
+    /// Rolls one category per seed and returns `[fish, junk, treasure]`.
+    fn histogram(luck: f32) -> [usize; 3] {
+        let table = fishing_category_table();
+        let params = LootContextParameters {
+            luck,
+            fishing_hook_open_water: Some(true),
+            ..LootContextParameters::default()
+        };
+        let mut counts = [0usize; 3];
+        let mut unexpected = 0usize;
+        for seed in 0..ROLLS {
+            for stack in generate_dynamic_loot_with_context(&table, seed as i64, &params) {
+                let key = stack
+                    .item
+                    .registry_key
+                    .strip_prefix("minecraft:")
+                    .unwrap_or(stack.item.registry_key);
+                match key {
+                    "cod" => counts[0] += 1,
+                    "lily_pad" => counts[1] += 1,
+                    "bow" => counts[2] += 1,
+                    _ => unexpected += 1,
+                }
+            }
+        }
+        assert_eq!(
+            unexpected, 0,
+            "roll produced an item outside the categories"
+        );
+        assert_eq!(
+            counts[0] + counts[1] + counts[2],
+            ROLLS,
+            "every roll must yield exactly one item"
+        );
+        counts
+    }
+
+    fn percent(count: usize) -> String {
+        let tenths = count * 1000 / ROLLS;
+        format!("{}.{}%", tenths / 10, tenths % 10)
+    }
+
+    fn describe(counts: &[usize; 3]) -> String {
+        format!(
+            "fish {}/{} ({}), junk {}/{} ({}), treasure {}/{} ({})",
+            counts[0],
+            ROLLS,
+            percent(counts[0]),
+            counts[1],
+            ROLLS,
+            percent(counts[1]),
+            counts[2],
+            ROLLS,
+            percent(counts[2]),
+        )
+    }
+
+    #[test]
+    fn fishing_weights_10_5_85_with_luck_iii_distribution_10k() {
+        let plain = histogram(0.0);
+        let lucky = histogram(3.0);
+        let report = format!(
+            "no luck: {}\nLuck III: {}",
+            describe(&plain),
+            describe(&lucky)
+        );
+
+        // No luck reproduces vanilla 85/10/5; margins are roughly four to
+        // seven standard deviations for 10_000 multinomial trials.
+        for (count, expected, tolerance) in [
+            (plain[0], 8500, 200),
+            (plain[1], 1000, 150),
+            (plain[2], 500, 100),
+        ] {
+            assert!(
+                count.abs_diff(expected) <= tolerance,
+                "no-luck count {count} outside {expected} +/- {tolerance}\n{report}"
+            );
+        }
+
+        // Luck of the Sea III passes luck 3.0, so quality moves weight from
+        // fish/junk to treasure: vanilla 85/10/5 becomes about 84.5/4.1/11.3.
+        for (count, expected, tolerance) in [
+            (lucky[0], 8454, 200),
+            (lucky[1], 412, 100),
+            (lucky[2], 1134, 150),
+        ] {
+            assert!(
+                count.abs_diff(expected) <= tolerance,
+                "Luck III count {count} outside {expected} +/- {tolerance}\n{report}"
+            );
+        }
+
+        assert!(
+            lucky[2] > plain[2],
+            "treasure share must rise with Luck III\n{report}"
+        );
+        assert!(
+            lucky[0] < plain[0],
+            "fish share must fall with Luck III\n{report}"
+        );
+        assert!(
+            lucky[1] < plain[1],
+            "junk share must fall with Luck III\n{report}"
+        );
+    }
+}

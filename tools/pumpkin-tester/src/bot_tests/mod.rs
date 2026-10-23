@@ -1,8 +1,18 @@
+mod aquatic_goals;
 mod block_tuning_and_invert;
 mod commands_and_gamemode;
+mod happy_ghast;
+mod illager_revenge;
+mod iron_golem_defence;
 mod login_and_movement;
+mod panda_genes;
+mod parrot_taming;
+mod piston;
 mod player_actions;
+mod setup;
+mod sniffer;
 mod status_ping;
+mod vehicle;
 mod world_interaction;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -30,6 +40,24 @@ pub async fn run_bot_tests(
     .await?;
 
     world_interaction::run_world_interaction_tests(server, &mut bot1, summary_lines).await?;
+
+    vehicle::run_vehicle_tests(server, &mut bot1, summary_lines).await?;
+
+    illager_revenge::run_illager_revenge_tests(server, &mut bot1, summary_lines).await?;
+
+    iron_golem_defence::run_iron_golem_defence_tests(server, &mut bot1, summary_lines).await?;
+
+    aquatic_goals::run_nautilus_ride_tests(server, &mut bot1, summary_lines).await?;
+    aquatic_goals::run_axolotl_dry_out_tests(server, &bot1, summary_lines).await?;
+    aquatic_goals::run_dolphin_got_fish_tests(server, &mut bot1, summary_lines).await?;
+
+    panda_genes::run_panda_genes_tests(server, &mut bot1, summary_lines).await?;
+
+    happy_ghast::run_happy_ghast_tests(server, &mut bot1, summary_lines).await?;
+
+    parrot_taming::run_parrot_taming_tests(server, &mut bot1, summary_lines).await?;
+    sniffer::run_sniffer_dig_tests(server, &mut bot1, summary_lines).await?;
+    piston::run_piston_tests(server, &mut bot1, summary_lines).await?;
 
     block_tuning_and_invert::run_block_tuning_and_invert_tests(server, &mut bot1, summary_lines)
         .await?;

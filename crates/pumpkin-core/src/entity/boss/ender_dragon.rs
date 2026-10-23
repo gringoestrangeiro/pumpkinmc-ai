@@ -649,7 +649,14 @@ impl EnderDragonEntity {
                         living.last_hurt_by_mob_time.load(Ordering::Relaxed) >= now - 2
                     });
                     if !recently_hurt {
-                        target.damage(self, 5.0, DamageType::MOB_ATTACK);
+                        target.damage_with_context(
+                            target.as_ref(),
+                            5.0,
+                            DamageType::MOB_ATTACK,
+                            None,
+                            Some(self as &dyn EntityBase),
+                            Some(self as &dyn EntityBase),
+                        );
                     }
                 }
             }
@@ -659,7 +666,14 @@ impl EnderDragonEntity {
             let part_box = part.entity.bounding_box.load().expand(1.0, 1.0, 1.0);
             for target in world.get_entities_and_players_at_box(&part_box) {
                 if self.is_dragon_contact_target(&target) {
-                    target.damage(self, 10.0, DamageType::MOB_ATTACK);
+                    target.damage_with_context(
+                        target.as_ref(),
+                        10.0,
+                        DamageType::MOB_ATTACK,
+                        None,
+                        Some(self as &dyn EntityBase),
+                        Some(self as &dyn EntityBase),
+                    );
                 }
             }
         }

@@ -289,6 +289,20 @@ impl crate::generation::proto_chunk::GenerationCache for TestGridCache {
             crate::generation::proto_chunk::GenerationCache::get_block_state(self, local_pos),
         )
     }
+    fn get_sky_light(&self, pos: &pumpkin_util::math::vector3::Vector3<i32>) -> u8 {
+        self.chunks
+            .get(&(pos.x >> 4, pos.z >> 4))
+            .map_or(15, |chunk| {
+                crate::generation::proto_chunk::GenerationCache::get_sky_light(chunk, pos)
+            })
+    }
+    fn get_block_light(&self, pos: &pumpkin_util::math::vector3::Vector3<i32>) -> u8 {
+        self.chunks
+            .get(&(pos.x >> 4, pos.z >> 4))
+            .map_or(0, |chunk| {
+                crate::generation::proto_chunk::GenerationCache::get_block_light(chunk, pos)
+            })
+    }
     fn get_biome_for_terrain_gen(
         &self,
         x: i32,

@@ -19,7 +19,7 @@ pub type MobFilter = fn(&dyn Mob) -> bool;
 pub struct RevengeGoal {
     track_target_goal: TrackTargetGoal,
     target: Option<Arc<dyn EntityBase>>,
-    last_attacked_time: i32,
+    last_attacked_time: i64,
     target_predicate: TargetPredicate,
     ignore_damage_from: Option<EntityTypeFilter>,
     alert_others: bool,

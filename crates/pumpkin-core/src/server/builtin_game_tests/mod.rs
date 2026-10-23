@@ -30,6 +30,17 @@ mod scaffolding;
 mod target_and_projectiles;
 mod tripwire;
 mod walls_stairs_and_shapes;
+mod wave4_aquatic_passive;
+mod wave4_baby_zombie;
+mod wave4_beehive;
+mod wave4_copper_golem;
+mod wave4_main_combat;
+mod wave4_main_dispenser;
+mod wave4_main_zoglin;
+mod wave4_sculk_catalyst;
+mod wave4_villager_hostile;
+mod wave4_wolf;
+mod wave4_xp_tadpole;
 
 use std::sync::Once;
 
@@ -250,6 +261,44 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:iron_golem_pattern_clears_all_four_blocks",
     "pumpkin:different_item_entities_do_not_merge",
     "pumpkin:item_entities_stack_up_to_combined_count",
+    // wave4_xp_tadpole (2)
+    "pumpkin:experience_bottle_impact_spawns_experience_orbs",
+    "pumpkin:tadpole_grows_into_frog",
+    // wave4_main_zoglin (1)
+    "pumpkin:zoglin_attacks_living_target",
+    // wave4_main_combat (2)
+    "pumpkin:guardian_beam_damages_squid",
+    "pumpkin:warden_sonic_boom_damages_target",
+    // wave4_main_dispenser (4)
+    "pumpkin:dispenser_bone_meal_grows_wheat",
+    "pumpkin:dispenser_chest_equips_donkey",
+    "pumpkin:dispenser_cod_bucket_places_cod",
+    "pumpkin:dispenser_brush_scrapes_armadillo",
+    // wave4_sculk_catalyst (1)
+    "pumpkin:sculk_catalyst_bloom_and_spread",
+    // wave4_beehive (2)
+    "pumpkin:beehive_emergency_release",
+    "pumpkin:beehive_honey_rises",
+    // wave4_copper_golem (1)
+    "pumpkin:copper_golem_transfers_items_between_chests",
+    // wave4_baby_zombie (1)
+    "pumpkin:baby_zombie_speed_and_experience_reward",
+    // wave4_wolf (1)
+    "pumpkin:wolf_sits_then_leaps_at_sheep",
+    // wave4_aquatic_passive (5)
+    "pumpkin:fox_pounces_at_chicken",
+    "pumpkin:frog_tongue_eats_small_slime",
+    "pumpkin:rabbit_raids_mature_carrots",
+    "pumpkin:strider_walks_on_lava",
+    "pumpkin:turtle_lays_egg_on_sand",
+    // wave4_villager_hostile (9)
+    "pumpkin:villager_picks_up_food",
+    "pumpkin:villager_breeding_bell_and_bed",
+    "pumpkin:wither_primary_head_targets_living",
+    "pumpkin:vex_copies_owner_target",
+    "pumpkin:piglin_uses_golden_spear",
+    "pumpkin:zombified_piglin_uses_golden_spear",
+    "pumpkin:hoglin_avoids_warped_fungus",
 ];
 
 #[must_use]
@@ -1655,6 +1704,217 @@ pub fn ensure_builtin_game_tests_registered() {
             60,
             0,
             commands_and_entities_extended::test_falling_anvil_lands_and_preserves_block,
+        );
+
+        // wave4_xp_tadpole (2)
+        register_function_test(
+            "pumpkin:experience_bottle_impact_spawns_experience_orbs",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_xp_tadpole::test_experience_bottle_impact_spawns_experience_orbs,
+        );
+        register_function_test(
+            "pumpkin:tadpole_grows_into_frog",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_xp_tadpole::test_tadpole_grows_into_frog,
+        );
+
+        // wave4_main_zoglin (1)
+        register_function_test(
+            "pumpkin:zoglin_attacks_living_target",
+            "pumpkin:empty_5x4x5",
+            200,
+            0,
+            wave4_main_zoglin::test_zoglin_attacks_living_target,
+        );
+
+        // wave4_main_combat (2)
+        register_function_test(
+            "pumpkin:guardian_beam_damages_squid",
+            "pumpkin:empty_9x4x5",
+            600,
+            0,
+            wave4_main_combat::test_guardian_beam_damages_squid,
+        );
+        register_function_test(
+            "pumpkin:warden_sonic_boom_damages_target",
+            "pumpkin:empty_16x4x5",
+            600,
+            0,
+            wave4_main_combat::test_warden_sonic_boom_damages_target,
+        );
+
+        // wave4_main_dispenser (4)
+        register_function_test(
+            "pumpkin:dispenser_bone_meal_grows_wheat",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_main_dispenser::test_dispenser_bone_meal_grows_wheat,
+        );
+        register_function_test(
+            "pumpkin:dispenser_chest_equips_donkey",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_main_dispenser::test_dispenser_chest_equips_donkey,
+        );
+        register_function_test(
+            "pumpkin:dispenser_cod_bucket_places_cod",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_main_dispenser::test_dispenser_cod_bucket_places_cod,
+        );
+        register_function_test(
+            "pumpkin:dispenser_brush_scrapes_armadillo",
+            "pumpkin:empty_5x4x5",
+            30,
+            0,
+            wave4_main_dispenser::test_dispenser_brush_scrapes_armadillo,
+        );
+
+        // wave4_sculk_catalyst (1)
+        register_function_test(
+            "pumpkin:sculk_catalyst_bloom_and_spread",
+            "pumpkin:empty_5x4x5",
+            40,
+            0,
+            wave4_sculk_catalyst::test_sculk_catalyst_bloom_and_spread,
+        );
+
+        // wave4_beehive (1)
+        register_function_test(
+            "pumpkin:beehive_emergency_release",
+            "pumpkin:empty_5x4x5",
+            40,
+            0,
+            wave4_beehive::test_beehive_emergency_release,
+        );
+        register_function_test(
+            "pumpkin:beehive_honey_rises",
+            "pumpkin:empty_7x4x7",
+            1400,
+            0,
+            wave4_beehive::test_beehive_honey_rises,
+        );
+
+        // wave4_copper_golem (1)
+        register_function_test(
+            "pumpkin:copper_golem_transfers_items_between_chests",
+            "pumpkin:empty_9x4x5",
+            400,
+            0,
+            wave4_copper_golem::test_copper_golem_transfers_items_between_chests,
+        );
+
+        // wave4_aquatic_passive (5)
+        register_function_test(
+            "pumpkin:fox_pounces_at_chicken",
+            "pumpkin:empty_9x4x9",
+            600,
+            0,
+            wave4_aquatic_passive::test_fox_pounces_at_chicken,
+        );
+        register_function_test(
+            "pumpkin:frog_tongue_eats_small_slime",
+            "pumpkin:empty_9x4x9",
+            300,
+            0,
+            wave4_aquatic_passive::test_frog_tongue_eats_small_slime,
+        );
+        register_function_test(
+            "pumpkin:rabbit_raids_mature_carrots",
+            "pumpkin:empty_9x4x9",
+            400,
+            0,
+            wave4_aquatic_passive::test_rabbit_raids_mature_carrots,
+        );
+        register_function_test(
+            "pumpkin:strider_walks_on_lava",
+            "pumpkin:empty_5x4x5",
+            120,
+            0,
+            wave4_aquatic_passive::test_strider_walks_on_lava,
+        );
+        register_function_test(
+            "pumpkin:turtle_lays_egg_on_sand",
+            "pumpkin:empty_9x4x9",
+            900,
+            0,
+            wave4_aquatic_passive::test_turtle_lays_egg_on_sand,
+        );
+
+        // wave4_baby_zombie (1)
+        register_function_test(
+            "pumpkin:baby_zombie_speed_and_experience_reward",
+            "pumpkin:empty_16x4x5",
+            40,
+            0,
+            wave4_baby_zombie::test_baby_zombie_speed_and_experience_reward,
+        );
+
+        // wave4_wolf (1)
+        register_function_test(
+            "pumpkin:wolf_sits_then_leaps_at_sheep",
+            "pumpkin:empty_9x4x9",
+            300,
+            0,
+            wave4_wolf::test_wolf_sits_then_leaps_at_sheep,
+        );
+
+        // wave4_villager_hostile (9)
+        register_function_test(
+            "pumpkin:villager_picks_up_food",
+            "pumpkin:empty_5x4x5",
+            200,
+            0,
+            wave4_villager_hostile::test_villager_picks_up_food,
+        );
+        register_function_test(
+            "pumpkin:villager_breeding_bell_and_bed",
+            "pumpkin:empty_16x4x5",
+            1500,
+            0,
+            wave4_villager_hostile::test_villager_breeding_bell_and_bed,
+        );
+        register_function_test(
+            "pumpkin:wither_primary_head_targets_living",
+            "pumpkin:empty_9x4x5",
+            300,
+            0,
+            wave4_villager_hostile::test_wither_primary_head_targets_living,
+        );
+        register_function_test(
+            "pumpkin:vex_copies_owner_target",
+            "pumpkin:empty_6x5x5",
+            400,
+            0,
+            wave4_villager_hostile::test_vex_copies_owner_target,
+        );
+        register_function_test(
+            "pumpkin:piglin_uses_golden_spear",
+            "pumpkin:empty_9x4x5",
+            600,
+            0,
+            wave4_villager_hostile::test_piglin_uses_golden_spear,
+        );
+        register_function_test(
+            "pumpkin:zombified_piglin_uses_golden_spear",
+            "pumpkin:empty_9x4x5",
+            600,
+            0,
+            wave4_villager_hostile::test_zombified_piglin_uses_golden_spear,
+        );
+        register_function_test(
+            "pumpkin:hoglin_avoids_warped_fungus",
+            "pumpkin:empty_16x4x5",
+            600,
+            0,
+            wave4_villager_hostile::test_hoglin_avoids_warped_fungus,
         );
     });
 }

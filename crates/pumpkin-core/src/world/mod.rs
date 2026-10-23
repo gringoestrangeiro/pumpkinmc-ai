@@ -549,6 +549,38 @@ impl World {
         )));
     }
 
+    /// Marks `chunk` as forced and keeps its chunk-loading force ticket in sync.
+    /// Returns whether the forced state changed.
+    pub fn set_chunk_forced(&self, chunk: Vector2<i32>, forced: bool) -> bool {
+        let changed = {
+            let mut forced_chunks = self
+                .forced_chunks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if forced {
+                forced_chunks.insert(chunk)
+            } else {
+                forced_chunks.remove(&chunk)
+            }
+        };
+        if !changed {
+            return false;
+        }
+
+        let mut chunk_loading = self
+            .level
+            .chunk_loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if forced {
+            chunk_loading.add_force_ticket(chunk);
+        } else {
+            chunk_loading.remove_force_ticket(chunk);
+        }
+        chunk_loading.send_change();
+        true
+    }
+
     pub fn get_lighting_config(&self) -> LightingEngineConfig {
         self.server
             .upgrade()
@@ -2090,7 +2122,9 @@ impl World {
                 lock.difficulty == Difficulty::Peaceful,
             )
         };
-        let spawn_passives = self.get_time_of_day() % 400 == 0;
+        // Vanilla `ServerChunkCache.tickChunks`: persistent categories only run when
+        // `level.getGameTime() % 400 == 0`, which is the world age, not the time of day.
+        let spawn_passives = self.get_world_age() % 400 == 0;
         let spawn_enemies = !peaceful && spawn_monsters && spawn_mobs;
         let spawn_passives = spawn_passives && spawn_mobs;
 

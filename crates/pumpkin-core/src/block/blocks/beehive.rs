@@ -7,6 +7,7 @@ use crate::entity::EntityBase;
 use crate::entity::mob::Mob;
 use crate::entity::passive::bee::BeeEntity;
 use crate::entity::player::Player;
+use crate::world::World;
 use pumpkin_data::block_properties::BeeNestLikeProperties;
 use pumpkin_data::data_component_impl::{BlockStateImpl, EnchantmentsImpl};
 use pumpkin_data::entity::EntityType;
@@ -16,6 +17,7 @@ use pumpkin_data::tag::Taggable;
 use pumpkin_data::{BlockId, BlockState};
 use pumpkin_util::GameMode;
 use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
 pub struct BeehiveBlock;
@@ -131,7 +133,13 @@ fn set_honey_level(stack: &mut ItemStack, honey_level: u8) {
 
 /// Vanilla `BeehiveBlock.angerNearbyBees`.
 fn anger_nearby_bees(args: &BrokenArgs<'_>) {
-    let pos = args.position.0;
+    anger_nearby_bees_at(args.world, args.position);
+}
+
+/// Vanilla `BeehiveBlock.angerNearbyBees`: the bees near the hive attack a
+/// random player.
+pub(crate) fn anger_nearby_bees_at(world: &Arc<World>, position: &BlockPos) {
+    let pos = position.0;
     let area = BoundingBox {
         min: Vector3::new(
             f64::from(pos.x - 8),
@@ -144,14 +152,11 @@ fn anger_nearby_bees(args: &BrokenArgs<'_>) {
             f64::from(pos.z + 9),
         ),
     };
-    let entities = args.world.get_entities_and_players_at_box(&area);
+    let entities = world.get_entities_and_players_at_box(&area);
     let players: Vec<Arc<Player>> = entities
         .iter()
         .filter(|entity| entity.get_entity().entity_type == &EntityType::PLAYER)
-        .filter_map(|entity| {
-            args.world
-                .get_player_by_uuid(entity.get_entity().entity_uuid)
-        })
+        .filter_map(|entity| world.get_player_by_uuid(entity.get_entity().entity_uuid))
         .collect();
     if players.is_empty() {
         return;

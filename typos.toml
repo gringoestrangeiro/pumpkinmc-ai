@@ -1,5 +1,6 @@
 [files]
-extend-exclude = ["assets/", "crates/pumpkin-data/src/generated"]
+# roadmap.md quotes upstream issue and PR titles verbatim.
+extend-exclude = ["assets/", "crates/pumpkin-data/src/generated", "roadmap.md"]
 
 [default.extend-words]
 handled = "handled"
@@ -14,3 +15,5 @@ convertable = "convertable"
 # Vanilla method names
 areMergable = "areMergable"
 isMergable = "isMergable"
+# Vanilla `NoiseBasedAquifer` constant name.
+FLOWING_UPDATE_SIMULARITY = "FLOWING_UPDATE_SIMULARITY"

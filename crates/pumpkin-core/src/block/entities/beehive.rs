@@ -582,7 +582,7 @@ fn release_occupant(
 
 /// Vanilla `CampfireBlock.isSmokeyPos`: a lit campfire in the five blocks below
 /// the hive keeps its bees calm.
-fn is_sedated(world: &World, pos: &BlockPos) -> bool {
+pub(crate) fn is_sedated(world: &World, pos: &BlockPos) -> bool {
     for height in 1..=5 {
         let check = pos.down_height(height);
         let (block, state) = world.get_block_and_state_id(&check);

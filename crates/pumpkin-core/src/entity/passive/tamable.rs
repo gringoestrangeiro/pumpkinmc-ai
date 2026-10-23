@@ -142,6 +142,7 @@ pub trait TamableAnimal: Animal {
         if let Some(owner) = self.get_owner() {
             nbt.put_uuid("Owner", owner);
         }
+        nbt.put_bool("Tame", self.is_tame());
         nbt.put_bool("Sitting", self.is_ordered_to_sit());
     }
 
@@ -149,7 +150,7 @@ pub trait TamableAnimal: Animal {
         if let Some(owner) = nbt.get_uuid("Owner") {
             self.set_owner(Some(owner));
             self.set_tame(true);
-        } else if let Some(is_tame) = nbt.get_bool("IsTame") {
+        } else if let Some(is_tame) = nbt.get_bool("Tame").or_else(|| nbt.get_bool("IsTamed")) {
             self.set_tame(is_tame);
         }
         let sitting = nbt

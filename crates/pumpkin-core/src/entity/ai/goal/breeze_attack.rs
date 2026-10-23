@@ -329,11 +329,12 @@ impl BreezeCombatGoal {
         );
         entity.set_pose(EntityPose::Standing);
         let living = &breeze.mob_entity.living_entity;
+        let world_age = living.entity.world.load().get_world_age();
         let recently_hurt = living
             .last_attacked_time
             .load(std::sync::atomic::Ordering::Relaxed)
             > 0
-            && living.entity.age.load(std::sync::atomic::Ordering::Relaxed)
+            && world_age
                 - living
                     .last_attacked_time
                     .load(std::sync::atomic::Ordering::Relaxed)

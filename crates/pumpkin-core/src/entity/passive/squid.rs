@@ -1,14 +1,16 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityStatus;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
+use crate::entity::breath::{MAX_AIR, tick_mob_air_supply};
 use crate::entity::{
     Entity, EntityBase,
     ai::util::goal_utils,
@@ -22,6 +24,8 @@ use crate::entity::{
 pub struct SquidEntity {
     pub mob_entity: MobEntity,
     pub movement: SquidMovement,
+    /// Vanilla `AgeableWaterCreature` air supply, drained while out of water.
+    pub air_supply: AtomicI32,
 }
 
 impl SquidEntity {
@@ -29,6 +33,7 @@ impl SquidEntity {
         Arc::new(Self {
             mob_entity: MobEntity::new(entity),
             movement: SquidMovement::new(),
+            air_supply: AtomicI32::new(MAX_AIR),
         })
     }
 }
@@ -38,7 +43,8 @@ impl Mob for SquidEntity {
         &self.mob_entity
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    fn mob_tick(&self, caller: &dyn EntityBase) {
+        tick_squid_air_supply(caller, &self.air_supply);
         self.movement.tick(self);
     }
 
@@ -49,6 +55,18 @@ impl Mob for SquidEntity {
     fn mob_is_pushed_by_fluids(&self) -> bool {
         false
     }
+}
+
+/// Vanilla `AgeableWaterCreature.handleAirSupply`: squids stranded on land slowly
+/// drown instead of sitting on the shore forever.
+pub fn tick_squid_air_supply(caller: &dyn EntityBase, air_supply: &AtomicI32) {
+    tick_mob_air_supply(
+        caller,
+        air_supply,
+        MAX_AIR,
+        !caller.get_entity().is_in_water(),
+        DamageType::DROWN,
+    );
 }
 
 /// How vanilla squid get about, which is nothing like other mobs: no navigation,
@@ -86,17 +104,22 @@ impl SquidMovement {
         let mut rng = mob.get_random();
 
         let fleeing = in_water && self.flee(living);
-        if !fleeing
-            && (rng.random_range(0..50) == 0
+        if !fleeing {
+            // Vanilla `SquidRandomMovementGoal`: a squid that has been out of a
+            // player's range for a while stops picking new headings.
+            if mob.get_mob_entity().no_action_time.load(Ordering::Relaxed) > 100 {
+                self.movement_vector.store(Vector3::default());
+            } else if rng.random_range(0..50) == 0
                 || !in_water
-                || self.movement_vector.load() == Vector3::default())
-        {
-            let angle = rng.random::<f32>() * TAU;
-            self.movement_vector.store(Vector3::new(
-                f64::from(angle.cos() * 0.2),
-                f64::from(-0.1 + rng.random::<f32>() * 0.2),
-                f64::from(angle.sin() * 0.2),
-            ));
+                || self.movement_vector.load().length_squared() <= 1.0e-5
+            {
+                let angle = rng.random::<f32>() * TAU;
+                self.movement_vector.store(Vector3::new(
+                    f64::from(angle.cos() * 0.2),
+                    f64::from(-0.1 + rng.random::<f32>() * 0.2),
+                    f64::from(angle.sin() * 0.2),
+                ));
+            }
         }
 
         let mut tentacle = self.tentacle_movement.load() + self.tentacle_speed.load();
@@ -148,13 +171,12 @@ impl SquidMovement {
     fn flee(&self, living: &LivingEntity) -> bool {
         let entity = &living.entity;
         let attacker_id = living.last_attacker_id.load(Ordering::Relaxed);
+        let world = entity.world.load();
         // Vanilla forgets an attacker a hundred ticks after the hit.
-        let since_hit =
-            entity.age.load(Ordering::Relaxed) - living.last_attacked_time.load(Ordering::Relaxed);
+        let since_hit = world.get_world_age() - living.last_attacked_time.load(Ordering::Relaxed);
         if attacker_id == 0 || since_hit > 100 {
             return false;
         }
-        let world = entity.world.load();
         let Some(attacker) = world.get_entity_by_id(attacker_id) else {
             return false;
         };

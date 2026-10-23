@@ -661,10 +661,10 @@ impl TrialSpawnerStateData {
                 for tag in list {
                     match tag {
                         NbtTag::IntArray(arr) if arr.len() == 4 => {
-                            let value = ((arr[0] as u128) << 96)
-                                | (((arr[1] as u32) as u128) << 64)
-                                | (((arr[2] as u32) as u128) << 32)
-                                | ((arr[3] as u32) as u128);
+                            let value = ((arr[0] as u32 as u128) << 96)
+                                | ((arr[1] as u32 as u128) << 64)
+                                | ((arr[2] as u32 as u128) << 32)
+                                | (arr[3] as u32 as u128);
                             set.insert(Uuid::from_u128(value));
                         }
                         NbtTag::String(s) => {

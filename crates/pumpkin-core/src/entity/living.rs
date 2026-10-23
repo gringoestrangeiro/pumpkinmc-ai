@@ -115,8 +115,9 @@ pub struct LivingEntity {
 
     /// The entity ID of the entity that last attacked this living entity.
     pub last_attacker_id: AtomicI32,
-    /// The tick at which this entity was last attacked (entity age).
-    pub last_attacked_time: AtomicI32,
+    /// The world time at which this entity was last attacked, like vanilla
+    /// `lastHurtByMobTimestamp`.
+    pub last_attacked_time: AtomicI64,
     last_damage_type: std::sync::Mutex<Option<DamageType>>,
     last_damage_stamp: std::sync::atomic::AtomicI64,
 
@@ -318,7 +319,7 @@ impl LivingEntity {
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
             last_attacker_id: AtomicI32::new(0),
-            last_attacked_time: AtomicI32::new(0),
+            last_attacked_time: AtomicI64::new(0),
             last_damage_type: std::sync::Mutex::new(None),
             last_damage_stamp: std::sync::atomic::AtomicI64::new(0),
             last_attacking_id: AtomicI32::new(0),
@@ -1487,6 +1488,10 @@ impl LivingEntity {
             self.fall_distance.store(0.0);
         }
 
+        // Vanilla `LivingEntity.aiStep` pushes nearby entities before `travel`, so the
+        // push is part of the velocity the entity moves with this tick.
+        self.push_entities(caller);
+
         let touching_water = self.entity.touching_water.load(SeqCst);
 
         // Vanilla Mob.isEffectiveAi: NoAI mobs don't travel, so they neither move nor fall.
@@ -1519,8 +1524,6 @@ impl LivingEntity {
         if suffocating {
             caller.damage(caller, 1.0, DamageType::IN_WALL);
         }
-
-        self.push_entities(caller);
     }
 
     fn push_entities(&self, dyn_self: &dyn EntityBase) {
@@ -3491,19 +3494,23 @@ impl LivingEntity {
         // These damage types bypass the hurt cooldown and death protection
         let bypasses_cooldown_protection =
             damage_type == DamageType::GENERIC_KILL || damage_type == DamageType::OUT_OF_WORLD;
+        // Vanilla `hurtServer`'s `tookFullDamage`: a hit inside the hurt cooldown only
+        // adds the difference, and that partial hit applies no knockback.
+        let took_partial_damage =
+            self.hurt_cooldown.load(Relaxed) > 10 && !bypasses_cooldown_protection;
+        let took_full_damage = !took_partial_damage;
 
         // Apply hurt cooldown logic
         let last_damage = self.last_damage_taken.load();
-        let (damage_amount, play_sound) =
-            if self.hurt_cooldown.load(Relaxed) > 10 && !bypasses_cooldown_protection {
-                if effective_amount <= last_damage {
-                    return false;
-                }
-                (effective_amount - last_damage, false)
-            } else {
-                self.hurt_cooldown.store(20, Relaxed);
-                (effective_amount, self.health.load() > effective_amount)
-            };
+        let (damage_amount, play_sound) = if took_partial_damage {
+            if effective_amount <= last_damage {
+                return false;
+            }
+            (effective_amount - last_damage, false)
+        } else {
+            self.hurt_cooldown.store(20, Relaxed);
+            (effective_amount, self.health.load() > effective_amount)
+        };
 
         // Finalize state
         self.last_damage_taken.store(amount);
@@ -3565,16 +3572,20 @@ impl LivingEntity {
                     .ambient_sound_time
                     .store(-interval, Relaxed);
             }
+        }
 
-            if let Some(source) = source {
+        // Vanilla `LivingEntity.dealDefaultKnockback`: every full-damage hit knocks the
+        // victim back unless the damage type is in `#minecraft:no_knockback` (explosions,
+        // fire, fall, magic and the like). This also runs on a killing blow.
+        if took_full_damage && !damage_type.has_tag(&tag::DamageType::MINECRAFT_NO_KNOCKBACK) {
+            let (dx, dz) = source.map_or((0.0, 0.0), |source| {
                 let source_pos = source.get_entity().pos.load();
                 let target_pos = self.entity.pos.load();
-                let dx = source_pos.x - target_pos.x;
-                let dz = source_pos.z - target_pos.z;
-                let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
-                self.entity
-                    .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
-            }
+                (source_pos.x - target_pos.x, source_pos.z - target_pos.z)
+            });
+            let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+            self.entity
+                .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
         }
 
         // Vanilla parity: actuallyHurt
@@ -3607,7 +3618,7 @@ impl LivingEntity {
                 self.last_attacker_id
                     .store(attacker.get_entity().entity_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(world.get_world_age(), Relaxed);
             }
         }
 
@@ -3640,7 +3651,7 @@ impl LivingEntity {
                 let attacker_id = attacker.get_entity().entity_id;
                 self.last_attacker_id.store(attacker_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(world.get_world_age(), Relaxed);
 
                 let current_tick = world.level_info.load().day_time;
                 if attacker.get_player().is_some() {
@@ -3716,6 +3727,9 @@ impl EntityBase for LivingEntity {
     }
 
     fn get_gravity(&self) -> f64 {
+        if self.entity.has_no_gravity() {
+            return 0.0;
+        }
         self.get_attribute_value(&Attributes::GRAVITY)
     }
 

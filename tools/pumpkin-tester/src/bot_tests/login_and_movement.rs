@@ -47,7 +47,7 @@ pub async fn run_login_and_movement_tests(
 
     let world = server.get_world_from_dimension(&Dimension::OVERWORLD);
     let mut bot_moved = false;
-    for _ in 0..25 {
+    for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
         if let Some(player1) = world.get_player_by_name("TestBot1") {

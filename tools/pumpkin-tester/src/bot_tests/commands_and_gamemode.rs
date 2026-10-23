@@ -35,11 +35,11 @@ pub async fn run_commands_and_gamemode_tests(
         bot1.position.z.floor() as i32,
     );
     let _ = world.get_block(&marker_pos);
-    bot1.send_command(&format!(
+    let setblock_command = format!(
         "setblock {} {} {} minecraft:emerald_block",
         marker_pos.0.x, marker_pos.0.y, marker_pos.0.z
-    ))
-    .await?;
+    );
+    bot1.send_command(&setblock_command).await?;
 
     // 2. Test `/test run minecraft:always_pass`
     bot1.send_command("test run minecraft:always_pass").await?;
@@ -49,7 +49,11 @@ pub async fn run_commands_and_gamemode_tests(
     let mut block_placed = false;
     let mut command_queued_and_ran = false;
 
-    for _ in 0..40 {
+    for tick in 0..120 {
+        if tick > 0 && tick % 20 == 0 && !block_placed {
+            // The spawn chunk can still be generating when the first command runs.
+            bot1.send_command(&setblock_command).await?;
+        }
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
         drain_game_test_queue(server, runner).await;

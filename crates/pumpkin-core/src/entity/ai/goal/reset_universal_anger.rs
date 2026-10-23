@@ -11,7 +11,7 @@ use pumpkin_data::entity::EntityType;
 /// Owns no control: must run beside a running target goal of higher priority.
 pub struct ResetUniversalAngerGoal {
     alert_others: bool,
-    last_hurt_by_player_time: i32,
+    last_hurt_by_player_time: i64,
 }
 
 impl ResetUniversalAngerGoal {

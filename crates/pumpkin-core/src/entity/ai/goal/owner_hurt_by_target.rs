@@ -10,7 +10,7 @@ pub struct OwnerHurtByTargetGoal {
     track_target_goal: TrackTargetGoal,
     target: Option<Arc<dyn EntityBase>>,
     target_predicate: TargetPredicate,
-    timestamp: i32,
+    timestamp: i64,
 }
 
 impl OwnerHurtByTargetGoal {

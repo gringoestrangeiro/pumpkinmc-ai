@@ -2401,14 +2401,7 @@ impl Mob for VillagerEntity {
             gossips.clear();
             for tag in gossip_list {
                 if let Some(gossip_nbt) = tag.extract_compound() {
-                    let uuid = gossip_nbt.get_int_array("Target").map(|uuid_array| {
-                        Uuid::from_u128(
-                            (uuid_array[0] as u128) << 96
-                                | (uuid_array[1] as u128) << 64
-                                | (uuid_array[2] as u128) << 32
-                                | (uuid_array[3] as u128),
-                        )
-                    });
+                    let uuid = gossip_nbt.get_uuid("Target");
                     let gossip_type = gossip_nbt
                         .get_string("Type")
                         .and_then(GossipType::from_name)

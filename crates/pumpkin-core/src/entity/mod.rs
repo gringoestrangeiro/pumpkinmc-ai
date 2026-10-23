@@ -341,9 +341,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         self.get_entity().remove();
     }
 
+    /// Damages this entity, `caller` is the attacker.
+    ///
     /// Returns if damage was successful or not
     fn damage(&self, caller: &dyn EntityBase, amount: f32, damage_type: DamageType) -> bool {
-        caller.damage_with_context(caller, amount, damage_type, None, None, None)
+        self.damage_with_context(caller, amount, damage_type, None, None, None)
     }
 
     fn on_lightning_strike(
@@ -2731,6 +2733,9 @@ impl Entity {
             },
             velocity.z / 2.0 - var8.z,
         ));
+        // Vanilla `LivingEntity.knockback` sets `needsSync`; without this the client
+        // never receives the new velocity for extra knockback on players.
+        self.velocity_dirty.store(true, Ordering::SeqCst);
     }
 
     pub fn set_sneaking(&self, sneaking: bool) {

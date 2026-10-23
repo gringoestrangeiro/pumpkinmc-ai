@@ -13,6 +13,7 @@ use pumpkin_world::chunk::ChunkHeightmapType;
 use rand::RngExt;
 
 use crate::entity::mob::{Mob, MobEntity};
+use crate::entity::r#type::SpawnLevelReader;
 use crate::entity::{Entity, EntityBase};
 use crate::world::World;
 
@@ -41,7 +42,7 @@ impl BatEntity {
     }
 
     #[must_use]
-    pub fn check_bat_spawn_rules(world: &World, pos: &BlockPos) -> bool {
+    pub fn check_bat_spawn_rules(world: &dyn SpawnLevelReader, pos: &BlockPos) -> bool {
         if pos.0.y >= world.get_heightmap_height(ChunkHeightmapType::WorldSurface, pos.0.x, pos.0.z)
         {
             return false;

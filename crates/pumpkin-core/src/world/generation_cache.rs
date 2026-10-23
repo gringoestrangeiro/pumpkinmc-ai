@@ -186,6 +186,16 @@ impl GenerationCache for WorldGenerationCache {
         BlockState::from_id(self.read(&BlockPos(*local_pos))).is_air()
     }
 
+    fn get_sky_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.world.get_sky_light_level(&BlockPos(*pos))
+    }
+
+    fn get_block_light(&self, pos: &Vector3<i32>) -> u8 {
+        self.world
+            .get_block_light_level(&BlockPos(*pos))
+            .unwrap_or(0)
+    }
+
     fn get_biome_for_terrain_gen(&self, x: i32, y: i32, z: i32) -> &'static Biome {
         self.world.get_biome(&BlockPos::new(x, y, z))
     }

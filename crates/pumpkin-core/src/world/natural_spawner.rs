@@ -1,7 +1,7 @@
 use crate::block::PathComputationType;
 use crate::entity::EntityBase;
 use crate::entity::mob::spawn::finalize_spawn;
-use crate::entity::r#type::{check_spawn_rules, from_type};
+use crate::entity::r#type::{SpawnLevelReader, check_spawn_rules, from_type};
 use crate::world::World;
 use arc_swap::ArcSwap;
 use crossbeam::atomic::AtomicCell;
@@ -10,12 +10,15 @@ use pumpkin_data::biome::Spawner;
 use pumpkin_data::chunk::Biome;
 use pumpkin_data::dimension::Dimension;
 use pumpkin_data::entity::{EntityType, MobCategory, SpawnLocation};
+use pumpkin_data::fluid::Fluid;
 use pumpkin_data::tag::Block::MINECRAFT_PREVENT_MOB_SPAWNING_INSIDE;
 use pumpkin_data::tag::Fluid::{MINECRAFT_LAVA, MINECRAFT_WATER};
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::tag::WorldgenBiome::MINECRAFT_REDUCE_WATER_AMBIENT_SPAWNS;
 use pumpkin_data::{Block, BlockDirection, BlockState, SpawnFloorPredicate};
 use pumpkin_util::GameMode;
+use pumpkin_util::HeightMap;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::get_section_cord;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector2::Vector2;
@@ -555,6 +558,98 @@ pub fn get_random_pos_within(
     BlockPos::new(x, y, z)
 }
 
+/// [`SpawnLevelReader`] over the chunks currently being generated, so world generation
+/// spawn rules read the real terrain and light instead of the not-yet-loaded world.
+struct ChunkGenLevel<'a> {
+    world: &'a World,
+    cache: &'a dyn GenerationCache,
+}
+
+impl SpawnLevelReader for ChunkGenLevel<'_> {
+    fn get_block(&self, position: &BlockPos) -> &'static Block {
+        Block::from_state_id(self.get_block_state(position).id)
+    }
+
+    fn get_block_state(&self, position: &BlockPos) -> &'static BlockState {
+        BlockState::from_id(GenerationCache::get_block_state(self.cache, &position.0))
+    }
+
+    fn get_fluid(&self, position: &BlockPos) -> &'static Fluid {
+        pumpkin_world::world::fluid_from_block_state(self.get_block_state(position).id)
+    }
+
+    fn get_biome(&self, position: &BlockPos) -> &'static Biome {
+        self.cache
+            .get_biome_for_terrain_gen(position.0.x, position.0.y, position.0.z)
+    }
+
+    fn get_block_light_level(&self, position: &BlockPos) -> Option<u8> {
+        Some(self.cache.get_block_light(&position.0))
+    }
+
+    fn get_sky_light_level(&self, position: &BlockPos) -> u8 {
+        self.cache.get_sky_light(&position.0)
+    }
+
+    fn get_max_local_raw_brightness(&self, position: &BlockPos) -> u8 {
+        // Vanilla `WorldGenRegion.getSkyDarken()` is 0, so sky light is not dimmed here.
+        self.get_sky_light_level(position)
+            .max(self.cache.get_block_light(&position.0))
+    }
+
+    fn can_see_sky(&self, position: &BlockPos) -> bool {
+        self.cache.get_sky_light(&position.0) >= 15
+    }
+
+    fn get_closest_player(
+        &self,
+        _pos: Vector3<f64>,
+        _radius: f64,
+    ) -> Option<Arc<crate::entity::player::Player>> {
+        // Vanilla `WorldGenRegion.getNearestPlayer` returns null while generating.
+        None
+    }
+
+    fn difficulty(&self) -> pumpkin_util::Difficulty {
+        self.world.level_info.load().difficulty
+    }
+
+    fn dimension(&self) -> &pumpkin_data::dimension::Dimension {
+        &self.world.dimension
+    }
+
+    fn sea_level(&self) -> i32 {
+        self.cache.get_sea_level()
+    }
+
+    fn level_seed(&self) -> u64 {
+        self.world.level.seed.0
+    }
+
+    fn get_heightmap_height(&self, heightmap: ChunkHeightmapType, x: i32, z: i32) -> i32 {
+        let heightmap = match heightmap {
+            ChunkHeightmapType::WorldSurface => HeightMap::WorldSurface,
+            ChunkHeightmapType::MotionBlocking => HeightMap::MotionBlocking,
+            ChunkHeightmapType::MotionBlockingNoLeaves => HeightMap::MotionBlockingNoLeaves,
+        };
+        self.cache.get_top_y(&heightmap, x, z)
+    }
+}
+
+/// Vanilla `Level.noCollision` against the chunks being generated.
+fn is_space_empty_in_cache(cache: &dyn GenerationCache, bounding_box: BoundingBox) -> bool {
+    let min = bounding_box.min_block_pos();
+    let max = bounding_box.max_block_pos();
+
+    for pos in BlockPos::iterate(min, max) {
+        let state = BlockState::from_id(GenerationCache::get_block_state(cache, &pos.0));
+        if World::check_collision(&bounding_box, pos, state, false, |_| ()) {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn spawn_mobs_for_chunk_generation(
     world: &Arc<World>,
     cache: &mut dyn GenerationCache,
@@ -612,12 +707,18 @@ pub fn spawn_mobs_for_chunk_generation(
                     let spawn_pos_f64 = Vector3::new(fx, f64::from(pos.0.y), fz);
                     let check_pos = BlockPos::new(fx.floor() as i32, pos.0.y, fz.floor() as i32);
 
-                    if world.is_space_empty(entity_type.get_spawn_bounding_box(
-                        fx,
-                        f64::from(pos.0.y),
-                        fz,
-                    )) && check_spawn_rules(entity_type, world, &check_pos, false)
-                    {
+                    if is_space_empty_in_cache(
+                        cache,
+                        entity_type.get_spawn_bounding_box(fx, f64::from(pos.0.y), fz),
+                    ) && check_spawn_rules(
+                        entity_type,
+                        &ChunkGenLevel {
+                            world: world.as_ref(),
+                            cache,
+                        },
+                        &check_pos,
+                        false,
+                    ) {
                         let entity = from_type(entity_type, spawn_pos_f64, world, Uuid::new_v4());
                         entity
                             .get_entity()
@@ -984,7 +1085,7 @@ pub fn is_valid_spawn_position_for_type(
     if !is_spawn_position_ok(world, block_pos, entity_type) {
         return false;
     }
-    if !check_spawn_rules(entity_type, world, block_pos, is_thundering) {
+    if !check_spawn_rules(entity_type, world.as_ref(), block_pos, is_thundering) {
         return false;
     }
     if !world.is_space_empty(entity_type.get_spawn_bounding_box(

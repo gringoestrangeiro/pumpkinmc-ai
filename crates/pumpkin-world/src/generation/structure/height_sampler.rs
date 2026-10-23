@@ -87,15 +87,14 @@ impl<'a> NoiseHeightSampler<'a> {
         for y in 0..volume.size_y {
             let block_y = volume.block_y(y);
             let index = volume.index_unchecked(0, y, 0);
-            let state = noise
-                .sample_block_state(
-                    &self.generator.random_config.ore_random_deriver,
-                    &Vector3::new(x, block_y, z),
-                    densities.density[index],
-                    densities.vein_sample(index).as_ref(),
-                    &mut self.preliminary,
-                )
-                .unwrap_or(self.generator.default_block);
+            let (state, _) = noise.sample_block_state(
+                &self.generator.random_config.ore_random_deriver,
+                &Vector3::new(x, block_y, z),
+                densities.density[index],
+                densities.vein_sample(index).as_ref(),
+                &mut self.preliminary,
+            );
+            let state = state.unwrap_or(self.generator.default_block);
             blocks.push(state);
         }
         self.columns

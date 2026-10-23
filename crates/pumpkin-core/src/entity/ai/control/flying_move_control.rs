@@ -90,12 +90,16 @@ impl MoveControlTrait for FlyingMoveControl {
                     .store(Vector3::new(0.0, 0.0, speed as f64));
             }
         } else {
-            if !self.hovers_in_place {
-                entity.set_has_no_gravity(false);
+            // The flying navigator writes the movement input itself while it
+            // has a path, so the input must not be cleared while it drives.
+            if mob.is_navigator_idle() {
+                if !self.hovers_in_place {
+                    entity.set_has_no_gravity(false);
+                }
+                living_entity
+                    .movement_input
+                    .store(Vector3::new(0.0, 0.0, 0.0));
             }
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, 0.0));
         }
     }
 

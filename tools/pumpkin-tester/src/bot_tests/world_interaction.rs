@@ -3,11 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pumpkin_core::{server::Server, world::BlockFlags};
+use pumpkin_core::server::Server;
 use pumpkin_data::{Block, block_properties::OakTrapdoorLikeProperties, dimension::Dimension};
 use pumpkin_util::math::position::BlockPos;
 
 use crate::bot::HeadlessBot;
+use crate::bot_tests::setup::place_block;
 
 pub async fn run_world_interaction_tests(
     server: &Arc<Server>,
@@ -24,26 +25,41 @@ pub async fn run_world_interaction_tests(
     let trapdoor_pos = BlockPos::new(base_x + 1, base_y, base_z);
     let break_pos = BlockPos::new(base_x - 1, base_y + 1, base_z);
 
-    world.set_block_state(
-        &trapdoor_pos,
-        Block::OAK_TRAPDOOR.default_state.id,
-        BlockFlags::NOTIFY_ALL,
-    );
-    world.set_block_state(
-        &break_pos,
-        Block::GOLD_BLOCK.default_state.id,
-        BlockFlags::NOTIFY_ALL,
-    );
+    // Fill the columns with stone, so the terrain or falling sand cannot
+    // replace the blocks of the test.
+    for pos in [&trapdoor_pos, &break_pos] {
+        for y in -1..=3 {
+            place_block(
+                server,
+                &world,
+                &BlockPos::new(pos.0.x, pos.0.y + y, pos.0.z),
+                &Block::STONE,
+            )
+            .await;
+        }
+    }
+    place_block(
+        server,
+        &world,
+        &BlockPos::new(trapdoor_pos.0.x, trapdoor_pos.0.y + 1, trapdoor_pos.0.z),
+        &Block::AIR,
+    )
+    .await;
+
+    place_block(server, &world, &trapdoor_pos, &Block::OAK_TRAPDOOR).await;
+    place_block(server, &world, &break_pos, &Block::GOLD_BLOCK).await;
 
     // 1. Right-click oak trapdoor via SUseItemOn -> should toggle open
-    bot1.use_block(trapdoor_pos, 1).await?;
-
     // 2. Left-click gold block in Creative mode via SPlayerAction(StartedDigging) -> should break to AIR
-    bot1.start_digging(break_pos, 2).await?;
-
+    // The packets can be dropped while the server is busy, so they are sent
+    // again while the world does not show the result yet.
     let mut trapdoor_opened = false;
     let mut block_broken = false;
-    for _ in 0..25 {
+    for attempt in 0..60 {
+        if attempt % 10 == 0 {
+            bot1.use_block(server, trapdoor_pos, 1).await?;
+            bot1.start_digging(server, break_pos, 2).await?;
+        }
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
 

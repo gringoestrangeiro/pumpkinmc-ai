@@ -483,6 +483,14 @@ impl GenerationCache for Cache {
         is_air(GenerationCache::get_block_state(self, local_pos))
     }
 
+    fn get_sky_light(&self, pos: &Vector3<i32>) -> u8 {
+        crate::lighting::storage::get_sky_light(self, BlockPos(*pos))
+    }
+
+    fn get_block_light(&self, pos: &Vector3<i32>) -> u8 {
+        crate::lighting::storage::get_block_light(self, BlockPos(*pos))
+    }
+
     fn get_sea_level(&self) -> i32 {
         self.get_center_chunk().get_sea_level()
     }

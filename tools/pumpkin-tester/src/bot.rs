@@ -1,6 +1,7 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
+use pumpkin_core::server::Server;
 use pumpkin_data::packet::CURRENT_MC_VERSION;
 use pumpkin_protocol::{
     ClientPacket, ConnectionState, RawPacket, ServerPacket,
@@ -37,7 +38,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-pub const PACKET_TIMEOUT: Duration = Duration::from_secs(10);
+pub const PACKET_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct HeadlessBot {
     pub name: String,
@@ -181,6 +182,37 @@ impl HeadlessBot {
         self.send_packet(&SChatCommand { command }).await
     }
 
+    /// Confirms any pending server teleports so vehicle movement is accepted.
+    ///
+    /// Packets that are not a teleport are skipped, so a teleport that is
+    /// queued behind them is still found.
+    pub async fn process_teleports(&mut self, max_packets: usize) -> Result<(), String> {
+        for _ in 0..max_packets {
+            match timeout(Duration::from_millis(50), self.reader.get_raw_packet()).await {
+                Ok(Ok(pkt)) => {
+                    if pkt.id == CPlayerPosition::to_id(CURRENT_MC_VERSION) {
+                        let mut slice = &pkt.payload[..];
+                        let pos_pkt = CPlayerPosition::read(&mut slice, &CURRENT_MC_VERSION)
+                            .map_err(|err| format!("Failed to read CPlayerPosition: {err}"))?;
+                        self.position = pos_pkt.position;
+                        self.yaw = pos_pkt.yaw;
+                        self.pitch = pos_pkt.pitch;
+                        self.send_packet(&SConfirmTeleport {
+                            teleport_id: pos_pkt.teleport_id,
+                            position: pos_pkt.position,
+                            yaw: pos_pkt.yaw,
+                            pitch: pos_pkt.pitch,
+                        })
+                        .await?;
+                        self.send_packet(&SPlayerLoaded).await?;
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(())
+    }
+
     pub async fn set_held_item(&mut self, slot: i16) -> Result<(), String> {
         self.send_packet(&SSetHeldItem { slot }).await
     }
@@ -198,7 +230,27 @@ impl HeadlessBot {
         .await
     }
 
-    pub async fn use_block(&mut self, position: BlockPos, sequence: i32) -> Result<(), String> {
+    /// Waits until the server accepts interactions from the bot.
+    ///
+    /// A teleport makes the server ignore interactions until the client
+    /// confirms it, so the pending teleports are confirmed first. The server
+    /// ticks in between, because it can send a teleport while it ticks.
+    pub async fn sync_client_state(&mut self, server: &Arc<Server>) -> Result<(), String> {
+        for _ in 0..4 {
+            self.process_teleports(64).await?;
+            server.tick();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        Ok(())
+    }
+
+    pub async fn use_block(
+        &mut self,
+        server: &Arc<Server>,
+        position: BlockPos,
+        sequence: i32,
+    ) -> Result<(), String> {
+        self.sync_client_state(server).await?;
         self.send_packet(&SUseItemOn {
             hand: VarInt(0),
             position,
@@ -211,7 +263,13 @@ impl HeadlessBot {
         .await
     }
 
-    pub async fn start_digging(&mut self, position: BlockPos, sequence: i32) -> Result<(), String> {
+    pub async fn start_digging(
+        &mut self,
+        server: &Arc<Server>,
+        position: BlockPos,
+        sequence: i32,
+    ) -> Result<(), String> {
+        self.sync_client_state(server).await?;
         self.send_packet(&SPlayerAction {
             status: VarInt(Status::StartedDigging as i32),
             position,

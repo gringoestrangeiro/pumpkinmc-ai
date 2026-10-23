@@ -16,6 +16,31 @@ pub static BIOME_REGISTRY: Identifier = Identifier::vanilla_static("worldgen/bio
 pub static STRUCTURE_REGISTRY: Identifier = Identifier::vanilla_static("worldgen/structure");
 pub static POI_REGISTRY: Identifier = Identifier::vanilla_static("point_of_interest_type");
 
+/// Vanilla `PointOfInterestType` registry entries. There is no generated POI
+/// type registry, so the ids the server can actually create are listed here.
+const POI_TYPES: [&str; 20] = [
+    "armorer",
+    "butcher",
+    "cartographer",
+    "cleric",
+    "farmer",
+    "fisherman",
+    "fletcher",
+    "leatherworker",
+    "librarian",
+    "mason",
+    "shepherd",
+    "toolsmith",
+    "weaponsmith",
+    "home",
+    "meeting",
+    "beehive",
+    "bee_nest",
+    "nether_portal",
+    "lodestone",
+    "lightning_rod",
+];
+
 pub static ERROR_UNKNOWN_RESOURCE: CommandErrorType<2> = CommandErrorType::new(
     translation::java::ARGUMENT_RESOURCE_NOT_FOUND,
     translation::java::ARGUMENT_RESOURCE_NOT_FOUND,
@@ -76,35 +101,11 @@ fn suggest_for_registry(registry: &Identifier, builder: SuggestionsBuilder) -> S
             .filter_and_suggest_iter(biomes.chain(tag_names(RegistryKey::WorldgenBiome)))
             .build()
     } else if *registry == POI_REGISTRY {
-        // There is no generated POI type registry (yet), so offer the types
-        // known from tag data plus the ones the server actually creates.
-        let poi_types = [
-            "minecraft:armorer",
-            "minecraft:butcher",
-            "minecraft:cartographer",
-            "minecraft:cleric",
-            "minecraft:farmer",
-            "minecraft:fisherman",
-            "minecraft:fletcher",
-            "minecraft:leatherworker",
-            "minecraft:librarian",
-            "minecraft:mason",
-            "minecraft:shepherd",
-            "minecraft:toolsmith",
-            "minecraft:weaponsmith",
-            "minecraft:home",
-            "minecraft:meeting",
-            "minecraft:beehive",
-            "minecraft:bee_nest",
-            "minecraft:nether_portal",
-            "minecraft:lodestone",
-            "minecraft:lightning_rod",
-        ];
         builder
             .filter_and_suggest_iter(
-                poi_types
+                POI_TYPES
                     .iter()
-                    .map(|&s| s.to_string())
+                    .map(|s| format!("minecraft:{s}"))
                     .chain(tag_names(RegistryKey::PointOfInterestType)),
             )
             .build()
@@ -150,9 +151,8 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for ResourceOrTagKeyArgume
 /// registry.
 ///
 /// Validation happens at parse time where registry data is available, like
-/// vanilla's `ResourceOrTagArgument`: it currently covers biome ids and the
-/// tags of every registry with generated tag data; ids of registries without
-/// generated entry data (such as POI types) are accepted as-is.
+/// vanilla's `ResourceOrTagArgument`: it covers biome and point-of-interest
+/// ids, plus the tags of every registry with generated tag data.
 pub struct ResourceOrTagArgument(pub Identifier);
 
 impl<S: crate::source::CommandSource> ArgumentType<S> for ResourceOrTagArgument {
@@ -167,6 +167,12 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for ResourceOrTagArgument 
                     && !(id.is_vanilla()
                         && pumpkin_data::biome::Biome::from_name(id.path()).is_some())
                 {
+                    return Err(ERROR_UNKNOWN_RESOURCE.create_without_context(
+                        TextComponent::text(id.to_string()),
+                        TextComponent::text(self.0.to_string()),
+                    ));
+                }
+                if self.0 == POI_REGISTRY && !(id.is_vanilla() && POI_TYPES.contains(&id.path())) {
                     return Err(ERROR_UNKNOWN_RESOURCE.create_without_context(
                         TextComponent::text(id.to_string()),
                         TextComponent::text(self.0.to_string()),
@@ -212,5 +218,38 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for ResourceOrTagArgument 
 
     fn examples(&self) -> Vec<String> {
         examples!("foo", "foo:bar", "#foo")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::argument_types::argument_type::ArgumentType;
+    use crate::source::DummySource;
+
+    fn parse_poi(value: &str) -> Result<ResourceOrTag, CommandSyntaxError> {
+        let mut reader = StringReader::new(value);
+        ArgumentType::<DummySource>::parse(
+            &ResourceOrTagArgument(POI_REGISTRY.clone()),
+            &mut reader,
+        )
+    }
+
+    #[test]
+    fn poi_resource_rejects_unknown_type() {
+        assert!(parse_poi("minecraft:library").is_err());
+    }
+
+    #[test]
+    fn poi_resource_accepts_known_types() {
+        assert!(parse_poi("minecraft:librarian").is_ok());
+        assert!(parse_poi("minecraft:home").is_ok());
+        assert!(parse_poi("minecraft:lightning_rod").is_ok());
+    }
+
+    #[test]
+    fn poi_tag_is_validated_against_tag_data() {
+        assert!(parse_poi("#minecraft:village").is_ok());
+        assert!(parse_poi("#minecraft:no_such_tag").is_err());
     }
 }

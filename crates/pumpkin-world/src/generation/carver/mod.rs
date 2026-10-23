@@ -439,7 +439,9 @@ fn place_carved_block(
 ) {
     run.chunk.set_block_state(pos.x, pos.y, pos.z, state);
 
-    if overworld && should_schedule_fluid_update && state.is_liquid() {
+    // Vanilla `NoiseBasedChunkGenerator.applyCarvingMask`: schedule post-processing for
+    // every carved fluid the aquifer marked as needing a flow update.
+    if should_schedule_fluid_update && state.is_liquid() {
         schedule_fluid_tick_for_state(run.chunk, pos.x, pos.y, pos.z, state);
     }
 

@@ -207,6 +207,27 @@ fn handle_beehive(
         &location.to_f64(),
     );
 
+    // Vanilla `BeehiveBlock.useItemOn`: a lit campfire below keeps the bees in
+    // the hive, otherwise they are released and nearby bees are angered.
+    if !crate::block::entities::beehive::is_sedated(&world, location)
+        && let Some(block_entity) = world.get_block_entity(location)
+        && let Some(beehive) = block_entity
+            .as_any()
+            .downcast_ref::<crate::block::entities::beehive::BeehiveBlockEntity>(
+        )
+    {
+        if !beehive.is_empty() {
+            crate::block::blocks::beehive::anger_nearby_bees_at(&world, location);
+        }
+        let player_arc = player.world().get_player_by_uuid(player.gameprofile.id);
+        beehive.empty_all_living_from_hive(
+            &world,
+            player_arc.as_ref(),
+            state_id,
+            crate::block::entities::beehive::BeeReleaseStatus::Emergency,
+        );
+    }
+
     let drop_pos = location.to_centered_f64();
     for drop_item in drops {
         let item_entity = Arc::new(ItemEntity::new(

@@ -2596,10 +2596,10 @@ impl DataComponentCodec<Self> for ProfileImpl {
         if let Some(id) = &self.id {
             seq.write_bool(true)?;
             let uuid = uuid::Uuid::from_u128(
-                ((id[0] as u128) << 96)
-                    | ((id[1] as u128 & 0xFFFFFFFF) << 64)
-                    | ((id[2] as u128 & 0xFFFFFFFF) << 32)
-                    | (id[3] as u128 & 0xFFFFFFFF),
+                ((id[0] as u32 as u128) << 96)
+                    | ((id[1] as u32 as u128) << 64)
+                    | ((id[2] as u32 as u128) << 32)
+                    | (id[3] as u32 as u128),
             );
             seq.write_uuid(&uuid)?;
         } else {
