@@ -968,7 +968,7 @@ impl PluginManager {
                     )));
                 }
 
-                return self
+                let task = self
                     .spawn_plugin_initialization(
                         server.clone(),
                         instance,
@@ -977,7 +977,12 @@ impl PluginManager {
                         loader.clone(),
                         path.to_path_buf(),
                     )
-                    .await;
+                    .await?;
+
+                // A later loader registration must not retry and load this file again.
+                self.unloaded_files.write().await.remove(path);
+
+                return Ok(task);
             }
         }
 

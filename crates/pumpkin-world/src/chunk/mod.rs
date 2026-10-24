@@ -505,10 +505,6 @@ impl ChunkSections {
             .block_sections
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut random_tick_sections_guard = self
-            .random_tick_sections
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if let Some(section) = sections.get_mut(section_index) {
             if !condition(section.get(relative_x, relative_y, relative_z)) {
@@ -520,9 +516,21 @@ impl ChunkSections {
                 return Some(replaced_block_state_id);
             }
 
-            if (has_random_ticks(block_state_id) || has_random_ticking_fluid(block_state_id))
-                && random_tick_sections_guard.is_none()
+            let replaced_ticks_block = has_random_ticks(replaced_block_state_id);
+            let replaced_ticks_fluid = has_random_ticking_fluid(replaced_block_state_id);
+            let new_ticks_block = has_random_ticks(block_state_id);
+            let new_ticks_fluid = has_random_ticking_fluid(block_state_id);
+            if !(replaced_ticks_block || replaced_ticks_fluid || new_ticks_block || new_ticks_fluid)
             {
+                return Some(replaced_block_state_id);
+            }
+
+            let mut random_tick_sections_guard = self
+                .random_tick_sections
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+            if (new_ticks_block || new_ticks_fluid) && random_tick_sections_guard.is_none() {
                 let new_cache =
                     vec![RandomTickSectionCache::default(); self.count].into_boxed_slice();
                 *random_tick_sections_guard = Some(new_cache);
@@ -530,23 +538,23 @@ impl ChunkSections {
 
             if let Some(random_tick_sections) = random_tick_sections_guard.as_mut() {
                 let random_tick_cache = &mut random_tick_sections[section_index];
-                if has_random_ticks(replaced_block_state_id) {
+                if replaced_ticks_block {
                     random_tick_cache.random_ticking_block_count = random_tick_cache
                         .random_ticking_block_count
                         .saturating_sub(1);
                 }
-                if has_random_ticking_fluid(replaced_block_state_id) {
+                if replaced_ticks_fluid {
                     random_tick_cache.random_ticking_fluid_count = random_tick_cache
                         .random_ticking_fluid_count
                         .saturating_sub(1);
                 }
 
-                if has_random_ticks(block_state_id) {
+                if new_ticks_block {
                     random_tick_cache.random_ticking_block_count = random_tick_cache
                         .random_ticking_block_count
                         .saturating_add(1);
                 }
-                if has_random_ticking_fluid(block_state_id) {
+                if new_ticks_fluid {
                     random_tick_cache.random_ticking_fluid_count = random_tick_cache
                         .random_ticking_fluid_count
                         .saturating_add(1);

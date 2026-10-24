@@ -18,6 +18,7 @@
 //! and server stay in sync. If the client detects a desync, it can request a full
 //! resynchronization.
 
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use pumpkin_data::item_stack::ItemStack;
@@ -104,10 +105,10 @@ impl SyncHandler {
                     VarInt(next_revision as i32),
                     stacks
                         .iter()
-                        .map(|stack| ItemStackSerializer::from(stack.clone()))
+                        .map(|stack| ItemStackSerializer(Cow::Borrowed(stack)))
                         .collect::<Vec<_>>()
                         .as_slice(),
-                    &ItemStackSerializer::from(cursor_stack.clone()),
+                    &ItemStackSerializer(Cow::Borrowed(cursor_stack)),
                 ),
                 screen_handler.window_type,
             );
@@ -149,7 +150,7 @@ impl SyncHandler {
                     screen_handler.sync_id as i8,
                     next_revision as i32,
                     slot as i16,
-                    &ItemStackSerializer::from(stack.clone()),
+                    &ItemStackSerializer(Cow::Borrowed(stack)),
                 ),
                 screen_handler.window_type,
                 screen_handler.slots.len(),
@@ -170,9 +171,8 @@ impl SyncHandler {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
         {
-            player.enqueue_cursor_packet(&CSetCursorItem::new(&ItemStackSerializer::from(
-                stack.clone(),
-            )));
+            let serializer = ItemStackSerializer(Cow::Borrowed(stack));
+            player.enqueue_cursor_packet(&CSetCursorItem::new(&serializer));
         }
     }
 

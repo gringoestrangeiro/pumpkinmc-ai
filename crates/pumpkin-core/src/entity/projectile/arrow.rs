@@ -597,6 +597,10 @@ impl EntityBase for ArrowEntity {
                 let block = world.get_block(&pos);
                 if block.is_air() {
                     self.in_ground.store(false, Ordering::Relaxed);
+                    // Vanilla `startFalling` drops the hit flag and life counter so
+                    // the arrow can stick again and live a full despawn timer.
+                    self.has_hit.store(false, Ordering::Relaxed);
+                    self.life.store(0, Ordering::Relaxed);
                     entity.set_synced_data(
                         pumpkin_data::tracked_data::abstract_arrow::IN_GROUND,
                         false,

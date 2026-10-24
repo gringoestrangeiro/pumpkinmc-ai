@@ -78,7 +78,7 @@ impl Weather {
     }
 
     pub fn tick_weather(&mut self, world: &World) {
-        if !self.weather_cycle_enabled {
+        if self.weather_cycle_enabled {
             self.advance_weather_cycle();
         }
 

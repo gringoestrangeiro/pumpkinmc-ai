@@ -396,10 +396,14 @@ impl TrackedEntity {
     }
 
     pub fn update_player(&self, player: &Arc<Player>, _world: &World) {
-        self.update_player_in_range(player, self.get_effective_range());
+        self.update_player_in_range(
+            player,
+            self.get_effective_range(),
+            get_view_distance(player).get() as i32,
+        );
     }
 
-    fn update_player_in_range(&self, player: &Arc<Player>, effective_range: u32) {
+    fn update_player_in_range(&self, player: &Arc<Player>, effective_range: u32, player_vd: i32) {
         if player.get_entity().entity_id == self.entity_id {
             return;
         }
@@ -411,7 +415,6 @@ impl TrackedEntity {
         let dz = player_pos.z - entity_pos.z;
         let dist_sq = dx.mul_add(dx, dz * dz);
 
-        let player_vd = get_view_distance(player).get() as i32;
         let visible_range_blocks = f64::from((effective_range as i32).min(player_vd) * 16);
         let range_sq = visible_range_blocks * visible_range_blocks;
 
@@ -446,7 +449,8 @@ impl TrackedEntity {
     pub fn update_players(&self, players: &[Arc<Player>], _world: &World) {
         let effective_range = self.get_effective_range();
         for player in players {
-            self.update_player_in_range(player, effective_range);
+            let player_vd = get_view_distance(player).get() as i32;
+            self.update_player_in_range(player, effective_range, player_vd);
         }
     }
 
@@ -935,15 +939,19 @@ impl EntityTracker {
             get_section_cord(pos.y.floor() as i32),
             get_section_cord(pos.z.floor() as i32),
         );
-        if let Some(tracked) = self.entity_map.get(&player.get_entity().entity_id) {
+        let entity_id = player.get_entity().entity_id;
+        if let Some(tracked) = self.entity_map.get(&entity_id) {
             tracked.last_section_pos.store(new_pos);
         }
+        // The entity loop runs on every position packet, so load the view distance once.
+        let player_vd = get_view_distance(player).get() as i32;
         for entry in &self.entity_map {
-            if *entry.key() == player.get_entity().entity_id {
+            if *entry.key() == entity_id {
                 let players = world.players.load();
                 entry.value().update_players(players.as_ref(), world);
             } else {
-                entry.value().update_player(player, world);
+                let tracked = entry.value();
+                tracked.update_player_in_range(player, tracked.get_effective_range(), player_vd);
             }
         }
     }

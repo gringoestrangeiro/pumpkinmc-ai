@@ -106,7 +106,7 @@ impl BlockBehaviour for BambooBlock {
     }
 
     fn random_tick(&self, args: RandomTickArgs<'_>) {
-        if rand::rng().random_range(0..=3) == 0 {
+        if rand::rng().random_range(0..3) == 0 {
             update_leaves_and_grow(args.world, args.position);
         }
     }

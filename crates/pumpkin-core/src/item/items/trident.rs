@@ -92,7 +92,7 @@ impl ItemBehaviour for TridentItem {
 
             let sq = (vx * vx + vy * vy + vz * vz).sqrt();
             if sq > 0.0 {
-                let mult = (1.0 + f * 0.75) / sq;
+                let mult = (1.5 + (f - 1.0) * 0.75) / sq;
                 player.living_entity.entity.velocity.store(Vector3::new(
                     vx * mult,
                     vy * mult,

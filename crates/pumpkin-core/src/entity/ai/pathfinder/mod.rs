@@ -2576,6 +2576,11 @@ impl PathNavigationTrait for AmphibiousPathNavigation {
     fn set_can_path_to_targets_below_surface(&mut self, can_path: bool) {
         self.inner.can_path_to_targets_below_surface = can_path;
     }
+
+    /// Vanilla settles on anything but open air below, water included.
+    fn is_stable_destination(&self, world: &World, pos: &BlockPos) -> bool {
+        !world.get_block_state(&pos.down()).is_air()
+    }
 }
 
 pub struct Navigator {

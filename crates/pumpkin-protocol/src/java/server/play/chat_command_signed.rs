@@ -8,6 +8,9 @@ use crate::{
     ser::{NetworkReadExt, NetworkReadSliceExt, NetworkWriteExt, ReadingError, WritingError},
 };
 
+/// A signature name length prefix plus the fixed 256-byte signature.
+const MIN_ARGUMENT_SIGNATURE_SIZE: usize = 257;
+
 pub struct ArgumentSignature<'a> {
     pub name: &'a str,
     pub signature: &'a [u8],
@@ -29,7 +32,13 @@ impl<'a> ServerPacket<'a> for SChatCommandSigned<'a> {
         let command = read.get_str_bounded_borrowed(256)?;
         let timestamp = read.get_i64_be()?;
         let salt = read.get_i64_be()?;
-        let arg_count = read.get_var_int()?.0 as usize;
+        let arg_count = read.get_var_int()?.0;
+        if arg_count < 0 || arg_count as usize > read.len() / MIN_ARGUMENT_SIGNATURE_SIZE {
+            return Err(ReadingError::Message(
+                "Argument signatures count out of bounds".into(),
+            ));
+        }
+        let arg_count = arg_count as usize;
         let mut argument_signatures = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
             let name = read.get_str_bounded_borrowed(16)?;

@@ -3042,11 +3042,15 @@ impl LivingEntity {
             }
         }
 
-        // Clamp any persisted absorption to the entity's configured max
-        let raw_abs = nbt.get_float("AbsorptionAmount").unwrap_or(0.0);
-        let max_abs = self.get_attribute_value(&Attributes::MAX_ABSORPTION) as f32;
-        let clamped_abs = raw_abs.max(0.0).min(max_abs);
-        self.absorption.store(clamped_abs);
+        // Vanilla loads absorption through `internalSetAbsorptionAmount`, without clamping to
+        // `MAX_ABSORPTION`; that attribute is applied afterwards. For players the internal
+        // setter also updates the synced absorption value.
+        let raw_abs = nbt.get_float("AbsorptionAmount").unwrap_or(0.0).max(0.0);
+        self.absorption.store(raw_abs);
+        if self.entity.entity_type == &EntityType::PLAYER {
+            self.entity
+                .set_synced_data(tracked_data::player::DATA_PLAYER_ABSORPTION_ID, raw_abs);
+        }
 
         // Load fall distance, but if this entity is currently marked dead ensure we don't restore
         // a lethal fall distance that would immediately re-kill on spawn.

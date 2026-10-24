@@ -108,18 +108,31 @@ impl BitSet {
             return self.encode(write);
         }
 
-        let mut bytes = Vec::with_capacity(self.0.len() * 8);
+        // Length of the little endian byte array once its trailing zero bytes are trimmed.
+        let len = self
+            .0
+            .iter()
+            .rposition(|word| *word != 0)
+            .map_or(0, |index| {
+                index * 8 + 8 - (self.0[index] as u64).leading_zeros() as usize / 8
+            });
+
+        write.write_var_int(&len.try_into().map_err(|_| {
+            WritingError::Message(format!("{} isn't representable as a VarInt", len))
+        })?)?;
+
+        let mut remaining = len;
         for word in &self.0 {
-            bytes.extend_from_slice(&word.to_le_bytes());
-        }
-        while bytes.last() == Some(&0) {
-            bytes.pop();
+            if remaining == 0 {
+                break;
+            }
+            let bytes = word.to_le_bytes();
+            let chunk = remaining.min(bytes.len());
+            write.write_slice(&bytes[..chunk])?;
+            remaining -= chunk;
         }
 
-        write.write_var_int(&bytes.len().try_into().map_err(|_| {
-            WritingError::Message(format!("{} isn't representable as a VarInt", bytes.len()))
-        })?)?;
-        write.write_slice(&bytes)
+        Ok(())
     }
 
     pub fn decode_with_version(

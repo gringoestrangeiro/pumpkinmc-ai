@@ -50,7 +50,8 @@ impl PendingConnection {
                     login_start.name.into_string(),
                     &proxy.bungeecord.secret,
                 ) {
-                    Ok((_ip, profile)) => {
+                    Ok((ip, profile)) => {
+                        self.address.set_ip(ip);
                         self.gameprofile = Some(profile.clone());
                         self.finish_login(server, &profile).await
                     }

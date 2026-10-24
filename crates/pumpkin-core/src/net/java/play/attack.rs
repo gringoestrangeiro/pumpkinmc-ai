@@ -7,6 +7,9 @@ impl JavaClient {
             return;
         }
         player.update_last_action_time();
+        if player.gamemode.load() == GameMode::Spectator {
+            return;
+        }
         let entity_id = attack.entity_id;
         let player_entity = &player.get_entity();
         let world = player_entity.world.load_full();

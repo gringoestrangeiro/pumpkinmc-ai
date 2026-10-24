@@ -1,5 +1,6 @@
 use super::BlockEntity;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::tag::NbtTag;
 use pumpkin_util::math::position::BlockPos;
 use rustc_hash::FxHashSet;
 use std::sync::Mutex;
@@ -26,12 +27,26 @@ impl BlockEntity for VaultBlockEntity {
     where
         Self: Sized,
     {
+        let mut rewarded_players = FxHashSet::default();
+        if let Some(list) = nbt
+            .get_compound("server_data")
+            .and_then(|data| data.get_list("rewarded_players"))
+        {
+            for tag in list {
+                if let NbtTag::IntArray(arr) = tag {
+                    let bytes: Vec<u8> = arr.iter().flat_map(|part| part.to_be_bytes()).collect();
+                    if let Ok(uuid) = Uuid::from_slice(&bytes) {
+                        rewarded_players.insert(uuid);
+                    }
+                }
+            }
+        }
         Self {
             position,
             config: Mutex::new(nbt.get_compound("config").cloned()),
             server_data: Mutex::new(nbt.get_compound("server_data").cloned()),
             shared_data: Mutex::new(nbt.get_compound("shared_data").cloned()),
-            rewarded_players: Mutex::new(FxHashSet::default()),
+            rewarded_players: Mutex::new(rewarded_players),
         }
     }
 
@@ -41,10 +56,27 @@ impl BlockEntity for VaultBlockEntity {
         {
             nbt.put_compound("config", cfg.clone());
         }
-        if let Ok(data) = self.server_data.lock()
-            && let Some(data) = data.as_ref()
-        {
-            nbt.put_compound("server_data", data.clone());
+        if let Ok(server_data) = self.server_data.lock() {
+            let rewarded_players: Vec<NbtTag> = self
+                .rewarded_players
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .map(|uuid| {
+                    let value = uuid.as_u128();
+                    NbtTag::IntArray(vec![
+                        (value >> 96) as i32,
+                        ((value >> 64) & 0xFFFF_FFFF) as i32,
+                        ((value >> 32) & 0xFFFF_FFFF) as i32,
+                        (value & 0xFFFF_FFFF) as i32,
+                    ])
+                })
+                .collect();
+            if server_data.is_some() || !rewarded_players.is_empty() {
+                let mut data = server_data.clone().unwrap_or_default();
+                data.put("rewarded_players", NbtTag::List(rewarded_players));
+                nbt.put_compound("server_data", data);
+            }
         }
         if let Ok(shared) = self.shared_data.lock()
             && let Some(shared) = shared.as_ref()
