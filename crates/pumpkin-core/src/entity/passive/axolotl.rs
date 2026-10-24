@@ -14,11 +14,10 @@ use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
-use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
-    ageable::{AgeableData, AgeableMob},
+    ageable::{AgeableData, AgeableMob, BABY_START_AGE},
     ai::goal::{
         active_target::ActiveTargetGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
@@ -28,10 +27,14 @@ use crate::entity::{
     },
     breath,
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity},
+    mob::{
+        Mob, MobEntity,
+        spawn::{AgeableMobGroupData, SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::{animal, animal::Animal, fish},
     player::Player,
 };
+use crate::world::World;
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::TROPICAL_FISH_BUCKET];
 const TOTAL_PLAYDEAD_TIME: i32 = 200;
@@ -97,18 +100,23 @@ impl AxolotlVariant {
         }
     }
 
+    /// Vanilla `Axolotl.Variant.getCommonSpawnVariant`: any variant but the rare blue one.
+    #[must_use]
+    pub fn get_common_spawn_variant() -> Self {
+        match rand::random_range(0..4) {
+            1 => Self::Wild,
+            2 => Self::Gold,
+            3 => Self::Cyan,
+            _ => Self::Lucy,
+        }
+    }
+
     #[must_use]
     pub fn random_variant() -> Self {
-        let mut rng = rand::rng();
-        if rng.random_range(0..RARE_VARIANT_CHANCE) == 0 {
+        if rand::random_range(0..RARE_VARIANT_CHANCE) == 0 {
             Self::Blue
         } else {
-            match rng.random_range(0..4) {
-                1 => Self::Wild,
-                2 => Self::Gold,
-                3 => Self::Cyan,
-                _ => Self::Lucy,
-            }
+            Self::get_common_spawn_variant()
         }
     }
 }
@@ -398,6 +406,29 @@ impl CustomSound for AxolotlEntity {
 impl Mob for AxolotlEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let (axolotl_data, variants) = match group_data {
+            Some(SpawnGroupData::Axolotl(axolotl_data, variants)) => (axolotl_data, variants),
+            _ => (
+                AgeableMobGroupData::with_should_spawn_baby(false),
+                [
+                    AxolotlVariant::get_common_spawn_variant(),
+                    AxolotlVariant::get_common_spawn_variant(),
+                ],
+            ),
+        };
+        self.set_variant(variants[rand::random_range(0..variants.len())]);
+        // The size counts the axolotls before this one, so every one from the third on is a baby.
+        if axolotl_data.group_size() >= 2 {
+            self.set_age(BABY_START_AGE);
+        }
+        finalize_ageable_spawn(self, Some(SpawnGroupData::Axolotl(axolotl_data, variants)))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

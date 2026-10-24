@@ -128,7 +128,7 @@ impl SulfurCubeEntity {
 
         let pos = entity.pos.load();
         let new_bb = BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &scaled_dimensions);
-        entity.bounding_box.store(new_bb);
+        entity.set_bounding_box(new_bb);
     }
 
     pub fn get_size(&self) -> i32 {
@@ -230,6 +230,16 @@ impl Mob for SulfurCubeEntity {
 
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    /// Vanilla sulfur cubes are cube mobs, not `AgeableMob`s, so a group never rolls babies.
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        self.entity.finalize_spawn_base();
+        group_data
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {

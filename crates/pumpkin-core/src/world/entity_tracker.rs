@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::sync::Arc;
 use std::sync::atomic::{
     AtomicBool, AtomicU32,
@@ -31,12 +32,14 @@ use pumpkin_util::GameMode;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::math::{get_section_cord, pack_degrees};
-use rustc_hash::FxHashSet;
+use rayon::prelude::*;
+use rustc_hash::{FxBuildHasher, FxHashSet};
 use uuid::Uuid;
 
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase};
 use crate::net::ClientPlatform;
+use crate::net::bedrock::BedrockClient;
 use crate::net::java::JavaClient;
 use crate::world::World;
 use crate::world::chunker::get_view_distance;
@@ -71,7 +74,8 @@ pub struct TrackedEntity {
     pub tracking_range: u32,
     pub update_interval: u32,
     pub track_deltas: bool,
-    pub seen_by: DashSet<Uuid>,
+    /// Probed once per world player for every packet this entity sends, hence the Fx hasher.
+    pub seen_by: DashSet<Uuid, FxBuildHasher>,
     /// Bedrock players in `seen_by`.
     bedrock_watchers: AtomicU32,
     pub last_section_pos: AtomicCell<Vector3<i32>>,
@@ -119,7 +123,7 @@ impl TrackedEntity {
             tracking_range: range,
             update_interval,
             track_deltas,
-            seen_by: DashSet::new(),
+            seen_by: DashSet::with_hasher(FxBuildHasher),
             bedrock_watchers: AtomicU32::new(0),
             last_section_pos: AtomicCell::new(last_section_pos),
             tick_count: AtomicU32::new(0),
@@ -137,9 +141,13 @@ impl TrackedEntity {
     }
 
     /// Vanilla `ServerEntity.sendChanges`. Non-player entities only.
-    pub fn send_changes(&self, world: &World) {
+    ///
+    /// `players` is the world's player list; the viewers among them are looked up once, on the
+    /// first packet this tick, and shared by every packet sent here.
+    pub fn send_changes(&self, players: &[Arc<Player>]) {
+        let recipients = LazyRecipients::new(self, players);
         let entity = self.entity.get_entity();
-        self.send_bedrock_move(entity, world);
+        self.send_bedrock_move(entity, &recipients);
         let tick = self.tick_count.fetch_add(1, Relaxed);
         let needs_sync = entity.velocity_dirty.swap(false, Ordering::SeqCst);
         // Head yaw stays live every tick, only position/rotation sync is throttled.
@@ -154,23 +162,23 @@ impl TrackedEntity {
 
             if self.entity.is_passenger() {
                 if rot_changed {
-                    self.send_move(entity, MoveSync::Rot, yaw, pitch, world);
+                    self.send_move(entity, MoveSync::Rot, yaw, pitch, &recipients);
                     entity.last_sent_yaw.store(yaw, Relaxed);
                     entity.last_sent_pitch.store(pitch, Relaxed);
                 }
                 entity.last_sent_pos.store(entity.pos.load());
-                entity.send_dirty_entity_data();
+                Self::send_dirty_entity_data(entity, &recipients);
                 self.was_riding.store(true, Relaxed);
             } else {
                 let pos = entity.pos.load();
                 let sync = self.pick_move(entity, pos, tick, rot_changed);
                 if needs_sync || self.track_deltas || entity.is_fall_flying() {
-                    self.send_motion(entity, world);
+                    self.send_motion(entity, &recipients);
                 }
                 if let Some(sync) = sync {
-                    self.send_move(entity, sync, yaw, pitch, world);
+                    self.send_move(entity, sync, yaw, pitch, &recipients);
                 }
-                entity.send_dirty_entity_data();
+                Self::send_dirty_entity_data(entity, &recipients);
                 if let Some(sync) = sync {
                     if sync.sends_position() {
                         entity.last_sent_pos.store(pos);
@@ -188,8 +196,18 @@ impl TrackedEntity {
         // `send_bedrock_move` (`MoveActorDelta` HAS_HEAD_YAW), not from this packet.
         let head_yaw = pack_degrees(entity.head_yaw.load());
         if head_yaw != entity.last_sent_head_yaw.load(Relaxed) {
-            self.send_to_tracking_players(&CHeadRot::new(VarInt(self.entity_id), head_yaw), world);
+            recipients
+                .get()
+                .send_java(&CHeadRot::new(VarInt(self.entity_id), head_yaw));
             entity.last_sent_head_yaw.store(head_yaw, Relaxed);
+        }
+    }
+
+    /// [`Entity::send_dirty_entity_data`] for a tracked non-player entity, whose metadata
+    /// viewers are exactly its Java watchers.
+    fn send_dirty_entity_data(entity: &Entity, recipients: &LazyRecipients) {
+        if entity.synched_data.is_dirty() {
+            entity.send_dirty_entity_data_to(recipients.get().java.iter().copied());
         }
     }
 
@@ -244,57 +262,57 @@ impl TrackedEntity {
         }
     }
 
-    fn send_motion(&self, entity: &Entity, world: &World) {
+    fn send_motion(&self, entity: &Entity, recipients: &LazyRecipients) {
         let velocity = entity.velocity.load();
         let diff = (velocity - entity.last_sent_velocity.load()).length_squared();
         if diff > 1.0e-7 || (diff > 0.0 && velocity.length_squared() == 0.0) {
             entity.last_sent_velocity.store(velocity);
-            self.send_to_tracking_players_editioned(
+            recipients.get().send_editioned(
                 &CEntityVelocity::new(VarInt(self.entity_id), velocity),
                 &CSetActorMotion {
                     target_runtime_id: VarULong(self.entity_id as u64),
                     motion: Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
                     tick: VarULong(0),
                 },
-                world,
             );
         }
     }
 
     /// Java only -> Bedrock uses [`Self::send_bedrock_move`].
-    fn send_move(&self, entity: &Entity, sync: MoveSync, yaw: u8, pitch: u8, world: &World) {
+    fn send_move(
+        &self,
+        entity: &Entity,
+        sync: MoveSync,
+        yaw: u8,
+        pitch: u8,
+        recipients: &LazyRecipients,
+    ) {
         let on_ground = entity.on_ground.load(Relaxed);
         let id = VarInt(self.entity_id);
+        let recipients = recipients.get();
         match sync {
             MoveSync::Pos(delta) => {
-                self.send_to_tracking_players(&CUpdateEntityPos::new(id, delta, on_ground), world);
+                recipients.send_java(&CUpdateEntityPos::new(id, delta, on_ground));
             }
             MoveSync::Rot => {
-                self.send_to_tracking_players(
-                    &CUpdateEntityRot::new(id, yaw, pitch, on_ground),
-                    world,
-                );
+                recipients.send_java(&CUpdateEntityRot::new(id, yaw, pitch, on_ground));
             }
-            MoveSync::PosRot(delta) => self.send_to_tracking_players(
-                &CUpdateEntityPosRot::new(id, delta, yaw, pitch, on_ground),
-                world,
-            ),
-            MoveSync::Absolute => self.send_to_tracking_players(
-                &CEntityPositionSync::new(
-                    id,
-                    entity.pos.load(),
-                    entity.velocity.load(),
-                    entity.yaw.load(),
-                    entity.pitch.load(),
-                    on_ground,
-                ),
-                world,
-            ),
+            MoveSync::PosRot(delta) => {
+                recipients.send_java(&CUpdateEntityPosRot::new(id, delta, yaw, pitch, on_ground));
+            }
+            MoveSync::Absolute => recipients.send_java(&CEntityPositionSync::new(
+                id,
+                entity.pos.load(),
+                entity.velocity.load(),
+                entity.yaw.load(),
+                entity.pitch.load(),
+                on_ground,
+            )),
         }
     }
 
     /// Bedrock -> every tick, only changed fields.
-    fn send_bedrock_move(&self, entity: &Entity, world: &World) {
+    fn send_bedrock_move(&self, entity: &Entity, recipients: &LazyRecipients) {
         let pos = self.entity.bedrock_pos();
         let rot = [
             pack_degrees(entity.pitch.load()),
@@ -347,45 +365,33 @@ impl TrackedEntity {
         if entity.on_ground.load(Relaxed) {
             flags |= MOVE_ACTOR_DELTA_FLAG_ON_GROUND;
         }
-        self.send_to_tracking_players_bedrock(
-            &CMoveActorDelta::new(
-                VarULong(self.entity_id as u64),
-                flags,
-                pos.x as f32,
-                pos.y as f32,
-                pos.z as f32,
-                rot[0],
-                rot[1],
-                rot[2],
-            ),
-            world,
-        );
+        recipients.get().send_bedrock(&CMoveActorDelta::new(
+            VarULong(self.entity_id as u64),
+            flags,
+            pos.x as f32,
+            pos.y as f32,
+            pos.z as f32,
+            rot[0],
+            rot[1],
+            rot[2],
+        ));
     }
 
-    fn collect_indirect_passengers(
-        entity: &Arc<dyn EntityBase>,
-        result: &mut Vec<Arc<dyn EntityBase>>,
-    ) {
+    /// Widest client tracking range among `entity`'s direct and indirect passengers, or
+    /// `range` when that is wider.
+    fn max_passenger_range(entity: &Arc<dyn EntityBase>, mut range: u32) -> u32 {
         if let Ok(passengers) = entity.get_entity().passengers.try_lock() {
             for passenger in passengers.iter() {
-                result.push(passenger.clone());
-                Self::collect_indirect_passengers(passenger, result);
+                range = range.max(passenger.get_entity().entity_type.client_tracking_range);
+                range = Self::max_passenger_range(passenger, range);
             }
         }
+        range
     }
 
     #[must_use]
     pub fn get_effective_range(&self) -> u32 {
-        let mut effective_range = self.tracking_range;
-        let mut passengers = Vec::new();
-        Self::collect_indirect_passengers(&self.entity, &mut passengers);
-        for passenger in passengers {
-            let passenger_range = passenger.get_entity().entity_type.client_tracking_range;
-            if passenger_range > effective_range {
-                effective_range = passenger_range;
-            }
-        }
-        effective_range
+        Self::max_passenger_range(&self.entity, self.tracking_range)
     }
 
     fn broadcast_to_player(&self, player: &Player) -> bool {
@@ -632,22 +638,7 @@ impl TrackedEntity {
         let be_packet = CRemoveActor::new(VarLong(i64::from(self.entity_id)));
 
         let players = world.players.load();
-        let recipients = players
-            .iter()
-            .filter(|p| self.seen_by.contains(&p.gameprofile.id));
-
-        let mut java_recipients = Vec::new();
-        let mut bedrock_recipients = Vec::new();
-        for p in recipients {
-            match p.client.as_ref() {
-                ClientPlatform::Java(_) => java_recipients.push(p),
-                ClientPlatform::Bedrock(be_client) => bedrock_recipients.push(be_client),
-            }
-        }
-        let recipients_by_version =
-            World::collect_java_recipients_by_version(java_recipients.into_iter());
-        World::broadcast_java_grouped(&je_packet, recipients_by_version);
-        World::broadcast_bedrock_grouped(&be_packet, bedrock_recipients.into_iter());
+        self.send_editioned_to(&je_packet, &be_packet, self.watchers(&players));
 
         self.seen_by.clear();
         self.bedrock_watchers.store(0, Relaxed);
@@ -672,16 +663,48 @@ impl TrackedEntity {
         }
     }
 
+    /// The players in `players` that currently see this entity.
+    fn watchers<'a>(
+        &'a self,
+        players: &'a [Arc<Player>],
+    ) -> impl Iterator<Item = &'a Arc<Player>> + Clone {
+        players
+            .iter()
+            .filter(|p| self.seen_by.contains(&p.gameprofile.id))
+    }
+
+    /// Sends `je_packet` to the Java players and `be_packet` to the Bedrock players among
+    /// `recipients`.
+    fn send_editioned_to<'a, J: ClientPacket, B: BClientPacket>(
+        &self,
+        je_packet: &J,
+        be_packet: &B,
+        recipients: impl Iterator<Item = &'a Arc<Player>> + Clone,
+    ) {
+        World::broadcast_java_clients(
+            je_packet,
+            recipients.clone().filter_map(|p| p.client.java()),
+        );
+        if self.has_bedrock_watchers() {
+            World::broadcast_bedrock_grouped(
+                be_packet,
+                recipients.filter_map(|p| match p.client.as_ref() {
+                    ClientPlatform::Bedrock(client) => Some(client),
+                    ClientPlatform::Java(_) => None,
+                }),
+            );
+        }
+    }
+
     pub fn send_to_tracking_players<P: ClientPacket + Sync>(&self, packet: &P, world: &World) {
         if self.seen_by.is_empty() {
             return;
         }
         let players = world.players.load();
-        let recipients = players
-            .iter()
-            .filter(|p| self.seen_by.contains(&p.gameprofile.id));
-        let recipients_by_version = World::collect_java_recipients_by_version(recipients);
-        World::broadcast_java_grouped(packet, recipients_by_version);
+        World::broadcast_java_clients(
+            packet,
+            self.watchers(&players).filter_map(|p| p.client.java()),
+        );
     }
 
     pub fn send_to_tracking_players_bedrock<P: BClientPacket + Sync>(
@@ -693,14 +716,12 @@ impl TrackedEntity {
             return;
         }
         let players = world.players.load();
-        let recipients = players.iter().filter_map(|p| {
-            if self.seen_by.contains(&p.gameprofile.id)
-                && let ClientPlatform::Bedrock(client) = p.client.as_ref()
-            {
-                return Some(client);
-            }
-            None
-        });
+        let recipients = self
+            .watchers(&players)
+            .filter_map(|p| match p.client.as_ref() {
+                ClientPlatform::Bedrock(client) => Some(client),
+                ClientPlatform::Java(_) => None,
+            });
         World::broadcast_bedrock_grouped(packet, recipients);
     }
 
@@ -714,22 +735,7 @@ impl TrackedEntity {
             return;
         }
         let players = world.players.load();
-        let recipients = players
-            .iter()
-            .filter(|p| self.seen_by.contains(&p.gameprofile.id));
-
-        let mut java_recipients = Vec::new();
-        let mut bedrock_recipients = Vec::new();
-        for p in recipients {
-            match p.client.as_ref() {
-                ClientPlatform::Java(_) => java_recipients.push(p),
-                ClientPlatform::Bedrock(be_client) => bedrock_recipients.push(be_client),
-            }
-        }
-        let recipients_by_version =
-            World::collect_java_recipients_by_version(java_recipients.into_iter());
-        World::broadcast_java_grouped(je_packet, recipients_by_version);
-        World::broadcast_bedrock_grouped(be_packet, bedrock_recipients.into_iter());
+        self.send_editioned_to(je_packet, be_packet, self.watchers(&players));
     }
 
     pub fn send_to_tracking_players_and_self<P: ClientPacket + Sync>(
@@ -765,11 +771,12 @@ impl TrackedEntity {
         filter: F,
     ) {
         let players = world.players.load();
-        let recipients = players
-            .iter()
-            .filter(|p| self.seen_by.contains(&p.gameprofile.id) && filter(p));
-        let recipients_by_version = World::collect_java_recipients_by_version(recipients);
-        World::broadcast_java_grouped(packet, recipients_by_version);
+        World::broadcast_java_clients(
+            packet,
+            self.watchers(&players)
+                .filter(|p| filter(p))
+                .filter_map(|p| p.client.java()),
+        );
     }
 
     pub fn send_to_tracking_players_filtered_editioned<
@@ -784,22 +791,69 @@ impl TrackedEntity {
         filter: F,
     ) {
         let players = world.players.load();
-        let recipients = players
-            .iter()
-            .filter(|p| self.seen_by.contains(&p.gameprofile.id) && filter(p));
+        self.send_editioned_to(
+            je_packet,
+            be_packet,
+            self.watchers(&players).filter(|p| filter(p)),
+        );
+    }
+}
 
-        let mut java_recipients = Vec::new();
-        let mut bedrock_recipients = Vec::new();
-        for p in recipients {
-            match p.client.as_ref() {
-                ClientPlatform::Java(_) => java_recipients.push(p),
-                ClientPlatform::Bedrock(be_client) => bedrock_recipients.push(be_client),
-            }
+/// The Java and Bedrock clients watching a tracked entity, looked up once for every packet
+/// that entity sends in a tick.
+struct TrackingRecipients<'a> {
+    java: Vec<&'a JavaClient>,
+    bedrock: Vec<&'a Arc<BedrockClient>>,
+}
+
+impl TrackingRecipients<'_> {
+    fn send_java<P: ClientPacket>(&self, packet: &P) {
+        World::broadcast_java_clients(packet, self.java.iter().copied());
+    }
+
+    fn send_bedrock<P: BClientPacket>(&self, packet: &P) {
+        World::broadcast_bedrock_grouped(packet, self.bedrock.iter().copied());
+    }
+
+    fn send_editioned<J: ClientPacket, B: BClientPacket>(&self, je_packet: &J, be_packet: &B) {
+        self.send_java(je_packet);
+        self.send_bedrock(be_packet);
+    }
+}
+
+/// [`TrackingRecipients`] collected on first use, so a tick that sends nothing skips the scan.
+struct LazyRecipients<'a> {
+    tracked: &'a TrackedEntity,
+    players: &'a [Arc<Player>],
+    recipients: OnceCell<TrackingRecipients<'a>>,
+}
+
+impl<'a> LazyRecipients<'a> {
+    const fn new(tracked: &'a TrackedEntity, players: &'a [Arc<Player>]) -> Self {
+        Self {
+            tracked,
+            players,
+            recipients: OnceCell::new(),
         }
-        let recipients_by_version =
-            World::collect_java_recipients_by_version(java_recipients.into_iter());
-        World::broadcast_java_grouped(je_packet, recipients_by_version);
-        World::broadcast_bedrock_grouped(be_packet, bedrock_recipients.into_iter());
+    }
+
+    fn get(&self) -> &TrackingRecipients<'a> {
+        self.recipients.get_or_init(|| {
+            let mut recipients = TrackingRecipients {
+                java: Vec::new(),
+                bedrock: Vec::new(),
+            };
+            if self.tracked.seen_by.is_empty() {
+                return recipients;
+            }
+            for player in self.tracked.watchers(self.players) {
+                match player.client.as_ref() {
+                    ClientPlatform::Java(client) => recipients.java.push(client),
+                    ClientPlatform::Bedrock(client) => recipients.bedrock.push(client),
+                }
+            }
+            recipients
+        })
     }
 }
 
@@ -970,12 +1024,18 @@ impl EntityTracker {
         }
     }
 
-    pub fn update_all(&self, world: &World) {
+    /// Pairs and unpairs viewers of entities that changed section, then sends every tracked
+    /// entity's changes. The sends only touch their own entity and run on Rayon.
+    pub fn update_all(&self, world: &World, runtime: &tokio::runtime::Handle) {
+        const SEND_CHANGES_BATCH_SIZE: usize = 32;
+
         let players = world.players.load();
         let mut moved_players = Vec::new();
+        let mut tracked_entities = Vec::with_capacity(self.entity_map.len());
 
         for entry in &self.entity_map {
             let tracked = entry.value();
+            tracked_entities.push(tracked.clone());
             let pos = tracked.entity.get_entity().pos.load();
             let new_pos = Vector3::new(
                 get_section_cord(pos.x.floor() as i32),
@@ -1000,13 +1060,18 @@ impl EntityTracker {
             }
         }
 
-        for entry in &self.entity_map {
-            let tracked = entry.value();
-            if tracked.entity.get_player().is_none() {
-                tracked.send_changes(world);
-            } else if tracked.entity.get_entity().synched_data.is_dirty() {
-                tracked.entity.get_entity().send_dirty_entity_data();
-            }
-        }
+        let players: &[Arc<Player>] = &players;
+        tracked_entities
+            .par_chunks(SEND_CHANGES_BATCH_SIZE)
+            .for_each(|batch| {
+                let _guard = runtime.enter();
+                for tracked in batch {
+                    if tracked.entity.get_player().is_none() {
+                        tracked.send_changes(players);
+                    } else if tracked.entity.get_entity().synched_data.is_dirty() {
+                        tracked.entity.get_entity().send_dirty_entity_data();
+                    }
+                }
+            });
     }
 }

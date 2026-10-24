@@ -3,7 +3,8 @@ use crate::{
     net::{ClientPlatform, bedrock::BedrockClient, java::JavaClient},
     server::Server,
     world::{
-        World,
+        EntityIndexSlot, World,
+        entity_index::IndexKey,
         portal::{NetherPortal, PortalProcessor, PortalType, SourcePortalInfo},
     },
 };
@@ -615,7 +616,8 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         let mut dx = other_entity.pos.load().x - self_entity.pos.load().x;
         let mut dz = other_entity.pos.load().z - self_entity.pos.load().z;
         let mut d = dx.abs().max(dz.abs());
-        if d >= 0.01 {
+        // Vanilla compares and scales with the float literals `0.01F` and `0.05F`.
+        if d >= f64::from(0.01f32) {
             d = d.sqrt();
             dx /= d;
             dz /= d;
@@ -625,8 +627,8 @@ pub trait EntityBase: Send + Sync + std::any::Any {
             }
             dx *= d2;
             dz *= d2;
-            dx *= 0.05;
-            dz *= 0.05;
+            dx *= f64::from(0.05f32);
+            dz *= f64::from(0.05f32);
 
             if !self_entity.has_passengers() && self.is_pushable() {
                 let mut vel = self_entity.velocity.load();
@@ -1006,8 +1008,11 @@ pub struct Entity {
     pub pitch: AtomicCell<f32>,
     /// The entity's current pose (e.g., standing, sitting, swimming).
     pub pose: AtomicCell<EntityPose>,
-    /// The bounding box of an entity (hitbox)
+    /// The bounding box of an entity (hitbox). Write it through [`Entity::set_bounding_box`] so
+    /// the world's entity index follows it.
     pub bounding_box: AtomicCell<BoundingBox>,
+    /// This entity's entry in its world's entity index, while it is in the world's entity list.
+    pub(crate) index_slot: std::sync::Mutex<Option<EntityIndexSlot>>,
     ///The size (width and height) of the bounding box
     pub entity_dimension: AtomicCell<EntityDimensions>,
     /// Whether this entity is invulnerable to all damage
@@ -1072,6 +1077,9 @@ pub struct Entity {
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
     /// Vanilla `needsSync`: tracker resyncs position and velocity of entities
     pub velocity_dirty: AtomicBool,
+    /// Vanilla `syncVelocity`, set by `markHurt`: the velocity also goes to the entity
+    /// itself, which is the only way a player gets its own velocity from the server.
+    pub sync_velocity: AtomicBool,
     /// Set when an Entity is to be removed but could still be referenced
     pub removed: AtomicBool,
     /// The last sent yaw value (encoded as u8) for change detection
@@ -1210,6 +1218,7 @@ impl Entity {
             synched_data: synched_entity_data::SynchedEntityData::new(),
             movement_multiplier: AtomicCell::new(Vector3::default()),
             velocity_dirty: AtomicBool::new(true),
+            sync_velocity: AtomicBool::new(false),
             removed: AtomicBool::new(false),
             last_sent_yaw: AtomicU8::new(0),
             last_sent_pitch: AtomicU8::new(0),
@@ -1217,6 +1226,7 @@ impl Entity {
             last_sent_pos: AtomicCell::new(position),
             last_sent_velocity: AtomicCell::new(Vector3::default()),
             custom_data: std::sync::Mutex::new(NbtCompound::new()),
+            index_slot: std::sync::Mutex::new(None),
         }
     }
 
@@ -1393,7 +1403,31 @@ impl Entity {
         self.set_synced_data(tracked_data::entity::DATA_NO_GRAVITY, no_gravity);
     }
 
-    /// Vanilla `hurtMarked` path: immediate, to watchers and self.
+    /// Vanilla `Entity.markHurt`.
+    pub fn mark_hurt(&self) {
+        self.sync_velocity.store(true, Ordering::SeqCst);
+    }
+
+    /// Vanilla `needsSync` motion broadcast for players: `ServerEntity.sendChanges`
+    /// sends it to the players tracking this one, never to the player itself.
+    pub fn send_velocity_to_trackers(&self) {
+        let velocity = self.velocity.load();
+        let diff = (velocity - self.last_sent_velocity.load()).length_squared();
+        if diff > 1.0e-7 || (diff > 0.0 && velocity.length_squared() == 0.0) {
+            self.last_sent_velocity.store(velocity);
+            self.world.load().send_to_tracking_players_editioned(
+                self,
+                &CEntityVelocity::new(self.entity_id.into(), velocity),
+                &CSetActorMotion {
+                    target_runtime_id: VarULong(self.entity_id as u64),
+                    motion: Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
+                    tick: VarULong(0),
+                },
+            );
+        }
+    }
+
+    /// Vanilla `syncVelocity` path: immediate, to watchers and self.
     pub fn send_velocity(&self) {
         let velocity = self.velocity.load();
         self.last_sent_velocity.store(velocity);
@@ -1434,6 +1468,25 @@ impl Entity {
         f64::from(self.entity_dimension.load().eye_height)
     }
 
+    /// Stores the bounding box and moves the entity's world index entry to match it.
+    pub fn set_bounding_box(&self, bounding_box: BoundingBox) {
+        self.bounding_box.store(bounding_box);
+        let mut slot = self
+            .index_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(slot) = slot.as_mut() {
+            // Read back under the lock: with racing writers, the last one here sees the last store.
+            let key = IndexKey::of(&self.bounding_box.load());
+            if key != slot.key {
+                if let Some(index) = slot.index.upgrade() {
+                    index.relocate(slot.seq, slot.key, key);
+                }
+                slot.key = key;
+            }
+        }
+    }
+
     /// Updates the entity's position, block position, and chunk position.
     ///
     /// This function calculates the new position, block position, and chunk position based on the provided coordinates. If any of these values change, the corresponding fields are updated.
@@ -1441,7 +1494,7 @@ impl Entity {
         let pos = self.pos.load();
         if pos != new_position {
             self.pos.store(new_position);
-            self.bounding_box.store(BoundingBox::new_from_pos(
+            self.set_bounding_box(BoundingBox::new_from_pos(
                 new_position.x,
                 new_position.y,
                 new_position.z,
@@ -3188,24 +3241,27 @@ impl Entity {
         }
 
         let java_recipients = self.java_metadata_recipients(&world, &players);
+        self.send_dirty_entity_data_to(java_recipients.iter().filter_map(|p| p.client.java()));
+    }
 
-        if java_recipients.is_empty() {
-            // Vanilla `packDirty` clears even without recipients.
-            self.synched_data.clear_dirty();
-            return;
-        }
-
-        let recipients_by_version =
-            World::collect_java_recipients_by_version(java_recipients.into_iter());
-
-        for (version, recipients) in recipients_by_version {
-            if let Some(buf) = self.synched_data.pack_dirty_for_version(&version) {
-                let packet = CSetEntityMetadata::new(self.entity_id.into(), buf);
-                if let Ok(packet_data) = JavaClient::serialize_packet_for_version(&packet, version)
-                {
-                    for recipient in recipients {
-                        recipient.try_enqueue_packet(packet_data.clone());
-                    }
+    /// Sends the dirty synced values to `java_recipients`, then clears them. Vanilla
+    /// `packDirty` clears even without recipients.
+    pub(crate) fn send_dirty_entity_data_to<'a>(
+        &self,
+        java_recipients: impl IntoIterator<Item = &'a JavaClient>,
+    ) {
+        let mut java_recipients = java_recipients.into_iter().peekable();
+        if java_recipients.peek().is_some()
+            && let Some(buf) = self
+                .synched_data
+                .pack_dirty_for_version(&CURRENT_MC_VERSION)
+        {
+            let packet = CSetEntityMetadata::new(self.entity_id.into(), buf);
+            if let Ok(packet_data) =
+                JavaClient::serialize_packet_for_version(&packet, CURRENT_MC_VERSION)
+            {
+                for recipient in java_recipients {
+                    recipient.try_enqueue_packet(packet_data.clone());
                 }
             }
         }
@@ -3289,7 +3345,7 @@ impl Entity {
             let dimension = self.get_dimensions(pose);
             let position = self.pos.load();
             let aabb = BoundingBox::new_from_pos(position.x, position.y, position.z, &dimension);
-            self.bounding_box.store(aabb);
+            self.set_bounding_box(aabb);
             self.entity_dimension.store(dimension);
             dimension
         } else {

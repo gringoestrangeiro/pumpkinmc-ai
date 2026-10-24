@@ -10,6 +10,8 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
+use rand::RngExt;
+
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
@@ -19,6 +21,7 @@ use crate::entity::{
     },
     ai::pathfinder::NavigatorGoal,
     ai::util::default_random_pos,
+    living::LivingEntity,
     mob::{Mob, MobEntity},
 };
 use crate::world::World;
@@ -560,6 +563,18 @@ impl Mob for HoglinEntity {
         true
     }
 
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        if rand::random::<f32>() < 0.2 {
+            self.spawn_as_baby();
+        }
+        // Vanilla hoglins are `Animal`s, so the group baby roll of `AgeableMob` follows.
+        crate::entity::mob::spawn::finalize_ageable_spawn(self, group_data)
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         if self.is_immune_to_zombification() {
             nbt.put_bool("IsImmuneToZombification", true);
@@ -604,9 +619,17 @@ impl Mob for HoglinEntity {
         }
     }
 
-    fn on_attack(&self, target: &dyn EntityBase) {
-        throw_target(&self.mob_entity.living_entity.entity, target);
+    fn do_hurt_target(&self, target: &dyn EntityBase) -> bool {
+        hurt_and_throw_target(&self.mob_entity, !self.is_adult(), target)
+    }
 
+    fn blocked_by_item(&self, defender: &dyn EntityBase) {
+        if self.is_adult() {
+            throw_target(&self.mob_entity.living_entity, defender);
+        }
+    }
+
+    fn on_attack(&self, target: &dyn EntityBase) {
         // Vanilla `HoglinAi.onHitTarget`: outnumbered adults retreat from piglins.
         if target.get_entity().entity_type == &EntityType::PIGLIN
             && self.is_adult()
@@ -652,17 +675,59 @@ impl Mob for HoglinEntity {
     }
 }
 
+/// Vanilla `HoglinBase.hurtAndThrowTarget`, shared with zoglins.
+pub fn hurt_and_throw_target(mob: &MobEntity, is_baby: bool, target: &dyn EntityBase) -> bool {
+    let living = &mob.living_entity;
+    let attack_damage = living.get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+    let damage = if !is_baby && attack_damage as i32 > 0 {
+        attack_damage / 2.0 + rand::rng().random_range(0..attack_damage as i32) as f32
+    } else {
+        attack_damage
+    };
+    let hurt = mob.hurt_target(&living.entity, target, damage);
+    if hurt && !is_baby {
+        throw_target(living, target);
+    }
+    hurt
+}
+
 /// Vanilla `HoglinBase.throwTarget`, shared with zoglins.
-pub fn throw_target(attacker: &Entity, target: &dyn EntityBase) {
-    let my_pos = attacker.pos.load();
-    let target_pos = target.get_entity().pos.load();
-    let dx = target_pos.x - my_pos.x;
-    let dz = target_pos.z - my_pos.z;
-    let dist = dx.hypot(dz).max(0.001);
-    let vel = target.get_entity().velocity.load();
-    target.get_entity().velocity.store(Vector3::new(
-        vel.x + (dx / dist) * 0.5,
-        0.5,
-        vel.z + (dz / dist) * 0.5,
-    ));
+pub fn throw_target(attacker: &LivingEntity, target: &dyn EntityBase) {
+    let Some(living_target) = target.get_living_entity() else {
+        return;
+    };
+    let power = attacker.get_attribute_value(&Attributes::ATTACK_KNOCKBACK)
+        - living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+    if power <= 0.0 {
+        return;
+    }
+
+    let attacker_pos = attacker.entity.pos.load();
+    let target_entity = &living_target.entity;
+    let target_pos = target_entity.pos.load();
+    let mut rng = rand::rng();
+    // Vanilla hands this degree-sized angle straight to `Vec3.yRot`, which takes radians.
+    let angle = (rng.random_range(0..21) - 10) as f32;
+    let horizontal_scale = power * f64::from(rng.random::<f32>().mul_add(0.5, 0.2));
+    let horizontal = Vector3::new(
+        target_pos.x - attacker_pos.x,
+        0.0,
+        target_pos.z - attacker_pos.z,
+    )
+    .normalize()
+        * horizontal_scale;
+    let (sin, cos) = (f64::from(angle.sin()), f64::from(angle.cos()));
+    let vertical = power * f64::from(rng.random::<f32>()) * 0.5;
+
+    // `Entity.push` adds to the velocity, then `syncVelocity` sends it to the target too.
+    target_entity.velocity.store(
+        target_entity.velocity.load()
+            + Vector3::new(
+                horizontal.x.mul_add(cos, horizontal.z * sin),
+                vertical,
+                horizontal.z.mul_add(cos, -horizontal.x * sin),
+            ),
+    );
+    target_entity.velocity_dirty.store(true, Ordering::SeqCst);
+    target_entity.mark_hurt();
 }

@@ -4,6 +4,7 @@ mod commands_and_gamemode;
 mod happy_ghast;
 mod illager_revenge;
 mod iron_golem_defence;
+mod knockback;
 mod login_and_movement;
 mod panda_genes;
 mod parrot_taming;
@@ -38,6 +39,8 @@ pub async fn run_bot_tests(
         summary_lines,
     )
     .await?;
+
+    knockback::run_knockback_tests(server, &mut bot1, summary_lines).await?;
 
     world_interaction::run_world_interaction_tests(server, &mut bot1, summary_lines).await?;
 

@@ -425,6 +425,13 @@ impl CreakingEntity {
 }
 
 impl Mob for CreakingEntity {
+    /// Vanilla `CreakingBodyRotationControl`: a frozen creaking keeps its body still.
+    fn tick_head_turn(&self, mob: &dyn Mob) {
+        if Self::can_move(self) {
+            self.mob_entity.tick_body_rotation_control(mob);
+        }
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         if let Some(pos) = self.get_home_pos() {
             let mut sub = NbtCompound::new();

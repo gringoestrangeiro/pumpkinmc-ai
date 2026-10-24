@@ -27,12 +27,17 @@ use crate::entity::{
         ambient_stand::AmbientStandGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, run_around_like_crazy::RunAroundLikeCrazyGoal,
-        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
+        swim::SwimGoal, tempt::TemptGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
-    mob::{Mob, MobEntity},
+    mob::{
+        Mob, MobEntity,
+        spawn::{AgeableMobGroupData, SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 const TEMPT_ITEMS: &[&Item] = &[
     &Item::GOLDEN_APPLE,
@@ -374,6 +379,18 @@ pub(crate) fn drop_horse_inventory(entity: &Entity, inventory: &SimpleInventory)
     }
 }
 
+/// Vanilla `AbstractHorse.finalizeSpawn`, without `randomizeAttributes`: a fifth of a herd's
+/// later members spawn as foals.
+pub(crate) fn finalize_abstract_horse_spawn<M: Mob + ?Sized>(
+    mob: &M,
+    group_data: Option<SpawnGroupData>,
+) -> Option<SpawnGroupData> {
+    let group_data = group_data.unwrap_or(SpawnGroupData::Ageable(
+        AgeableMobGroupData::with_baby_spawn_chance(0.2),
+    ));
+    finalize_ageable_spawn(mob, Some(group_data))
+}
+
 pub struct HorseEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
@@ -385,11 +402,16 @@ pub struct HorseEntity {
 }
 
 impl HorseEntity {
+    /// Number of vanilla horse `Variant`s (coat colors).
+    const VARIANT_COUNT: i32 = 7;
+    /// Number of vanilla horse `Markings`.
+    const MARKINGS_COUNT: i32 = 5;
+
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let mut rng = rand::rng();
-        let color = rng.random_range(0..7);
-        let style = rng.random_range(0..5);
+        let color = rng.random_range(0..Self::VARIANT_COUNT);
+        let style = rng.random_range(0..Self::MARKINGS_COUNT);
         let variant = color | (style << 8);
 
         let horse = Self {
@@ -420,7 +442,7 @@ impl HorseEntity {
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(0.7)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
@@ -435,6 +457,11 @@ impl HorseEntity {
     #[must_use]
     pub fn get_variant(&self) -> i32 {
         self.variant.load(Ordering::Relaxed)
+    }
+
+    /// Vanilla `Horse.setVariantAndMarkings`.
+    pub fn set_variant_and_markings(&self, variant: i32, markings: i32) {
+        self.set_variant((variant & 0xFF) | ((markings << 8) & 0xFF00));
     }
 
     pub fn set_variant(&self, variant: i32) {
@@ -490,13 +517,6 @@ impl AgeableMob for HorseEntity {
 impl Animal for HorseEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_HORSE_FOOD)
-            || item_stack.item == &Item::WHEAT
-            || item_stack.item == &Item::SUGAR
-            || item_stack.item == &Item::HAY_BLOCK
-            || item_stack.item == &Item::APPLE
-            || item_stack.item == &Item::GOLDEN_CARROT
-            || item_stack.item == &Item::GOLDEN_APPLE
-            || item_stack.item == &Item::ENCHANTED_GOLDEN_APPLE
     }
 }
 
@@ -542,6 +562,22 @@ impl AbstractHorse for HorseEntity {
 impl Mob for HorseEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let (horse_data, variant) = match group_data {
+            Some(SpawnGroupData::Horse(horse_data, variant)) => (horse_data, variant),
+            _ => (
+                AgeableMobGroupData::with_should_spawn_baby(true),
+                rand::random_range(0..Self::VARIANT_COUNT),
+            ),
+        };
+        self.set_variant_and_markings(variant, rand::random_range(0..Self::MARKINGS_COUNT));
+        finalize_abstract_horse_spawn(self, Some(SpawnGroupData::Horse(horse_data, variant)))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

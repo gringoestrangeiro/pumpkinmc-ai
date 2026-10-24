@@ -18,13 +18,15 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::version::JavaMinecraftVersion;
 use uuid::Uuid;
 
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::mob::zombie::ZombieEntityBase;
 use crate::entity::mob::{Mob, MobEntity};
 use crate::entity::passive::villager::VillagerEntity;
-use crate::entity::passive::villager::data::{GossipType, VillagerData};
+use crate::entity::passive::villager::data::{GossipType, VillagerData, villager_type_for_biome};
 use crate::entity::player::Player;
 use crate::entity::player::advancement::trigger::AdvancementTrigger;
 use crate::entity::{Entity, EntityBase};
+use crate::world::World;
 
 /// Blocks that make a zombie villager's cure tick down faster: iron bars and beds.
 fn speeds_up_conversion(block: &Block) -> bool {
@@ -60,7 +62,7 @@ impl ZombieVillagerEntity {
     #[must_use]
     pub fn with_can_break_doors(entity: Entity, can_break_doors: bool) -> Arc<Self> {
         let mob_entity = ZombieEntityBase::with_can_break_doors(entity, can_break_doors);
-        let zombie_villager = Arc::new(Self {
+        Arc::new(Self {
             mob_entity,
             villager_data: std::sync::Mutex::new(VillagerData::new(
                 pumpkin_data::villager::VillagerType::Plains,
@@ -74,22 +76,7 @@ impl ZombieVillagerEntity {
             villager_xp: AtomicI32::new(0),
             conversion_time: AtomicI32::new(0),
             conversion_starter: AtomicCell::new(None),
-        });
-        zombie_villager
-            .mob_entity
-            .mob_entity
-            .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .add_goal(
-                6,
-                Box::new(
-                    crate::entity::ai::goal::move_through_village::MoveThroughVillageGoal::new(
-                        1.0, true, 4.0,
-                    ),
-                ),
-            );
-        zombie_villager
+        })
     }
 
     #[must_use]
@@ -278,6 +265,20 @@ impl Mob for ZombieVillagerEntity {
 
     fn spawn_as_baby(&self) -> bool {
         self.mob_entity.spawn_as_baby()
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        // Vanilla `VillagerDataHolder.finalizeVillagerType`.
+        let biome = world.get_biome(&self.get_entity().block_pos.load());
+        let mut villager_data = self.get_villager_data();
+        villager_data.r#type = VarInt(villager_type_for_biome(biome.registry_id) as i32);
+        self.set_villager_data(villager_data);
+        self.mob_entity
+            .finalize_zombie_spawn(self, world, group_data)
     }
 
     fn get_base_experience_reward(&self) -> u32 {

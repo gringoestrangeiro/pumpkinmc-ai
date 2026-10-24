@@ -1,6 +1,7 @@
 use crate::block::PathComputationType;
 use crate::entity::EntityBase;
 use crate::entity::mob::spawn::finalize_spawn;
+use crate::entity::player::Player;
 use crate::entity::r#type::{SpawnLevelReader, check_spawn_rules, from_type};
 use crate::world::World;
 use arc_swap::ArcSwap;
@@ -23,18 +24,62 @@ use pumpkin_util::math::get_section_cord;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
-use pumpkin_util::random::xoroshiro128::Xoroshiro;
-use pumpkin_util::random::{RandomImpl, get_seed};
 use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
-use rand::seq::IndexedRandom;
 use rand::{RngExt, rng};
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering::Relaxed};
 use uuid::Uuid;
 
 const MAGIC_NUMBER: i32 = 17 * 17;
+/// Vanilla `NaturalSpawner.SPAWN_DISTANCE_CHUNK`.
+pub const SPAWN_DISTANCE_CHUNK: i32 = 8;
+/// Vanilla `NaturalSpawner.SPAWN_DISTANCE_BLOCK`.
+const SPAWN_DISTANCE_BLOCK: f64 = 128.0;
+
+/// Vanilla `DistanceManager.getNaturalSpawnChunkCount`.
+///
+/// Every chunk within [`SPAWN_DISTANCE_CHUNK`] (chessboard distance) of a player's chunk,
+/// counted once, loaded or not. This is what scales the global mob cap.
+#[must_use]
+pub fn natural_spawn_chunk_count(player_chunks: &[Vector2<i32>]) -> i32 {
+    let side = 2 * SPAWN_DISTANCE_CHUNK + 1;
+    if let [_] = player_chunks {
+        return side * side;
+    }
+    let mut chunks = rustc_hash::FxHashSet::default();
+    for center in player_chunks {
+        for dx in -SPAWN_DISTANCE_CHUNK..=SPAWN_DISTANCE_CHUNK {
+            for dz in -SPAWN_DISTANCE_CHUNK..=SPAWN_DISTANCE_CHUNK {
+                chunks.insert(Vector2::new(center.x + dx, center.y + dz));
+            }
+        }
+    }
+    chunks.len() as i32
+}
+
+/// Vanilla `ChunkMap.playerIsCloseEnoughForSpawning`: the chunk centre is within
+/// [`SPAWN_DISTANCE_BLOCK`] of the (non-spectator) player, ignoring height.
+#[must_use]
+pub fn is_close_enough_for_spawning(chunk_pos: Vector2<i32>, player_pos: &Vector3<f64>) -> bool {
+    LocalMobCapCalculator::calc_distance(chunk_pos, player_pos)
+        < SPAWN_DISTANCE_BLOCK * SPAWN_DISTANCE_BLOCK
+}
+
+/// Vanilla `WeightedList.getRandom`.
+fn get_random_weighted(spawners: &'static [Spawner]) -> Option<&'static Spawner> {
+    let total_weight: i32 = spawners.iter().map(|spawner| spawner.weight).sum();
+    if total_weight <= 0 {
+        return None;
+    }
+    let mut selection = rng().random_range(0..total_weight);
+    spawners.iter().find(|spawner| {
+        selection -= spawner.weight;
+        selection < 0
+    })
+}
 
 pub struct MobCounts([AtomicI32; 8]);
 
@@ -78,17 +123,17 @@ impl MobCounts {
 }
 
 pub struct LocalMobCapCalculator {
-    player_mob_counts: DashMap<i32, MobCounts>,
-    players_near_chunk: DashMap<Vector2<i32>, Arc<[i32]>>,
+    player_mob_counts: DashMap<i32, MobCounts, FxBuildHasher>,
+    players_near_chunk: DashMap<Vector2<i32>, Arc<[i32]>, FxBuildHasher>,
 }
 
 impl Clone for LocalMobCapCalculator {
     fn clone(&self) -> Self {
-        let player_mob_counts = DashMap::new();
+        let player_mob_counts = DashMap::with_hasher(FxBuildHasher);
         for r in &self.player_mob_counts {
             player_mob_counts.insert(*r.key(), r.value().clone());
         }
-        let players_near_chunk = DashMap::new();
+        let players_near_chunk = DashMap::with_hasher(FxBuildHasher);
         for r in &self.players_near_chunk {
             players_near_chunk.insert(*r.key(), r.value().clone());
         }
@@ -102,8 +147,8 @@ impl Clone for LocalMobCapCalculator {
 impl Default for LocalMobCapCalculator {
     fn default() -> Self {
         Self {
-            player_mob_counts: DashMap::new(),
-            players_near_chunk: DashMap::new(),
+            player_mob_counts: DashMap::with_hasher(FxBuildHasher),
+            players_near_chunk: DashMap::with_hasher(FxBuildHasher),
         }
     }
 }
@@ -128,18 +173,21 @@ impl LocalMobCapCalculator {
             return players.value().clone();
         }
 
-        let mut players = Vec::new();
-        for player in world.players.load().iter() {
-            if player.gamemode.load() == GameMode::Spectator {
-                continue;
-            }
-            if Self::calc_distance(chunk_pos, &player.position()) < 16384.0 {
-                players.push(player.entity_id());
-            }
-        }
-        let players: Arc<[i32]> = players.into();
+        let players = Self::compute_players_near(&world.players.load(), chunk_pos);
         self.players_near_chunk.insert(chunk_pos, players.clone());
         players
+    }
+
+    /// Entity ids of the non-spectator players close enough to spawn mobs in `chunk_pos`.
+    fn compute_players_near(players: &[Arc<Player>], chunk_pos: Vector2<i32>) -> Arc<[i32]> {
+        players
+            .iter()
+            .filter(|player| {
+                player.gamemode.load() != GameMode::Spectator
+                    && is_close_enough_for_spawning(chunk_pos, &player.position())
+            })
+            .map(|player| player.entity_id())
+            .collect()
     }
 
     pub fn add_mob(&self, chunk_pos: Vector2<i32>, world: &World, category: &'static MobCategory) {
@@ -361,14 +409,20 @@ impl SpawnState {
         self.mob_category_counts.remove(entity_type.category);
     }
 
+    /// Vanilla `NaturalSpawner.createState`, rebuilt every tick. The counts are gathered in
+    /// plain maps on this thread and only moved into the shared structures at the end.
     pub fn new(
         chunk_count: i32,
         entities: &ArcSwap<Vec<Arc<dyn EntityBase>>>,
         world: &World,
     ) -> Self {
-        let potential = PotentialCalculator::default();
-        let local_mob_cap = LocalMobCapCalculator::default();
-        let counter = MobCounts::default();
+        let mut charges = Vec::new();
+        let mut category_counts = [0; 8];
+        let mut player_mob_counts: FxHashMap<i32, [i32; 8]> = FxHashMap::default();
+        let mut players_near_chunk: FxHashMap<Vector2<i32>, Arc<[i32]>> = FxHashMap::default();
+        // Keyed by biome address and entity type id: one `spawn_costs` lookup per pair.
+        let mut spawn_charges: FxHashMap<(usize, u16), Option<f64>> = FxHashMap::default();
+        let players = world.players.load();
         let active_chunks = world
             .active_chunks
             .read()
@@ -389,21 +443,44 @@ impl SpawnState {
             if !active_chunks.contains(&chunk_pos) {
                 continue;
             }
-            let entity_pos = base_entity.block_pos.load();
-            let biome = base_entity.current_biome.load();
-            if let Some(cost) = biome.spawn_costs.get(entity_type.resource_name) {
-                potential.add_charge(&entity_pos, cost.charge);
+            let biome: &'static Biome = **base_entity.current_biome.load();
+            let charge = *spawn_charges
+                .entry((std::ptr::from_ref(biome).addr(), entity_type.id))
+                .or_insert_with(|| {
+                    biome
+                        .spawn_costs
+                        .get(entity_type.resource_name)
+                        .map(|cost| cost.charge)
+                });
+            if let Some(charge) = charge
+                && charge != 0.0
+            {
+                charges.push(PointCharge(base_entity.block_pos.load(), charge));
             }
+            let category = entity_type.category.id;
             if entity.get_mob().is_some() || entity_type.mob {
-                local_mob_cap.add_mob(chunk_pos, world, entity_type.category);
+                let near = players_near_chunk.entry(chunk_pos).or_insert_with(|| {
+                    LocalMobCapCalculator::compute_players_near(&players, chunk_pos)
+                });
+                for &player in near.iter() {
+                    player_mob_counts.entry(player).or_default()[category] += 1;
+                }
             }
-            counter.add(entity_type.category);
+            category_counts[category] += 1;
         }
+
+        let local_mob_cap_calculator = LocalMobCapCalculator {
+            player_mob_counts: player_mob_counts
+                .into_iter()
+                .map(|(player, counts)| (player, MobCounts(counts.map(AtomicI32::new))))
+                .collect(),
+            players_near_chunk: players_near_chunk.into_iter().collect(),
+        };
         Self {
             spawnable_chunk_count: chunk_count,
-            mob_category_counts: counter,
-            spawn_potential: potential,
-            local_mob_cap_calculator: local_mob_cap,
+            mob_category_counts: MobCounts(category_counts.map(AtomicI32::new)),
+            spawn_potential: PotentialCalculator(std::sync::Mutex::new(charges)),
+            local_mob_cap_calculator,
             last_checked: AtomicCell::new(None),
         }
     }
@@ -544,17 +621,22 @@ pub fn get_random_pos_within(
     chunk_pos: &Vector2<i32>,
     chunk: &Arc<ChunkData>,
 ) -> BlockPos {
-    let mut rng = Xoroshiro::from_seed(get_seed());
+    let mut rng = rng();
 
-    let x = (chunk_pos.x << 4) + rng.next_bounded_i32(16);
-    let z = (chunk_pos.y << 4) + rng.next_bounded_i32(16);
-    let temp_y = chunk
+    let x = (chunk_pos.x << 4) + rng.random_range(0..16);
+    let z = (chunk_pos.y << 4) + rng.random_range(0..16);
+    let top_empty_y = chunk
         .heightmap
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(ChunkHeightmapType::WorldSurface, x, z, chunk.section.min_y)
         + 1;
-    let y = rng.next_inbetween_i32(min_y, temp_y);
+    // `Mth.randomBetweenInclusive`.
+    let y = if min_y >= top_empty_y {
+        min_y
+    } else {
+        rng.random_range(min_y..=top_empty_y)
+    };
     BlockPos::new(x, y, z)
 }
 
@@ -668,7 +750,7 @@ pub fn spawn_mobs_for_chunk_generation(
     let zo = chunk_z << 4;
 
     while rand::random::<f32>() < biome.creature_spawn_probability {
-        let Some(spawner_data) = creatures.choose(&mut rand::rng()) else {
+        let Some(spawner_data) = get_random_weighted(creatures) else {
             continue;
         };
 
@@ -920,10 +1002,12 @@ pub fn spawn_category_for_position(
                         .get_entity()
                         .set_rotation(rng().random::<f32>() * 360.0, 0.0);
 
+                    // Vanilla `isValidPositionForMob`.
                     let is_valid_for_mob = entity.get_mob().is_none_or(|mob| {
                         let despawn_dist = f64::from(entity_type.category.despawn_distance);
                         !(player_distance_sq > despawn_dist * despawn_dist
                             && mob.remove_when_far_away(player_distance_sq))
+                            && mob.check_spawn_obstruction(world)
                     });
 
                     if is_valid_for_mob {
@@ -936,7 +1020,11 @@ pub fn spawn_category_for_position(
                             return batch_buffer;
                         }
 
-                        if entity_type.resource_name == "tropical_fish" && group_size >= 8 {
+                        if batch_buffer
+                            .last()
+                            .and_then(|entity| entity.get_mob())
+                            .is_some_and(|mob| mob.is_max_group_size_reached(group_size))
+                        {
                             break;
                         }
                     }
@@ -1042,7 +1130,7 @@ pub fn get_random_spawn_mob_at(
     {
         None
     } else {
-        match category.id {
+        get_random_weighted(match category.id {
             id if id == MobCategory::MONSTER.id => biome.spawners.monster,
             id if id == MobCategory::CREATURE.id => biome.spawners.creature,
             id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
@@ -1054,8 +1142,7 @@ pub fn get_random_spawn_mob_at(
             id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
             id if id == MobCategory::MISC.id => biome.spawners.misc,
             _ => biome.spawners.misc,
-        }
-        .choose(&mut rng())
+        })
     }
 }
 

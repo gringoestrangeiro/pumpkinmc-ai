@@ -469,16 +469,11 @@ impl Raid {
 
     pub fn update_living_raiders(&mut self, world: &World) {
         let center_f64 = self.center.to_f64();
-        let entities = world.entities.load();
 
         for raiders in self.group_raider_map.values_mut() {
             let mut wave_dead = Vec::new();
             for &raider_uuid in raiders.iter() {
-                let entity = entities
-                    .iter()
-                    .find(|e| e.get_entity().entity_uuid == raider_uuid);
-
-                match entity {
+                match world.get_entity_by_uuid(raider_uuid) {
                     Some(e) => {
                         let is_dead = e
                             .get_living_entity()

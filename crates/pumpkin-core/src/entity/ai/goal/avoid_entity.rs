@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::{Controls, Goal};
+use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::predicate::EntityPredicate;
 use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
@@ -10,6 +11,7 @@ use pumpkin_util::math::vector3::Vector3;
 const FAST_DISTANCE_SQ: f64 = 49.0;
 const HORIZONTAL_RANGE: i32 = 16;
 const VERTICAL_RANGE: i32 = 7;
+const SEARCH_Y_RANGE: f64 = 3.0;
 
 /// Extra condition deciding whether the mob avoids anything at all right now.
 type AvoidGate = dyn Fn(&dyn Mob) -> bool + Send + Sync;
@@ -113,20 +115,38 @@ impl AvoidEntityGoal {
         self.gate.as_ref().is_none_or(|gate| gate(mob))
     }
 
+    /// Vanilla `AvoidEntityGoal.canUse` search: the nearest entity in the mob's box grown by
+    /// `maxDist` (3 vertically) that passes `avoidEntityTargeting`, a combat targeting check.
+    /// So the mob must see the threat, and sneaking or invisible threats are noticed closer.
     fn find_threat(&self, mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
         let entity = &mob.get_mob_entity().living_entity.entity;
         let pos = entity.pos.load();
         let world = entity.world.load();
+        let search_area = entity.bounding_box.load().expand(
+            self.flee_distance,
+            SEARCH_Y_RANGE,
+            self.flee_distance,
+        );
+        let avoid_entity_targeting =
+            TargetPredicate::create_attackable().set_base_max_distance(self.flee_distance);
+        let is_threat = |candidate: &dyn EntityBase| {
+            EntityPredicate::ExceptCreativeOrSpectator.test(candidate)
+                && self.target_gate.as_ref().is_none_or(|gate| gate(candidate))
+                && candidate
+                    .get_entity()
+                    .bounding_box
+                    .load()
+                    .intersects(&search_area)
+                && avoid_entity_targeting.test(&world, Some(mob), candidate)
+        };
 
         if self.flee_type == &EntityType::PLAYER {
             world
-                .get_nearest_player(pos, self.flee_distance, |player| {
-                    EntityPredicate::ExceptCreativeOrSpectator.test(player.as_ref())
-                })
+                .get_nearest_player(pos, self.flee_distance, |player| is_threat(player.as_ref()))
                 .map(|p| p as Arc<dyn EntityBase>)
         } else {
             world.get_nearest_entity(pos, self.flee_distance, Some(&[self.flee_type]), |entity| {
-                EntityPredicate::ExceptCreativeOrSpectator.test(entity.as_ref())
+                is_threat(entity.as_ref())
             })
         }
     }
@@ -141,14 +161,6 @@ impl Goal for AvoidEntityGoal {
         let Some(target) = self.find_threat(mob) else {
             return false;
         };
-
-        if self
-            .target_gate
-            .as_ref()
-            .is_some_and(|gate| !gate(target.as_ref()))
-        {
-            return false;
-        }
 
         let threat_pos = target.get_entity().pos.load();
         let Some(flee_pos) =

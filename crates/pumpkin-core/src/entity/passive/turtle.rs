@@ -30,7 +30,10 @@ use crate::entity::{
         try_find_water::TryFindWaterGoal,
     },
     living::LivingEntity,
-    mob::{Mob, MobEntity},
+    mob::{
+        Mob, MobEntity,
+        spawn::{SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
@@ -305,11 +308,10 @@ impl Mob for TurtleEntity {
     fn finalize_spawn(
         &self,
         _world: &Arc<World>,
-        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
-    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
         self.set_home_pos(self.get_entity().block_pos.load());
-        group_data
+        finalize_ageable_spawn(self, group_data)
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {

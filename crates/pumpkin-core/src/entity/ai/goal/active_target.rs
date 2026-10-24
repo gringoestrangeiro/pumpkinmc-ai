@@ -119,6 +119,15 @@ impl ActiveTargetGoal {
         self
     }
 
+    /// Scales the follow range used for both the search and keeping the target, like
+    /// `PolarBearAttackPlayersGoal` (half) and `LlamaAttackWolfGoal` (a quarter) do by
+    /// overriding `getFollowDistance`.
+    #[must_use]
+    pub fn with_follow_distance_scale(mut self: Box<Self>, scale: f64) -> Box<Self> {
+        self.track_target_goal.set_follow_distance_scale(scale);
+        self
+    }
+
     /// Extra condition for starting and for continuing, e.g. an angry, unspent bee.
     #[must_use]
     pub fn gated_by(mut self: Box<Self>, gate: MobFilter) -> Box<Self> {
@@ -183,9 +192,7 @@ impl ActiveTargetGoal {
 
     fn find_closest_target(&mut self, mob: &dyn Mob) {
         let mob_entity = mob.get_mob_entity();
-        let follow_range = mob_entity
-            .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+        let follow_range = self.track_target_goal.get_follow_distance(mob);
 
         // Vanilla updates the target conditions with the current follow distance on every search
         self.target_predicate.base_max_distance = follow_range;

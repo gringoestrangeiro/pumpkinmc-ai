@@ -22,12 +22,10 @@ impl ForestRockFeature {
             if pos.0.y <= chunk.bottom_y() as i32 + 3 {
                 return false;
             }
-            let below_state = GenerationCache::get_block_state(chunk, &pos.down().0);
-            let below_id = below_state.to_block_id();
-            if !chunk.is_air(&pos.down().0)
-                && (below_id.has_tag(tag::Block::MINECRAFT_DIRT)
-                    || below_id.has_tag(tag::Block::MINECRAFT_BASE_STONE_OVERWORLD))
-            {
+            // Vanilla `BlockBlobFeature.canPlaceOn`; codegen does not emit the `can_place_on`
+            // predicate yet, so this uses the tag the vanilla `forest_rock` feature matches.
+            let below_id = GenerationCache::get_block_state(chunk, &pos.down().0).to_block_id();
+            if below_id.has_tag(tag::Block::MINECRAFT_FOREST_ROCK_CAN_PLACE_ON) {
                 break;
             }
             pos = pos.down();

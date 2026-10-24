@@ -18,13 +18,14 @@ use crate::generation::surface::{MaterialRuleContext, steep_material_condition};
 use crate::generation::{biome_coords, section_coords};
 use pumpkin_data::block_state::BlockState;
 use pumpkin_data::carver::{CarverAdditionalConfig, CarverConfig};
+use pumpkin_data::chunk::Biome;
 #[cfg(test)]
 use pumpkin_data::dimension::Dimension;
-use pumpkin_data::fluid::Fluid;
 use pumpkin_data::material_rule::MaterialRule;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::random::{RandomGenerator, RandomImpl};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct CarverBlockIds {
     pub air: &'static BlockState,
@@ -52,6 +53,74 @@ impl CarverBlockIds {
             grass_block: pumpkin_data::Block::GRASS_BLOCK.default_state,
             mycelium: pumpkin_data::Block::MYCELIUM.default_state,
         }
+    }
+}
+
+/// Remembers the noise biome vanilla `applyCarvers` reads at the corner of each chunk.
+///
+/// Every chunk runs the carvers of the 17x17 chunks around it, so without this each corner biome
+/// is sampled from the multi-noise router up to 289 times. Slots are indexed by the low bits of
+/// the chunk position, so any 128x128 chunk window fits without collisions.
+pub struct CarverBiomeCache {
+    slots: Box<[AtomicU64]>,
+}
+
+impl CarverBiomeCache {
+    const SLOT_BITS: u32 = 7;
+    /// Bits per packed chunk coordinate; positions outside that range skip the cache.
+    const COORD_BITS: u32 = 27;
+    const VALID: u64 = 1 << 63;
+
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            slots: (0..1 << (2 * Self::SLOT_BITS))
+                .map(|_| AtomicU64::new(0))
+                .collect(),
+        }
+    }
+
+    /// Packs `VALID | chunk_x | chunk_z` above the 8 biome id bits.
+    fn key(chunk_x: i32, chunk_z: i32) -> Option<u64> {
+        let limit = 1 << (Self::COORD_BITS - 1);
+        if !(-limit..limit).contains(&chunk_x) || !(-limit..limit).contains(&chunk_z) {
+            return None;
+        }
+        let mask = (1 << Self::COORD_BITS) - 1;
+        Some(
+            Self::VALID
+                | ((chunk_x as u64 & mask) << (Self::COORD_BITS + 8))
+                | ((chunk_z as u64 & mask) << 8),
+        )
+    }
+
+    pub fn get_or_sample(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        sample: impl FnOnce() -> &'static Biome,
+    ) -> &'static Biome {
+        let Some(key) = Self::key(chunk_x, chunk_z) else {
+            return sample();
+        };
+        let slot_mask = (1 << Self::SLOT_BITS) - 1;
+        let slot = &self.slots
+            [(((chunk_x & slot_mask) << Self::SLOT_BITS) | (chunk_z & slot_mask)) as usize];
+        let entry = slot.load(Ordering::Relaxed);
+        if entry >> 8 == key >> 8
+            && let Some(biome) = Biome::from_id(entry as u8)
+        {
+            return biome;
+        }
+        let biome = sample();
+        slot.store(key | u64::from(biome.id), Ordering::Relaxed);
+        biome
+    }
+}
+
+impl Default for CarverBiomeCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -230,12 +299,16 @@ pub fn carve(chunk: &mut ProtoChunk, generator: &VanillaGenerator) {
             let carver_z = chunk_z + dz;
             let carver_chunk_pos = Vector2::new(carver_x, carver_z);
 
-            let carver_biome = supplier.biome(
-                biome_coords::from_block(section_coords::section_to_block(carver_x)),
-                0,
-                biome_coords::from_block(section_coords::section_to_block(carver_z)),
-                &mut multi_noise_sampler,
-            );
+            let carver_biome = generator
+                .carver_biomes
+                .get_or_sample(carver_x, carver_z, || {
+                    supplier.biome(
+                        biome_coords::from_block(section_coords::section_to_block(carver_x)),
+                        0,
+                        biome_coords::from_block(section_coords::section_to_block(carver_z)),
+                        &mut multi_noise_sampler,
+                    )
+                });
 
             for (index, &config) in carver_biome.carvers.iter().enumerate() {
                 let seed = get_large_feature_seed(
@@ -406,8 +479,8 @@ fn carve_top_material(
             .top_material(run.chunk, x, below_y, z, carved_state.is_liquid(), steep)
     {
         run.chunk.set_block_state(x, below_y, z, top_material);
-
-        schedule_fluid_tick_for_state(run.chunk, x, below_y, z, top_material);
+        run.chunk
+            .mark_fluid_for_post_processing(x, below_y, z, top_material);
     }
 }
 
@@ -441,25 +514,12 @@ fn place_carved_block(
 
     // Vanilla `NoiseBasedChunkGenerator.applyCarvingMask`: schedule post-processing for
     // every carved fluid the aquifer marked as needing a flow update.
-    if should_schedule_fluid_update && state.is_liquid() {
-        schedule_fluid_tick_for_state(run.chunk, pos.x, pos.y, pos.z, state);
+    if should_schedule_fluid_update {
+        run.chunk
+            .mark_fluid_for_post_processing(pos.x, pos.y, pos.z, state);
     }
 
     carve_top_material(run, pos.x, pos.y, pos.z, state, has_grass, overworld);
-}
-
-fn schedule_fluid_tick_for_state(
-    chunk: &mut ProtoChunk,
-    x: i32,
-    y: i32,
-    z: i32,
-    state: &'static BlockState,
-) {
-    if state.id == pumpkin_data::Block::WATER.default_state.id {
-        chunk.schedule_fluid_tick(x, y, z, &Fluid::WATER);
-    } else if state.id == pumpkin_data::Block::LAVA.default_state.id {
-        chunk.schedule_fluid_tick(x, y, z, &Fluid::LAVA);
-    }
 }
 
 #[cfg(test)]

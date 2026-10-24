@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -23,14 +24,17 @@ use crate::entity::{
         escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal,
         long_jump::{LongJumpGoal, default_acceptable_landing},
-        look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal,
         swim::SwimGoal,
         tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
+    combat::knockback_after_resistance,
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        spawn::{SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
@@ -111,12 +115,11 @@ impl GoatEntity {
                     default_acceptable_landing,
                 )),
             );
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(6, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
-            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc
@@ -442,13 +445,39 @@ impl Goal for RamGoal {
                 })
                 .inspect(|candidate| {
                     let damaged = mob.get_mob_entity().try_attack(entity, candidate.as_ref());
-                    if damaged {
-                        candidate.get_entity().knockback(
-                            goat.ram_knockback_force(),
-                            self.ram_direction.x,
-                            self.ram_direction.z,
-                        );
-                    }
+                    // Vanilla `RamTarget.tick` knocks the target back whether or not the hit
+                    // landed, halved when a shield blocked it, scaled by the goat's speed and
+                    // through `LivingEntity.knockback`, so knockback resistance applies.
+                    let Some(living_target) = candidate.get_living_entity() else {
+                        return;
+                    };
+                    let living = &mob.get_mob_entity().living_entity;
+                    let effect_level = |effect| {
+                        living
+                            .get_effect(effect)
+                            .map_or(0, |effect| i32::from(effect.amplifier) + 1)
+                    };
+                    let speed_boost = 0.25
+                        * (effect_level(&StatusEffect::SPEED)
+                            - effect_level(&StatusEffect::SLOWNESS))
+                            as f32;
+                    let speed = living.get_attribute_value(&Attributes::MOVEMENT_SPEED) * RAM_SPEED;
+                    let speed_factor = (speed as f32 * 1.65).clamp(0.2, 3.0) + speed_boost;
+                    let blocking_factor = if !damaged && living_target.is_blocking() {
+                        0.5
+                    } else {
+                        1.0
+                    };
+                    let resistance =
+                        living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+                    living_target.entity.apply_knockback(
+                        knockback_after_resistance(
+                            f64::from(blocking_factor * speed_factor) * goat.ram_knockback_force(),
+                            resistance,
+                        ),
+                        self.ram_direction.x,
+                        self.ram_direction.z,
+                    );
                 })
         };
 
@@ -533,7 +562,6 @@ impl CustomSound for GoatEntity {
 impl Animal for GoatEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_GOAT_FOOD)
-            || TEMPT_ITEMS.iter().any(|i| i.id == item_stack.item.id)
     }
 }
 
@@ -584,7 +612,6 @@ impl Mob for GoatEntity {
         _world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
         let mut rng = rand::rng();
         self.set_screaming(rng.random::<f64>() < 0.02);
         self.age_boundary_reached();
@@ -596,7 +623,7 @@ impl Mob for GoatEntity {
             }
         }
         self.reset_ram_cooldown();
-        group_data
+        finalize_ageable_spawn(self, group_data)
     }
 
     fn mob_init_data_tracker(&self) {

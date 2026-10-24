@@ -85,7 +85,7 @@ pub(super) async fn test_dispenser_chest_equips_donkey(
             let chested = helper
                 .execute_command(
                     &donkey,
-                    "execute if data entity @e[type=minecraft:donkey,limit=1] {ChestedHorse:1b} run time query gametime",
+                    "execute if data entity @e[type=minecraft:donkey,sort=nearest,limit=1] {ChestedHorse:1b} run time query gametime",
                 )
                 .await?;
             helper.assert_true(chested > 0, "dispenser did not equip the tamed donkey with a chest")

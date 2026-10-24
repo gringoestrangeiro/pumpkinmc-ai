@@ -19,6 +19,8 @@ use crate::entity::{
         Mob, MobEntity,
         equipment::RegionalDifficulty,
         neutral::{NeutralData, NeutralMob},
+        spawn::{SpawnGroupData, ZombieGroupData},
+        zombie::{self, ZombieEntityBase},
     },
 };
 use crate::world::World;
@@ -118,6 +120,34 @@ impl Mob for ZombifiedPiglinEntity {
     fn spawn_as_baby(&self) -> bool {
         self.mob_entity.set_baby_by_age();
         true
+    }
+
+    /// Vanilla `Zombie.finalizeSpawn`, which zombified piglins inherit. Pumpkin's zombified
+    /// piglin has no door breaking goal, so the door rolls are left out.
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.mob_entity.finalize_spawn_base();
+        let difficulty_modifier =
+            RegionalDifficulty::at(world, self.mob_entity.living_entity.entity.pos.load())
+                .special_multiplier;
+        let group_data = group_data.unwrap_or_else(|| {
+            SpawnGroupData::Zombie(ZombieGroupData {
+                is_baby: ZombieEntityBase::get_spawn_as_baby_odds(),
+                can_spawn_jockey: true,
+            })
+        });
+        if let SpawnGroupData::Zombie(zombie_data) = &group_data
+            && zombie_data.is_baby
+        {
+            self.spawn_as_baby();
+        }
+        self.mob_entity.maybe_wear_halloween_head();
+        // Vanilla `ZombifiedPiglin.randomizeReinforcementsChance` pins the chance to 0.
+        zombie::handle_attributes(&self.mob_entity, difficulty_modifier, 0.0);
+        Some(group_data)
     }
 
     fn as_neutral(&self) -> Option<&dyn NeutralMob> {

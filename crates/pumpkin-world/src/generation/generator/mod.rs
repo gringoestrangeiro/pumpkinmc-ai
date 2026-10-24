@@ -166,6 +166,7 @@ pub struct VanillaGenerator {
     pub structure_calculator: StructurePlacementCalculator,
     pub structure_allowed_biomes: FxHashMap<usize, Vec<u16>>,
     pub enabled_structure_sets: Option<rustc_hash::FxHashSet<usize>>,
+    pub carver_biomes: crate::generation::carver::CarverBiomeCache,
 }
 
 impl VanillaGenerator {
@@ -259,6 +260,7 @@ impl VanillaGenerator {
             structure_calculator: StructurePlacementCalculator::new(seed.0 as i64),
             structure_allowed_biomes,
             enabled_structure_sets,
+            carver_biomes: crate::generation::carver::CarverBiomeCache::new(),
         }
     }
 }

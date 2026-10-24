@@ -35,7 +35,10 @@ use crate::entity::{
     ai::pathfinder::node::PathType,
     experience_orb::ExperienceOrbEntity,
     living::LivingEntity,
-    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        spawn::{SpawnGroupData, finalize_ageable_spawn},
+    },
     passive::animal::Animal,
     player::Player,
 };
@@ -831,7 +834,6 @@ impl Mob for FrogEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
         let biome = world.get_biome(&self.get_entity().block_pos.load());
         self.set_variant(
             if biome.has_tag(&tag::WorldgenBiome::MINECRAFT_SPAWNS_COLD_VARIANT_FROGS) {
@@ -842,7 +844,7 @@ impl Mob for FrogEntity {
                 FrogVariant::Temperate
             },
         );
-        group_data
+        finalize_ageable_spawn(self, group_data)
     }
 
     fn mob_init_data_tracker(&self) {

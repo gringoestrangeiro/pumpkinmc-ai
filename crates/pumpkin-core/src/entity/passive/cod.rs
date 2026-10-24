@@ -6,7 +6,7 @@ use pumpkin_nbt::compound::NbtCompound;
 use crate::entity::{
     Entity, EntityBase,
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity},
+    mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::fish::{self, FishData},
 };
 
@@ -37,6 +37,14 @@ impl Mob for CodEntity {
 
     fn get_fish_data(&self) -> Option<&FishData> {
         Some(&self.fish_data)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        fish::finalize_school_spawn(&self.mob_entity, &self.fish_data, group_data)
     }
 
     fn mob_tick(&self, caller: &dyn EntityBase) {

@@ -183,6 +183,13 @@ impl PhantomEntity {
 }
 
 impl Mob for PhantomEntity {
+    /// Vanilla `PhantomBodyRotationControl`: the head trails the body by a tick.
+    fn tick_head_turn(&self, _mob: &dyn Mob) {
+        let entity = &self.mob_entity.living_entity.entity;
+        entity.head_yaw.store(entity.body_yaw.load());
+        entity.body_yaw.store(entity.yaw.load());
+    }
+
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
     }

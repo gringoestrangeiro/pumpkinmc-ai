@@ -1,5 +1,5 @@
 use fancy::FancyTrunkPlacer;
-use pumpkin_data::BlockState;
+use pumpkin_data::{BlockId, BlockState};
 use pumpkin_util::{
     math::position::BlockPos,
     random::{RandomGenerator, RandomImpl},
@@ -68,6 +68,15 @@ impl TrunkPlacer {
             return true;
         }
         false
+    }
+
+    /// Vanilla `TrunkPlacer.isFree`, with the `validTreePos` override of
+    /// `UpwardsBranchingTrunkPlacer` that also accepts its `can_grow_through` blocks.
+    #[must_use]
+    pub fn is_free(&self, state: &BlockState, block: BlockId) -> bool {
+        TreeFeature::can_replace_or_log(state, block)
+            || matches!(&self.r#type, TrunkType::UpwardsBranching(placer)
+                if placer.can_grow_through.contains(&block.as_u16()))
     }
 
     pub fn try_place<T: GenerationCache>(

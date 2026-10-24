@@ -61,6 +61,11 @@ pub trait BlockPlacer {
     fn get_block_state(&self, pos: &Vector3<i32>) -> BlockStateId;
     fn set_block_state(&mut self, pos: &Vector3<i32>, state: &BlockState);
     fn add_block_entity(&mut self, nbt: NbtCompound);
+    /// Vanilla `LevelReader.getHeight`, or `None` when this placer has no heightmaps, in which
+    /// case height-dependent processors leave blocks where they are.
+    fn get_height(&self, _heightmap: &pumpkin_util::HeightMap, _x: i32, _z: i32) -> Option<i32> {
+        None
+    }
 }
 
 /// Places a template at a world origin with an un-rotated XZ offset.
@@ -161,18 +166,15 @@ pub fn place_template_with_options(
         let wy = origin.y + local_pos.y;
         let wz = world_z + local_pos.z;
 
+        // Processors can only move a block vertically, so the horizontal bounds are checked
+        // up front and the vertical ones after processing, like vanilla `placeInWorld`.
         if let Some(bbox) = chunk_box
-            && (wx < bbox.min.x
-                || wx > bbox.max.x
-                || wy < bbox.min.y
-                || wy > bbox.max.y
-                || wz < bbox.min.z
-                || wz > bbox.max.z)
+            && (wx < bbox.min.x || wx > bbox.max.x || wz < bbox.min.z || wz > bbox.max.z)
         {
             continue;
         }
 
-        let world_pos = Vector3::new(wx, wy, wz);
+        let mut world_pos = Vector3::new(wx, wy, wz);
 
         if apply_waterlogging
             && placer.get_block_state(&world_pos).to_block_id() == pumpkin_data::Block::WATER.id
@@ -195,6 +197,16 @@ pub fn place_template_with_options(
         let mut rng =
             LegacyRand::from_seed(hash_block_pos(world_pos.x, world_pos.y, world_pos.z) as u64);
         for processor in processors {
+            // Vanilla `GravityProcessor.processBlock`: rests the block on the terrain while
+            // keeping its height inside the template.
+            if let StructureProcessor::Gravity { heightmap, offset } = processor {
+                if let Some(height) =
+                    placer.get_height(&heightmap.to_height_map(), world_pos.x, world_pos.z)
+                {
+                    world_pos.y = height + offset + block.pos.y;
+                }
+                continue;
+            }
             let Some(processed_state) = processor.process_with_context(
                 placer,
                 world_pos,
@@ -212,20 +224,20 @@ pub fn place_template_with_options(
         if !should_place {
             continue;
         }
+        if let Some(bbox) = chunk_box
+            && (world_pos.y < bbox.min.y || world_pos.y > bbox.max.y)
+        {
+            continue;
+        }
         // Legacy pool elements ignore air after jigsaw replacement and custom processors.
         if skip_air && state.id.to_block_id() == pumpkin_data::Block::AIR.id {
             continue;
         }
 
-        placer.set_block_state(&Vector3::new(wx, wy, wz), state);
+        placer.set_block_state(&world_pos, state);
 
         let final_block = pumpkin_data::Block::from_id(state.id.to_block_id());
-        place_block_entity(
-            placer,
-            Vector3::new(wx, wy, wz),
-            final_block,
-            block_entity_nbt.as_ref(),
-        );
+        place_block_entity(placer, world_pos, final_block, block_entity_nbt.as_ref());
     }
 }
 

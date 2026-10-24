@@ -513,7 +513,7 @@ impl PoiStorage {
         for rx in min_rx..=max_rx {
             for rz in min_rz..=max_rz {
                 let region = self.get_or_load_region(rx, rz);
-                for entry in region.get_all() {
+                for entry in region.entries.values() {
                     if let Some(filter_type) = poi_type
                         && entry.poi_type != filter_type
                     {
@@ -554,7 +554,7 @@ impl PoiStorage {
         for rx in min_rx..=max_rx {
             for rz in min_rz..=max_rz {
                 let region = self.get_or_load_region(rx, rz);
-                for entry in region.get_all() {
+                for entry in region.entries.values() {
                     if (entry.x - center.0.x).abs() > radius
                         || (entry.z - center.0.z).abs() > radius
                         || !matches(&entry.poi_type)

@@ -20,20 +20,32 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
-        follow_parent::FollowParentGoal, llama_follow_caravan::LlamaFollowCaravanGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
-        run_around_like_crazy::RunAroundLikeCrazyGoal, swim::SwimGoal, tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        Controls, Goal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_parent::FollowParentGoal,
+        llama_follow_caravan::LlamaFollowCaravanGoal,
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        ranged_attack::RangedAttackGoal,
+        revenge::RevengeGoal,
+        run_around_like_crazy::RunAroundLikeCrazyGoal,
+        swim::SwimGoal,
+        tempt::TemptGoal,
+        track_target::TrackTargetGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
+    ai::target_predicate::TargetPredicate,
+    living::LivingEntity,
     mob::{Mob, MobEntity, RangedAttackMob},
     passive::animal::{Animal, get_carpet_color_from_item},
-    passive::llama::LlamaCaravan,
+    passive::llama::{LlamaCaravan, llama_attack_wolf_goal, llama_hurt_by_target_can_continue},
     passive::wandering_trader::WanderingTraderEntity,
     player::Player,
     projectile::llama_spit::LlamaSpitEntity,
 };
+use crate::world::World;
 
 use super::horse::{
     AbstractHorse, drop_horse_inventory, open_mount_screen, read_horse_inventory,
@@ -101,6 +113,7 @@ pub struct TraderLlamaEntity {
     pub caravan_head_id: AtomicI32,
     pub caravan_tail_id: AtomicI32,
     pub inventory: Arc<SimpleInventory>,
+    pub(crate) did_spit: AtomicBool,
 }
 
 impl TraderLlamaEntity {
@@ -127,6 +140,7 @@ impl TraderLlamaEntity {
             inventory: Arc::new(SimpleInventory::new(
                 MAX_STRENGTH as usize * super::horse::INVENTORY_ROWS,
             )),
+            did_spit: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(llama);
         let mob_weak: Weak<dyn Mob> = {
@@ -154,25 +168,46 @@ impl TraderLlamaEntity {
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
             goal_selector.add_goal(1, EscapeDangerGoal::new(2.0));
             goal_selector.add_goal(2, Box::new(LlamaFollowCaravanGoal::new(2.1)));
-            goal_selector.add_goal(3, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(
                 3,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.25, 40, 20.0)),
             );
+            goal_selector.add_goal(3, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(4, BreedGoal::new(1.0));
             goal_selector.add_goal(5, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(6, Box::new(FollowParentGoal::new(1.0)));
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(7, Box::new(WaterAvoidingRandomStrollGoal::new(0.7)));
             goal_selector.add_goal(
                 8,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(9, Box::new(RandomLookAroundGoal::default()));
 
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
+            target_selector.add_goal(
+                1,
+                Box::new(
+                    RevengeGoal::new(true).continuing_while(llama_hurt_by_target_can_continue),
+                ),
+            );
+            target_selector.add_goal(2, llama_attack_wolf_goal(&mob_arc.mob_entity));
+            target_selector.add_goal(1, Box::new(TraderLlamaDefendWanderingTraderGoal::new()));
             target_selector.add_goal(
                 2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::WOLF, true),
+                ActiveTargetGoal::predicated(
+                    &mob_arc.mob_entity,
+                    DEFAULT_RANDOM_INTERVAL,
+                    true,
+                    is_zombie_but_not_zombified_piglin,
+                ),
+            );
+            target_selector.add_goal(
+                2,
+                ActiveTargetGoal::predicated(
+                    &mob_arc.mob_entity,
+                    DEFAULT_RANDOM_INTERVAL,
+                    true,
+                    is_illager,
+                ),
             );
         };
 
@@ -445,6 +480,114 @@ impl TraderLlamaEntity {
 
         let spit_arc: Arc<dyn EntityBase> = Arc::new(spit);
         world.spawn_entity(spit_arc);
+        self.did_spit.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Vanilla `TraderLlama.registerGoals`' zombie target: every `Zombie` subclass except zombified
+/// piglins.
+fn is_zombie_but_not_zombified_piglin(target: &LivingEntity, _world: &World) -> bool {
+    let entity_type = target.entity.entity_type;
+    entity_type == &EntityType::ZOMBIE
+        || entity_type == &EntityType::HUSK
+        || entity_type == &EntityType::DROWNED
+        || entity_type == &EntityType::ZOMBIE_VILLAGER
+}
+
+/// Vanilla `AbstractIllager` subclasses, the trader llama's other target.
+fn is_illager(target: &LivingEntity, _world: &World) -> bool {
+    let entity_type = target.entity.entity_type;
+    entity_type == &EntityType::EVOKER
+        || entity_type == &EntityType::ILLUSIONER
+        || entity_type == &EntityType::PILLAGER
+        || entity_type == &EntityType::VINDICATOR
+}
+
+/// Vanilla `TraderLlama.TraderLlamaDefendWanderingTraderGoal`: target whatever last hurt the
+/// wandering trader holding this llama's leash.
+struct TraderLlamaDefendWanderingTraderGoal {
+    track_target_goal: TrackTargetGoal,
+    target: Option<Arc<dyn EntityBase>>,
+    target_predicate: TargetPredicate,
+    timestamp: i64,
+}
+
+impl TraderLlamaDefendWanderingTraderGoal {
+    fn new() -> Self {
+        Self {
+            track_target_goal: TrackTargetGoal::with_default(false),
+            target: None,
+            target_predicate: TargetPredicate::create_attackable(),
+            timestamp: 0,
+        }
+    }
+
+    fn wandering_trader_leash_holder(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
+        mob.get_entity()
+            .leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .filter(|holder| holder.cast_any().is::<WanderingTraderEntity>())
+    }
+}
+
+impl Goal for TraderLlamaDefendWanderingTraderGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        let Some(owner) = Self::wandering_trader_leash_holder(mob) else {
+            return false;
+        };
+        let Some(owner_living) = owner.get_living_entity() else {
+            return false;
+        };
+
+        let timestamp = owner_living.last_attacked_time.load(Ordering::Relaxed);
+        if timestamp == self.timestamp {
+            return false;
+        }
+
+        let attacker_id = owner_living.last_attacker_id.load(Ordering::Relaxed);
+        if attacker_id == 0 {
+            return false;
+        }
+        let Some(attacker) = mob.get_entity().world.load().get_entity_by_id(attacker_id) else {
+            return false;
+        };
+
+        if !self
+            .track_target_goal
+            .can_track(mob, Some(attacker.as_ref()), &self.target_predicate)
+        {
+            return false;
+        }
+
+        self.target = Some(attacker);
+        true
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.track_target_goal.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        mob.set_mob_target(self.target.clone());
+
+        if let Some(owner) = Self::wandering_trader_leash_holder(mob)
+            && let Some(owner_living) = owner.get_living_entity()
+        {
+            self.timestamp = owner_living.last_attacked_time.load(Ordering::Relaxed);
+        }
+
+        self.track_target_goal.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.target = None;
+        self.track_target_goal.stop(mob);
+    }
+
+    fn controls(&self) -> Controls {
+        self.track_target_goal.controls()
     }
 }
 
@@ -457,11 +600,6 @@ impl AgeableMob for TraderLlamaEntity {
 impl Animal for TraderLlamaEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_LLAMA_FOOD)
-            || item_stack
-                .item
-                .has_tag(&tag::Item::MINECRAFT_LLAMA_TEMPT_ITEMS)
-            || item_stack.item == &Item::WHEAT
-            || item_stack.item == &Item::HAY_BLOCK
     }
 }
 

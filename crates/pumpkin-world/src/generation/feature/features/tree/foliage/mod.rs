@@ -200,10 +200,11 @@ impl FoliagePlacer {
         let i = i32::from(giant_trunk);
         let log_pos = center_pos.down();
 
+        // Vanilla `Direction.Plane.HORIZONTAL` order.
         let directions = [
             BlockDirection::North,
-            BlockDirection::South,
             BlockDirection::East,
+            BlockDirection::South,
             BlockDirection::West,
         ];
 

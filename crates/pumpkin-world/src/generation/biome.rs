@@ -11,6 +11,91 @@ pub fn get_biome_blend(
     y: i32,
     z: i32,
 ) -> Vector3<i32> {
+    blend_with_offsets(bottom_y, height, x, y, z, |corner_x, corner_y, corner_z| {
+        fiddle_offsets(seed, corner_x, corner_y, corner_z)
+    })
+}
+
+/// [`get_biome_blend`] for many blocks of one area: each biome corner's offsets are hashed once
+/// instead of once for every block that reads them.
+pub struct BiomeFiddleCache {
+    seed: i64,
+    min_x: i32,
+    min_y: i32,
+    min_z: i32,
+    size_x: usize,
+    size_y: usize,
+    size_z: usize,
+    offsets: Box<[[f64; 3]]>,
+}
+
+impl BiomeFiddleCache {
+    /// Precomputes the offsets of every biome corner that blending a block in the inclusive
+    /// block box `min..=max` reads.
+    #[must_use]
+    pub fn new(seed: i64, min: Vector3<i32>, max: Vector3<i32>) -> Self {
+        let min_x = biome_coords::from_block(min.x - 2);
+        let min_y = biome_coords::from_block(min.y - 2);
+        let min_z = biome_coords::from_block(min.z - 2);
+        let size_x = (biome_coords::from_block(max.x - 2) + 2 - min_x).max(0) as usize;
+        let size_y = (biome_coords::from_block(max.y - 2) + 2 - min_y).max(0) as usize;
+        let size_z = (biome_coords::from_block(max.z - 2) + 2 - min_z).max(0) as usize;
+        let mut offsets = Vec::with_capacity(size_x * size_y * size_z);
+        for corner_x in min_x..min_x + size_x as i32 {
+            for corner_z in min_z..min_z + size_z as i32 {
+                for corner_y in min_y..min_y + size_y as i32 {
+                    offsets.push(fiddle_offsets(seed, corner_x, corner_y, corner_z));
+                }
+            }
+        }
+        Self {
+            seed,
+            min_x,
+            min_y,
+            min_z,
+            size_x,
+            size_y,
+            size_z,
+            offsets: offsets.into_boxed_slice(),
+        }
+    }
+
+    fn offsets(&self, corner_x: i32, corner_y: i32, corner_z: i32) -> [f64; 3] {
+        let local_x = corner_x.wrapping_sub(self.min_x) as usize;
+        let local_y = corner_y.wrapping_sub(self.min_y) as usize;
+        let local_z = corner_z.wrapping_sub(self.min_z) as usize;
+        if local_x < self.size_x && local_y < self.size_y && local_z < self.size_z {
+            self.offsets[(local_x * self.size_z + local_z) * self.size_y + local_y]
+        } else {
+            fiddle_offsets(self.seed, corner_x, corner_y, corner_z)
+        }
+    }
+
+    /// Same result as [`get_biome_blend`] with this cache's seed.
+    #[must_use]
+    pub fn get_biome_blend(
+        &self,
+        bottom_y: i8,
+        height: u16,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Vector3<i32> {
+        blend_with_offsets(bottom_y, height, x, y, z, |corner_x, corner_y, corner_z| {
+            self.offsets(corner_x, corner_y, corner_z)
+        })
+    }
+}
+
+#[inline]
+fn blend_with_offsets(
+    bottom_y: i8,
+    height: u16,
+    x: i32,
+    y: i32,
+    z: i32,
+    offsets: impl Fn(i32, i32, i32) -> [f64; 3],
+) -> Vector3<i32> {
     // This is the "left" side of the biome boundary
     let offset_x = x - 2;
     let offset_y = y - 2;
@@ -66,11 +151,8 @@ pub fn get_biome_blend(
             quarters_z - 1.0
         };
 
-        let permutation_score = score_permutation(
-            seed,
-            shifted_biome_x,
-            shifted_biome_y,
-            shifted_biome_z,
+        let permutation_score = score_offsets(
+            offsets(shifted_biome_x, shifted_biome_y, shifted_biome_z),
             shifted_quarters_x,
             shifted_quarters_y,
             shifted_quarters_z,
@@ -110,6 +192,7 @@ pub fn get_biome_blend(
 
 // This is effectively getting a random offset (+/- 0.0-0.8ish) to our biome position quarters and
 // returning a hypotenuse squared of the parts + the offset
+#[cfg(test)]
 const fn score_permutation(
     seed: i64,
     x: i32,
@@ -119,6 +202,11 @@ const fn score_permutation(
     y_part: f64,
     z_part: f64,
 ) -> f64 {
+    score_offsets(fiddle_offsets(seed, x, y, z), x_part, y_part, z_part)
+}
+
+/// The random offset vanilla `BiomeManager.getFiddledDistance` adds to a biome corner.
+const fn fiddle_offsets(seed: i64, x: i32, y: i32, z: i32) -> [f64; 3] {
     let mix = salt_mix(seed, x as i64);
     let mix = salt_mix(mix, y as i64);
     let mix = salt_mix(mix, z as i64);
@@ -130,7 +218,11 @@ const fn score_permutation(
     let offset_y = scale_mix(mix);
     let mix = salt_mix(mix, seed);
     let offset_z = scale_mix(mix);
+    [offset_x, offset_y, offset_z]
+}
 
+const fn score_offsets(offsets: [f64; 3], x_part: f64, y_part: f64, z_part: f64) -> f64 {
+    let [offset_x, offset_y, offset_z] = offsets;
     square_f64(z_part + offset_z) + square_f64(y_part + offset_y) + square_f64(x_part + offset_x)
 }
 
@@ -159,7 +251,7 @@ mod test {
 
     use crate::{
         biome::hash_seed,
-        generation::biome::{get_biome_blend, scale_mix, score_permutation},
+        generation::biome::{BiomeFiddleCache, get_biome_blend, scale_mix, score_permutation},
     };
 
     use super::salt_mix;
@@ -181,6 +273,31 @@ mod test {
     fn biome_blend() {
         let biome_pos = get_biome_blend(-64, 384, 1234567890, 123, 123, 123);
         assert_eq!(biome_pos, Vector3::new(31, 30, 30));
+    }
+
+    #[test]
+    fn fiddle_cache_matches_blend() {
+        let seed = hash_seed(13579);
+        let cache = BiomeFiddleCache::new(
+            seed,
+            Vector3::new(-48, -64, 96),
+            Vector3::new(-33, 319, 111),
+        );
+        for x in -48..=-33 {
+            for z in 96..=111 {
+                for y in -64..=319 {
+                    assert_eq!(
+                        cache.get_biome_blend(-64, 384, x, y, z),
+                        get_biome_blend(-64, 384, seed, x, y, z)
+                    );
+                }
+            }
+        }
+        // Blocks outside the cached box fall back to hashing their corners directly.
+        assert_eq!(
+            cache.get_biome_blend(-64, 384, 500, 40, -9),
+            get_biome_blend(-64, 384, seed, 500, 40, -9)
+        );
     }
 
     #[test]

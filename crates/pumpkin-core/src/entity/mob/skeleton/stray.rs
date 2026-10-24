@@ -27,8 +27,20 @@ impl Mob for StraySkeletonEntity {
         &self.entity.mob_entity
     }
 
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        self.entity.finalize_skeleton_spawn(group_data)
+    }
+
     fn get_ambient_sound(&self) -> Option<Sound> {
         Some(Sound::EntityStrayAmbient)
+    }
+
+    fn get_min_attack_interval(&self) -> Option<i32> {
+        Some(self.entity.min_attack_interval())
     }
 
     fn get_arrow_projectile(&self) -> Option<ItemStack> {

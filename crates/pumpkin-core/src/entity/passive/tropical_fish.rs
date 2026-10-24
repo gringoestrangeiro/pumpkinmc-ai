@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicI32, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
 use pumpkin_data::dye_color::DyeColor;
@@ -12,7 +12,10 @@ use pumpkin_protocol::codec::var_int::VarInt;
 use crate::entity::{
     Entity, EntityBase,
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    mob::{
+        Mob, MobEntity,
+        spawn::{SchoolSpawnGroupData, SpawnGroupData},
+    },
     passive::fish::{self, FishData},
 };
 
@@ -264,6 +267,9 @@ pub struct TropicalFishEntity {
     pub mob_entity: MobEntity,
     pub fish_data: FishData,
     pub variant: AtomicI32,
+    /// Vanilla `isSchool`: cleared on a fish that rolled a rare variant, which ends its
+    /// spawn group.
+    is_school: AtomicBool,
 }
 
 impl TropicalFishEntity {
@@ -275,6 +281,7 @@ impl TropicalFishEntity {
             mob_entity,
             fish_data: FishData::new(8),
             variant: AtomicI32::new(0),
+            is_school: AtomicBool::new(true),
         })
     }
 
@@ -377,18 +384,32 @@ impl Mob for TropicalFishEntity {
         _world: &Arc<crate::world::World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
-        let variant = if rand::random::<f32>() < 0.9 {
-            COMMON_VARIANTS[rand::random_range(0..COMMON_VARIANTS.len())]
-        } else {
-            TropicalFishVariant::new(
-                TropicalFishPattern::ALL[rand::random_range(0..TropicalFishPattern::ALL.len())],
-                DyeColor::by_id(rand::random_range(0..16)).unwrap_or_default(),
-                DyeColor::by_id(rand::random_range(0..16)).unwrap_or_default(),
-            )
+        let group_data = fish::finalize_school_spawn(&self.mob_entity, &self.fish_data, group_data);
+        let (variant, group_data) = match group_data {
+            Some(SpawnGroupData::TropicalFish(school, variant)) => {
+                (variant, SpawnGroupData::TropicalFish(school, variant))
+            }
+            Some(group_data) if rand::random::<f32>() >= 0.9 => {
+                self.is_school.store(false, Ordering::Relaxed);
+                let variant = TropicalFishVariant::new(
+                    TropicalFishPattern::ALL[rand::random_range(0..TropicalFishPattern::ALL.len())],
+                    DyeColor::by_id(rand::random_range(0..16)).unwrap_or_default(),
+                    DyeColor::by_id(rand::random_range(0..16)).unwrap_or_default(),
+                );
+                (variant, group_data)
+            }
+            _ => {
+                let variant = COMMON_VARIANTS[rand::random_range(0..COMMON_VARIANTS.len())];
+                let school = SchoolSpawnGroupData::default();
+                (variant, SpawnGroupData::TropicalFish(school, variant))
+            }
         };
         self.set_variant(variant);
-        group_data
+        Some(group_data)
+    }
+
+    fn is_max_group_size_reached(&self, _group_size: i32) -> bool {
+        !self.is_school.load(Ordering::Relaxed)
     }
 
     fn mob_init_data_tracker(&self) {

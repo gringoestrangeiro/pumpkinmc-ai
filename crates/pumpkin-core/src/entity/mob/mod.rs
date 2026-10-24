@@ -2,6 +2,7 @@ use super::{Entity, EntityBase, ai::pathfinder::Navigator, living::LivingEntity}
 use crate::entity::ai::brain::Brain;
 use crate::entity::ai::brain::memory::PackedMemories;
 use crate::entity::ai::control::MoveControlTrait;
+use crate::entity::ai::control::body_rotation_control::BodyRotationControl;
 use crate::entity::ai::control::look_control::LookControl;
 use crate::entity::ai::control::move_control::MoveControl;
 use crate::entity::ai::goal::goal_selector::GoalSelector;
@@ -30,6 +31,7 @@ use pumpkin_util::Difficulty;
 use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
+use pumpkin_util::math::wrap_degrees;
 use pumpkin_util::random::xoroshiro128::Xoroshiro;
 use pumpkin_util::random::{RandomGenerator, get_seed};
 use pumpkin_util::version::JavaMinecraftVersion;
@@ -90,6 +92,7 @@ pub struct MobEntity {
     pub navigator: std::sync::Mutex<Navigator>,
     pub target: std::sync::Mutex<Option<Arc<dyn EntityBase>>>,
     pub look_control: std::sync::Mutex<LookControl>,
+    pub body_rotation_control: std::sync::Mutex<BodyRotationControl>,
     pub sensing: std::sync::Mutex<Sensing>,
     pub move_control: std::sync::Mutex<Box<dyn MoveControlTrait>>,
     pub brain: std::sync::Mutex<Brain>,
@@ -181,6 +184,7 @@ impl MobEntity {
             navigator: std::sync::Mutex::new(Navigator::default()),
             target: std::sync::Mutex::new(None),
             look_control: std::sync::Mutex::new(LookControl::default()),
+            body_rotation_control: std::sync::Mutex::new(BodyRotationControl::new()),
             sensing: std::sync::Mutex::new(Sensing::default()),
             move_control: std::sync::Mutex::new(Box::new(MoveControl::default())),
             brain: std::sync::Mutex::new(Brain::default()),
@@ -259,6 +263,15 @@ impl MobEntity {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .tick();
 
+        // Vanilla `JumpControl.tick` sets `jumping` from this step's `jump()` requests and
+        // clears the request, so a jump only lasts while something keeps asking for it. The
+        // goals, navigation and move controls here set the flag directly, so clear it first;
+        // otherwise a mob that left the water mid-`FloatGoal` keeps hopping forever.
+        self.living_entity.jumping.store(false, Ordering::SeqCst);
+        // Navigation and the move control set this step's walk speed (`Mob.setSpeed`); code
+        // that writes the movement input directly keeps the attribute speed.
+        self.living_entity.mob_speed.store(None);
+
         // 1. "Take" selectors out of the mutexes
         let mut target_selector = {
             let mut guard = self
@@ -319,17 +332,8 @@ impl MobEntity {
 
         mob.custom_server_ai_step(caller);
 
-        // Controllers are synchronous, so we can just use normal blocks
-        {
-            let mut look_control = self
-                .look_control
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if can_move {
-                look_control.tick(mob);
-            }
-        };
-
+        // Controllers are synchronous, so we can just use normal blocks. Vanilla order: move,
+        // then look, so the head is clamped against the body yaw the move control just set.
         {
             let mut move_control = self
                 .move_control
@@ -339,6 +343,53 @@ impl MobEntity {
                 move_control.tick(mob);
             }
         };
+
+        {
+            let mut look_control = self
+                .look_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if can_move {
+                look_control.tick(mob);
+            }
+        };
+    }
+
+    /// Vanilla `Mob.lookAt(entity, yMax, xMax)`: turns the body yaw and the pitch (not the head)
+    /// towards the target's eyes by at most `y_max` and `x_max` degrees.
+    pub fn look_at(&self, target: &dyn EntityBase, y_max: f32, x_max: f32) {
+        let entity = &self.living_entity.entity;
+        let target_entity = target.get_entity();
+        let pos = entity.pos.load();
+        let target_pos = target_entity.pos.load();
+        let xd = target_pos.x - pos.x;
+        let zd = target_pos.z - pos.z;
+        let yd = if target.get_living_entity().is_some() {
+            target_entity.get_eye_y() - entity.get_eye_y()
+        } else {
+            let bounding_box = target_entity.bounding_box.load();
+            f64::midpoint(bounding_box.min.y, bounding_box.max.y) - entity.get_eye_y()
+        };
+        let sd = xd.hypot(zd);
+        let y_rot_d = (zd.atan2(xd) as f32).to_degrees() - 90.0;
+        let x_rot_d = -(yd.atan2(sd) as f32).to_degrees();
+        entity.set_pitch(Self::rotlerp(entity.pitch.load(), x_rot_d, x_max));
+        entity
+            .yaw
+            .store(Self::rotlerp(entity.yaw.load(), y_rot_d, y_max));
+    }
+
+    /// Vanilla `Mob.rotlerp`.
+    fn rotlerp(a: f32, b: f32, max: f32) -> f32 {
+        a + wrap_degrees(b - a).clamp(-max, max)
+    }
+
+    /// Vanilla `BodyRotationControl.clientTick`, which also runs on the server.
+    pub fn tick_body_rotation_control(&self, mob: &dyn Mob) {
+        self.body_rotation_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .client_tick(mob);
     }
 
     pub fn clear_ai_goals(&self, mob: &dyn Mob) {
@@ -548,10 +599,11 @@ impl MobEntity {
     }
 
     pub fn is_in_attack_range(&self, target: &dyn EntityBase) -> bool {
-        const DEFAULT_ATTACK_RANGE: f64 = 0.828_427_12; // sqrt(2.04) - 0.6
+        // Vanilla `Mob.DEFAULT_ATTACK_REACH`: `Math.sqrt(2.04F) - 0.6F`, with float operands.
+        const DEFAULT_ATTACK_REACH: f64 = 0.828_285_648_512_600_4;
 
         // TODO: Implement DataComponent lookup for ATTACK_RANGE when components are ready
-        let max_range = DEFAULT_ATTACK_RANGE;
+        let max_range = DEFAULT_ATTACK_REACH;
         let min_range = 0.0;
 
         let target_hitbox = target.get_entity().bounding_box.load();
@@ -672,18 +724,32 @@ impl MobEntity {
         Self::check_surface_water_animal_spawn_rules(world, pos)
     }
 
+    /// Vanilla `Mob.doHurtTarget`.
     pub fn try_attack(&self, caller: &dyn EntityBase, target: &dyn EntityBase) -> bool {
+        let attack_damage: f32 =
+            self.living_entity
+                .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+        let damaged = self.hurt_target(caller, target, attack_damage);
+        if damaged {
+            self.cause_extra_knockback(target, self.get_knockback());
+        }
+        damaged
+    }
+
+    /// The `hurtServer` call shared by every mob melee hit, plus `setLastHurtMob`.
+    pub fn hurt_target(
+        &self,
+        caller: &dyn EntityBase,
+        target: &dyn EntityBase,
+        damage: f32,
+    ) -> bool {
         if self.living_entity.dead.load(Relaxed) {
             return false;
         }
 
-        let attack_damage: f32 =
-            self.living_entity
-                .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
-
         let damaged = target.damage_with_context(
             target,
-            attack_damage,
+            damage,
             DamageType::MOB_ATTACK,
             // Vanilla `hurtServer` reads the attacker position from the damage source,
             // which is what the shield block direction check uses.
@@ -702,6 +768,42 @@ impl MobEntity {
         }
 
         damaged
+    }
+
+    /// Vanilla `LivingEntity.getKnockback`: the attack knockback attribute plus the
+    /// weapon's knockback enchantment, halved.
+    fn get_knockback(&self) -> f32 {
+        let knockback = self
+            .living_entity
+            .get_attribute_value(&Attributes::ATTACK_KNOCKBACK) as f32;
+        let weapon = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&EquipmentSlot::MAIN_HAND);
+        crate::enchantment::EnchantmentHelper::modify_knockback(&weapon, knockback) / 2.0
+    }
+
+    /// Vanilla `LivingEntity.causeExtraKnockback`.
+    fn cause_extra_knockback(&self, target: &dyn EntityBase, knockback: f32) {
+        let Some(living_target) = target.get_living_entity() else {
+            return;
+        };
+        if knockback <= 0.0 {
+            return;
+        }
+        let resistance = living_target.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+        let entity = &self.living_entity.entity;
+        let yaw = entity.yaw.load().to_radians();
+        living_target.entity.apply_knockback(
+            crate::entity::combat::knockback_after_resistance(f64::from(knockback), resistance),
+            f64::from(yaw.sin()),
+            f64::from(-yaw.cos()),
+        );
+        entity
+            .velocity
+            .store(entity.velocity.load().multiply(0.6, 1.0, 0.6));
     }
 
     fn get_attack_box(&self, attack_range: f64) -> BoundingBox {
@@ -783,20 +885,14 @@ impl MobEntity {
     pub fn check_despawn(&self, mob: &dyn Mob) {
         let entity = &self.living_entity.entity;
 
-        if self.persistence_required.load(Relaxed) || mob.requires_custom_persistence() {
-            return;
-        }
-
         // Vanilla `Mob.requiresCustomPersistence`: passengers and leashed mobs never despawn.
         // Without this a mob leashed to a fence is removed as soon as the player walks away
         // instead of being saved with its chunk.
-        if entity.has_vehicle() || entity.is_leashed() {
-            return;
-        }
-
-        if (**entity.custom_name.load()).is_some() {
-            return;
-        }
+        let is_persistent = self.persistence_required.load(Relaxed)
+            || mob.requires_custom_persistence()
+            || entity.has_vehicle()
+            || entity.is_leashed()
+            || (**entity.custom_name.load()).is_some();
 
         let world = entity.world.load();
         let pos = entity.pos.load();
@@ -819,24 +915,23 @@ impl MobEntity {
         }
 
         // Mobs like a converting zombie villager refuse to despawn (`removeWhenFarAway`).
-        if !mob.remove_when_far_away(nearest_dist_sq) {
-            return;
-        }
+        let can_despawn = !is_persistent && mob.remove_when_far_away(nearest_dist_sq);
 
-        if nearest_dist_sq > 128.0 * 128.0 {
+        if can_despawn && nearest_dist_sq > 128.0 * 128.0 {
             mob.get_entity().remove();
             return;
         }
 
         // Vanilla `Mob.checkDespawn` only rolls the random despawn after the mob spent
-        // 600 ticks beyond the 32 block no-despawn distance.
+        // 600 ticks beyond the 32 block no-despawn distance. The `noActionTime` reset runs
+        // for persistent mobs and animals too, which keeps their `RandomStrollGoal` going.
         let no_despawn_distance_sq = 32.0 * 32.0;
-        if nearest_dist_sq > no_despawn_distance_sq {
-            if self.no_action_time.load(Relaxed) > 600
-                && rand::random::<i32>().wrapping_abs() % 800 == 0
-            {
-                mob.get_entity().remove();
-            }
+        if can_despawn
+            && self.no_action_time.load(Relaxed) > 600
+            && rand::random::<i32>().wrapping_abs() % 800 == 0
+            && nearest_dist_sq > no_despawn_distance_sq
+        {
+            mob.get_entity().remove();
         } else if nearest_dist_sq < no_despawn_distance_sq {
             self.no_action_time.store(0, Relaxed);
         }
@@ -1027,6 +1122,17 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Vanilla `Mob.dropCustomDeathLoot`: extra drops that are not part of the entity loot table.
     fn drop_custom_death_loot(&self, _params: &LootContextParameters) {}
 
+    /// Vanilla `Mob.isMaxGroupSizeReached`: lets a mob end its natural spawn group early.
+    fn is_max_group_size_reached(&self, _group_size: i32) -> bool {
+        false
+    }
+
+    /// Vanilla `Mob.doHurtTarget`: a melee hit. Mobs with their own hit (hoglins,
+    /// zoglins, iron golems) override this.
+    fn do_hurt_target(&self, target: &dyn EntityBase) -> bool {
+        self.get_mob_entity().try_attack(self.get_entity(), target)
+    }
+
     fn on_attack(&self, _target: &dyn EntityBase) {}
 
     /// Set when a mob is released from a bucket; bucketable fish use it to keep
@@ -1186,14 +1292,18 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
-    /// Vanilla `Mob.finalizeSpawn`, run before the mob enters the world on spawns that
-    /// vanilla finalizes. Overrides call `finalize_spawn_base` first. Riders queued with
+    /// Vanilla `Mob.finalizeSpawn` (`AgeableMob.finalizeSpawn` for ageable mobs), run before
+    /// the mob enters the world on spawns that vanilla finalizes. Overrides end with
+    /// `finalize_spawn_base` or `spawn::finalize_ageable_spawn`. Riders queued with
     /// `add_pending_rider` are added by the world together with the mob.
     fn finalize_spawn(
         &self,
         _world: &Arc<World>,
         group_data: Option<spawn::SpawnGroupData>,
     ) -> Option<spawn::SpawnGroupData> {
+        if self.as_ageable().is_some() {
+            return spawn::finalize_ageable_spawn(self, group_data);
+        }
         self.get_mob_entity().finalize_spawn_base();
         group_data
     }
@@ -1295,6 +1405,12 @@ pub trait Mob: EntityBase + Send + Sync {
 
     /// Runs after navigation and before the movement controls, where vanilla ticks a mob's brain.
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {}
+
+    /// Vanilla `Mob.tickHeadTurn`, run from `LivingEntity.tick` after `aiStep`. Mobs with a
+    /// custom `createBodyControl` override this.
+    fn tick_head_turn(&self, mob: &dyn Mob) {
+        self.get_mob_entity().tick_body_rotation_control(mob);
+    }
 
     /// Moves the mob for this tick in place of the usual walking and swimming
     /// physics, returning whether it did; vanilla mobs that override `travel`.
@@ -1626,6 +1742,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         }
 
         mob_entity.living_entity.tick(caller, server);
+        self.tick_head_turn(self);
         self.post_tick();
     }
 
@@ -1661,6 +1778,8 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             cause,
         );
         if damaged {
+            // Vanilla `LivingEntity.hurtServer` resets `noActionTime` on every hit.
+            self.get_mob_entity().no_action_time.store(0, Relaxed);
             self.on_damage(damage_type, source);
         }
         damaged

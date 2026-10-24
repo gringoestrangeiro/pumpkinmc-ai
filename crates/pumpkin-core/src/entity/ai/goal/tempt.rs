@@ -5,6 +5,7 @@ use crate::entity::EntityBase;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob, player::Player};
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::item::Item;
+use pumpkin_data::tag::{Tag, Taggable};
 use pumpkin_util::math::vector3::Vector3;
 
 const DEFAULT_STOP_DISTANCE: f64 = 2.5;
@@ -17,10 +18,16 @@ const SCARE_ROTATION: f32 = 5.0;
 /// `OcelotTemptGoal#canScare` (trust state).
 type TemptGate = dyn Fn(&dyn Mob) -> bool + Send + Sync;
 
+/// The `Predicate<ItemStack>` vanilla tempts with: an item list or an item tag.
+enum TemptItems {
+    List(&'static [&'static Item]),
+    Tag(&'static Tag),
+}
+
 pub struct TemptGoal {
     goal_control: Controls,
     speed: f64,
-    tempt_items: &'static [&'static Item],
+    tempt_items: TemptItems,
     can_scare: bool,
     stop_distance: f64,
     target_player: Option<Arc<Player>>,
@@ -42,6 +49,14 @@ impl TemptGoal {
         Self::with_stop_distance(speed, tempt_items, can_scare, DEFAULT_STOP_DISTANCE)
     }
 
+    /// Vanilla's usual `TemptGoal(mob, speed, i -> i.is(ItemTags.X), canScare)`.
+    #[must_use]
+    pub fn with_tag(speed: f64, tempt_tag: &'static Tag, can_scare: bool) -> Self {
+        let mut goal = Self::new(speed, &[], can_scare);
+        goal.tempt_items = TemptItems::Tag(tempt_tag);
+        goal
+    }
+
     /// Like [`Self::new`], with a custom distance at which following stops once reached.
     #[must_use]
     pub fn with_stop_distance(
@@ -53,7 +68,7 @@ impl TemptGoal {
         Self {
             goal_control: Controls::MOVE | Controls::LOOK,
             speed,
-            tempt_items,
+            tempt_items: TemptItems::List(tempt_items),
             can_scare,
             stop_distance,
             target_player: None,
@@ -115,7 +130,11 @@ impl TemptGoal {
     }
 
     fn is_tempt_item(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
-        stack.item_count > 0 && self.tempt_items.iter().any(|i| i.id == stack.item.id)
+        stack.item_count > 0
+            && match self.tempt_items {
+                TemptItems::List(items) => items.iter().any(|i| i.id == stack.item.id),
+                TemptItems::Tag(tag) => stack.item.has_tag(tag),
+            }
     }
 
     fn is_holding_tempt_item(&self, player: &Player) -> bool {

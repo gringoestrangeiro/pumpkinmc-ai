@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use pumpkin_data::{Block, BlockDirection, BlockId, BlockState, BlockStateId};
 use pumpkin_util::{
@@ -8,7 +8,9 @@ use pumpkin_util::{
 
 use crate::generation::feature::features::spring_feature::BlockWrapper;
 use crate::{
-    block::BlockStateCodec, generation::proto_chunk::GenerationCache, world::WorldPortalExt,
+    block::BlockStateCodec,
+    generation::proto_chunk::GenerationCache,
+    world::{WorldPortalExt, fluid_state_from_block_state},
 };
 use pumpkin_util::random::RandomImpl;
 use std::cmp::Ordering;
@@ -104,38 +106,9 @@ impl GeodeFeature {
         let num_points = self.distribution_points.get(random);
         let noise = NormalNoise::create(random, -4, &[1.0]);
 
-        // Precompute sets of raw block ids for fast lookups
-        let mut invalid_raw_ids: HashSet<BlockId> = HashSet::new();
-        match &self.invalid_blocks {
-            BlockWrapper::Single(s) => {
-                if let Some(b) = Block::from_name(s.as_str()) {
-                    invalid_raw_ids.insert(b.id);
-                }
-            }
-            BlockWrapper::Multi(v) => {
-                for s in v {
-                    if let Some(b) = Block::from_name(s.as_str()) {
-                        invalid_raw_ids.insert(b.id);
-                    }
-                }
-            }
-        }
-
-        let mut cannot_replace_raw_ids: HashSet<BlockId> = HashSet::new();
-        match &self.cannot_replace {
-            BlockWrapper::Single(s) => {
-                if let Some(b) = Block::from_name(s.as_str()) {
-                    cannot_replace_raw_ids.insert(b.id);
-                }
-            }
-            BlockWrapper::Multi(v) => {
-                for s in v {
-                    if let Some(b) = Block::from_name(s.as_str()) {
-                        cannot_replace_raw_ids.insert(b.id);
-                    }
-                }
-            }
-        }
+        // Both settings are usually `#tag` references in the vanilla data.
+        let invalid_raw_ids = self.invalid_blocks.block_ids();
+        let cannot_replace_raw_ids = self.cannot_replace.block_ids();
 
         let mut points: Vec<(BlockPos, i32)> = Vec::with_capacity(num_points as usize);
         let mut crack_points: Vec<BlockPos> = Vec::new();
@@ -261,6 +234,15 @@ impl GeodeFeature {
                         BlockStateId::AIR.to_state(),
                         &can_replace_pred,
                     );
+                    for direction in BlockDirection::all() {
+                        let adjacent_pos = point_inside.offset(direction.to_offset());
+                        let (fluid, fluid_state) = fluid_state_from_block_state(
+                            GenerationCache::get_block_state(chunk, &adjacent_pos.0),
+                        );
+                        if !fluid_state.is_empty {
+                            chunk.schedule_fluid_tick(&adjacent_pos.0, fluid);
+                        }
+                    }
                 } else if dist_sum_shell >= inner_air {
                     let state =
                         self.filling_provider

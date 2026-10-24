@@ -103,6 +103,10 @@ pub struct LivingEntity {
     pub entity_equipment: Arc<std::sync::Mutex<EntityEquipment>>,
     pub equipment_drop_chances: Arc<std::sync::Mutex<FxHashMap<EquipmentSlot, f32>>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
+    /// Vanilla `LivingEntity.speed` as set by a mob's navigation or move control this tick
+    /// (`Mob.setSpeed`). `None` falls back to the `movement_speed` attribute, which is what a
+    /// player's `aiStep` sets and what Pumpkin's direct movement code assumes.
+    pub mob_speed: AtomicCell<Option<f64>>,
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
 
     pub jumping: AtomicBool,
@@ -331,6 +335,7 @@ impl LivingEntity {
             last_hurt_by_mob_id: AtomicI32::new(0),
             last_hurt_by_mob_time: AtomicI64::new(0),
             movement_input: AtomicCell::new(Vector3::default()),
+            mob_speed: AtomicCell::new(None),
             water_movement_speed_multiplier,
             last_block_pos: AtomicCell::new(None),
             equipment_attribute_modifier_ids: std::sync::Mutex::new(FxHashMap::default()),
@@ -1759,35 +1764,85 @@ impl LivingEntity {
         self.damage(caller, damage, DamageType::FLY_INTO_WALL);
     }
 
-    /// Decays player velocity like vanilla `travelInAir` friction.
-    fn apply_travel_friction(&self) {
+    /// Vanilla runs `aiStep` and `travel` with no input for a `ServerPlayer`. Pumpkin
+    /// doesn't move players on the server, but the server's copy of their velocity is
+    /// what knockback halves and what `markHurt` sends back, so it decays the same way:
+    /// tiny motion is dropped, landing clears the fall, then gravity and drag apply.
+    fn tick_player_server_velocity(&self) {
         let mut velo = self.entity.velocity.load();
-        if velo.x == 0.0 && velo.z == 0.0 {
-            return;
+
+        // `LivingEntity.aiStep`: players drop small horizontal motion as a whole.
+        if velo.x.mul_add(velo.x, velo.z * velo.z) < 9.0E-6 {
+            velo.x = 0.0;
+            velo.z = 0.0;
+        }
+        if velo.y.abs() < 0.003 {
+            velo.y = 0.0;
         }
 
-        let friction = if self.entity.on_ground.load(Relaxed) {
-            f64::from(
-                self.entity
-                    .get_block_with_y_offset(0.500_001)
-                    .1
-                    .slipperiness,
-            ) * 0.91
+        // `Entity.move` -> `Block.updateEntityMovementAfterFallOn` stops the fall on landing.
+        if self.entity.on_ground.load(Relaxed) && velo.y < 0.0 {
+            velo.y = 0.0;
+        }
+
+        // `Player` doesn't override `EntityBase::get_gravity`, so read the attribute here.
+        let mut gravity = EntityBase::get_gravity(self);
+        if velo.y <= 0.0 && self.has_effect(&StatusEffect::SLOW_FALLING) {
+            gravity = gravity.min(0.01);
+        }
+        let touching_water = self.entity.touching_water.load(Relaxed);
+        if touching_water || self.entity.touching_lava.load(Relaxed) {
+            // `travelInWater` / `travelInLava` with no input.
+            let (horizontal, vertical, gravity_divisor) = if touching_water {
+                let horizontal = if self.entity.sprinting.load(Relaxed) {
+                    0.9
+                } else {
+                    f64::from(self.water_movement_speed_multiplier)
+                };
+                (horizontal, 0.8, 16.0)
+            } else {
+                (0.5, 0.5, 4.0)
+            };
+            velo.x *= horizontal;
+            velo.y = velo.y.mul_add(vertical, -gravity / gravity_divisor);
+            velo.z *= horizontal;
         } else {
-            0.91
-        };
-
-        velo.x *= friction;
-
-        velo.z *= friction;
+            // `travelInAir` with no input.
+            let friction = if self.entity.on_ground.load(Relaxed) {
+                f64::from(
+                    self.entity
+                        .get_block_with_y_offset(0.500_001)
+                        .1
+                        .slipperiness,
+                ) * 0.91
+            } else {
+                0.91
+            };
+            if let Some(levitation) = self.get_effect(&StatusEffect::LEVITATION) {
+                velo.y +=
+                    0.05f64.mul_add(f64::from(i32::from(levitation.amplifier) + 1), -velo.y) * 0.2;
+            } else {
+                velo.y -= gravity;
+            }
+            velo.x *= friction;
+            velo.y *= 0.98;
+            velo.z *= friction;
+        }
 
         self.entity.velocity.store(velo);
+    }
+
+    /// Vanilla `LivingEntity.getSpeed`.
+    fn get_speed(&self) -> f64 {
+        self.mob_speed
+            .load()
+            .unwrap_or_else(|| self.get_attribute_value(&Attributes::MOVEMENT_SPEED))
     }
 
     fn travel_in_air(&self, caller: &dyn EntityBase) {
         // applyMovementInput
 
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.get_speed();
 
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
@@ -1835,7 +1890,7 @@ impl LivingEntity {
         let levitation = self.get_effect(&StatusEffect::LEVITATION);
 
         if let Some(lev) = levitation {
-            velo.y += 0.05f64.mul_add(f64::from(lev.amplifier + 1), -velo.y) * 0.2;
+            velo.y += 0.05f64.mul_add(f64::from(i32::from(lev.amplifier) + 1), -velo.y) * 0.2;
         } else {
             velo.y -= self.get_effective_gravity(caller);
 
@@ -1866,7 +1921,7 @@ impl LivingEntity {
 
         let falling = self.entity.velocity.load().y <= 0.0;
         let gravity = self.get_effective_gravity(caller);
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.get_speed();
 
         if water {
             let mut friction = if self.entity.sprinting.load(Relaxed) {
@@ -2107,7 +2162,7 @@ impl LivingEntity {
         strength *= self.get_attribute_value(&Attributes::JUMP_STRENGTH);
         strength *= f64::from(self.entity.get_jump_velocity_multiplier());
         if let Some(effect) = self.get_effect(&StatusEffect::JUMP_BOOST) {
-            strength += 0.1 * f64::from(effect.amplifier + 1);
+            strength += 0.1 * f64::from(i32::from(effect.amplifier) + 1);
         }
         strength
     }
@@ -3170,7 +3225,7 @@ impl LivingEntity {
         if !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_RESISTANCE)
             && let Some(effect) = self.get_effect(&StatusEffect::RESISTANCE)
         {
-            let absorb_value = (effect.amplifier + 1) * 5;
+            let absorb_value = (i32::from(effect.amplifier) + 1) * 5;
             let absorb = 25 - absorb_value;
             let v = damage * absorb as f32;
             let old_damage = damage;
@@ -3579,6 +3634,10 @@ impl LivingEntity {
             }
         }
 
+        if took_full_damage && !damage_type.has_tag(&tag::DamageType::MINECRAFT_NO_IMPACT) {
+            self.entity.mark_hurt();
+        }
+
         // Vanilla `LivingEntity.dealDefaultKnockback`: every full-damage hit knocks the
         // victim back unless the damage type is in `#minecraft:no_knockback` (explosions,
         // fire, fall, magic and the like). This also runs on a killing blow.
@@ -3589,8 +3648,11 @@ impl LivingEntity {
                 (source_pos.x - target_pos.x, source_pos.z - target_pos.z)
             });
             let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
-            self.entity
-                .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
+            self.entity.apply_knockback(
+                knockback_after_resistance(f64::from(0.4f32), resistance),
+                dx,
+                dz,
+            );
         }
 
         // Vanilla parity: actuallyHurt
@@ -3767,9 +3829,7 @@ impl EntityBase for LivingEntity {
             // Vanilla-like order: freeze logic runs after movement/collisions.
             self.entity.tick_frozen(caller);
         } else if is_alive {
-            // Client-authoritative players skip `travel`, so decay pushed velocity like
-            // vanilla to prevent it accumulating and launching the player.
-            self.apply_travel_friction();
+            self.tick_player_server_velocity();
 
             let suffocating = self.entity.tick_block_collisions(caller);
             // Vanilla `LivingEntity.isInWall`: sleeping entities are never in a wall.
@@ -3787,9 +3847,14 @@ impl EntityBase for LivingEntity {
             self.entity.tick_frozen(caller);
         }
 
-        // Coalesce velocity sends to once per tick.
-        if self.entity.velocity_dirty.swap(false, Ordering::SeqCst) {
+        // Coalesce velocity sends to once per tick. A player's own client simulates
+        // pushes and impulses itself; it only receives its velocity after `markHurt`.
+        let needs_sync = self.entity.velocity_dirty.swap(false, Ordering::SeqCst);
+        let sync_velocity = self.entity.sync_velocity.swap(false, Ordering::SeqCst);
+        if sync_velocity || (needs_sync && !is_player) {
             self.entity.send_velocity();
+        } else if needs_sync {
+            self.entity.send_velocity_to_trackers();
         }
 
         // Fetch supporting blocks for players or other entities

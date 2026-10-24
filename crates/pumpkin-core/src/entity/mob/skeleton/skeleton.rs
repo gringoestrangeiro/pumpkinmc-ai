@@ -129,6 +129,14 @@ impl Mob for SkeletonEntity {
         &self.entity.mob_entity
     }
 
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        self.entity.finalize_skeleton_spawn(group_data)
+    }
+
     fn get_ambient_sound(&self) -> Option<Sound> {
         Some(Sound::EntitySkeletonAmbient)
     }
@@ -149,6 +157,10 @@ impl Mob for SkeletonEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.tick_freezing();
+    }
+
+    fn get_min_attack_interval(&self) -> Option<i32> {
+        Some(self.entity.min_attack_interval())
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {

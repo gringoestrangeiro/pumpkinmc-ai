@@ -10,6 +10,8 @@ use std::sync::Arc;
 const UNSET: i32 = 0;
 const CAN_TRACK: i32 = 1;
 const CANNOT_TRACK: i32 = 2;
+/// The `2.25` in vanilla `TargetGoal.canReach`.
+const MAX_REACH_DISTANCE_SQR: f64 = 2.25;
 
 pub struct TrackTargetGoal {
     goal_control: Controls,
@@ -19,6 +21,8 @@ pub struct TrackTargetGoal {
     check_can_navigate_cooldown: i32,
     time_without_visibility: i32,
     pub max_time_without_visibility: i32,
+    /// Scale on the follow range, for vanilla subclasses overriding `getFollowDistance`.
+    follow_distance_scale: f64,
     /// Fallback target, used while the mob's own target is cleared.
     target_mob: Option<Arc<dyn EntityBase>>,
 }
@@ -35,6 +39,7 @@ impl TrackTargetGoal {
             check_can_navigate_cooldown: 0,
             time_without_visibility: 0,
             max_time_without_visibility: 60,
+            follow_distance_scale: 1.0,
             target_mob: None,
         }
     }
@@ -48,19 +53,46 @@ impl TrackTargetGoal {
         self
     }
 
+    pub const fn set_follow_distance_scale(&mut self, scale: f64) {
+        self.follow_distance_scale = scale;
+    }
+
+    /// Vanilla `TargetGoal.getFollowDistance`.
+    #[must_use]
+    pub fn get_follow_distance(&self, mob: &dyn Mob) -> f64 {
+        mob.get_mob_entity()
+            .living_entity
+            .get_attribute_value(&Attributes::FOLLOW_RANGE)
+            * self.follow_distance_scale
+    }
+
     /// Set by goals that already know their target.
     pub fn set_target_mob(&mut self, target: Option<Arc<dyn EntityBase>>) {
         self.target_mob = target;
     }
 
-    fn can_navigate_to_entity(&mut self, mob: &dyn Mob) -> bool {
+    /// Vanilla `TargetGoal.canReach`: a path toward the target must end within 1.5 blocks of it
+    /// horizontally.
+    // Runs inside `can_start`, before the selector claims `TARGET`, so a failed path never
+    // evicts the running revenge goal. Nothing holds the navigator lock while selectors tick.
+    fn can_navigate_to_entity(&mut self, mob: &dyn Mob, target: &dyn EntityBase) -> bool {
         self.check_can_navigate_cooldown = to_goal_ticks(10 + mob.get_random().random_range(0..5));
-        // TODO: after implementing path
-        // Path inside `can_start`, claim `TARGET` only afterwards: the selector runs
-        // `can_replace_all` -> `can_start` -> claim -> `start`, so a failed path must not evict revenge.
-        // No navigator lock earlier in the tick (`has_malus` callers must not hold it).
-        // Selectors are `mem::take`n during the AI tick: never lock them from a goal.
-        false
+        let mob_entity = mob.get_mob_entity();
+        let target_pos = target.get_entity().block_pos.load();
+        let Some(path) = mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .create_path(&mob_entity.living_entity, target_pos.to_f64(), 0)
+        else {
+            return false;
+        };
+        let Some(last) = path.get_end_node() else {
+            return false;
+        };
+        let xx = last.pos.0.x - target_pos.0.x;
+        let zz = last.pos.0.z - target_pos.0.z;
+        f64::from(xx * xx + zz * zz) <= MAX_REACH_DISTANCE_SQR
     }
 
     const fn remembers_visible_target(&mut self, has_line_of_sight: bool) -> bool {
@@ -100,7 +132,7 @@ impl TrackTargetGoal {
             }
 
             if self.can_navigate_flag == UNSET {
-                self.can_navigate_flag = if self.can_navigate_to_entity(mob) {
+                self.can_navigate_flag = if self.can_navigate_to_entity(mob, target) {
                     CAN_TRACK
                 } else {
                     CANNOT_TRACK
@@ -143,10 +175,7 @@ impl Goal for TrackTargetGoal {
             .load()
             .squared_distance_to_vec(&target.entity.pos.load());
 
-        // Get follow range attribute value and check if target is within range
-        let follow_range = mob_entity
-            .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+        let follow_range = self.get_follow_distance(mob);
 
         if dist_sq > follow_range * follow_range {
             return false;

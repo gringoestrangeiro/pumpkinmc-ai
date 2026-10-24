@@ -29,7 +29,7 @@ use crate::entity::{
         look_at_entity::LookAtEntityGoal, swim::SwimGoal, tempt::TemptGoal,
         wander_around::WanderAroundGoal,
     },
-    mob::{Mob, MobEntity},
+    mob::{Mob, MobEntity, spawn},
     passive::animal::Animal,
     player::Player,
 };
@@ -758,6 +758,17 @@ impl Animal for PandaEntity {
 impl Mob for PandaEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<spawn::SpawnGroupData>,
+    ) -> Option<spawn::SpawnGroupData> {
+        let group_data = group_data.unwrap_or(spawn::SpawnGroupData::Ageable(
+            spawn::AgeableMobGroupData::with_baby_spawn_chance(0.2),
+        ));
+        spawn::finalize_ageable_spawn(self, Some(group_data))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

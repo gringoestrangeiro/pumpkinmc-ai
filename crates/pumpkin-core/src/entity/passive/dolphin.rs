@@ -33,7 +33,7 @@ use crate::entity::{
     ai::pathfinder::{NavigatorGoal, node::PathComputationType},
     ai::util::{default_random_pos, goal_utils},
     custom_sound::CustomSound,
-    mob::{Mob, MobEntity},
+    mob::{Mob, MobEntity, spawn},
     passive::{animal::Animal, fish},
     player::Player,
 };
@@ -225,6 +225,17 @@ impl CustomSound for DolphinEntity {
 impl Mob for DolphinEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<spawn::SpawnGroupData>,
+    ) -> Option<spawn::SpawnGroupData> {
+        let group_data = group_data.unwrap_or(spawn::SpawnGroupData::Ageable(
+            spawn::AgeableMobGroupData::with_baby_spawn_chance(0.1),
+        ));
+        spawn::finalize_ageable_spawn(self, Some(group_data))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

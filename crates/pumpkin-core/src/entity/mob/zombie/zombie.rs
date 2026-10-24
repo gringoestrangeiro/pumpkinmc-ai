@@ -1,5 +1,6 @@
 use crate::entity::Entity;
 use crate::entity::mob::equipment::RegionalDifficulty;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::mob::zombie::ZombieEntityBase;
 use crate::entity::mob::{Mob, MobEntity};
 use crate::world::World;
@@ -34,6 +35,14 @@ impl Mob for ZombieEntity {
         self.entity.spawn_as_baby()
     }
 
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.entity.finalize_zombie_spawn(self, world, group_data)
+    }
+
     fn get_base_experience_reward(&self) -> u32 {
         self.entity.get_base_experience_reward()
     }
@@ -64,15 +73,11 @@ impl Mob for ZombieEntity {
 impl ZombieEntity {
     #[must_use]
     pub fn can_break_doors(&self) -> bool {
-        self.entity
-            .can_break_doors
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.entity.can_break_doors()
     }
 
     pub fn set_can_break_doors(&self, can_break: bool) {
-        self.entity
-            .can_break_doors
-            .store(can_break, std::sync::atomic::Ordering::Relaxed);
+        self.entity.set_can_break_doors(can_break, self);
     }
 
     #[must_use]

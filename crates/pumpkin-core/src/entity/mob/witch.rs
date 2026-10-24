@@ -19,7 +19,7 @@ use crate::entity::{
     ai::goal::{
         Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, to_goal_ticks, wander_around::WanderAroundGoal,
+        swim::SwimGoal, to_goal_ticks, water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     mob::{
         Mob, MobEntity, RangedAttackMob,
@@ -224,20 +224,22 @@ impl WitchEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
+            // Vanilla `Raider.registerGoals`, which `Witch.registerGoals` runs first.
+            goal_selector.add_goal(3, Box::new(PathfindToRaidGoal::default()));
+            goal_selector.add_goal(4, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
+            goal_selector.add_goal(5, Box::new(RaiderCelebrationGoal));
+
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             goal_selector.add_goal(
                 2,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.0, 60, 10.0)),
             );
-            goal_selector.add_goal(3, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
-            goal_selector.add_goal(3, Box::new(PathfindToRaidGoal::default()));
-            goal_selector.add_goal(4, Box::new(RaiderCelebrationGoal));
-            goal_selector.add_goal(4, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(2, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             goal_selector.add_goal(
-                5,
+                3,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
             );
-            goal_selector.add_goal(6, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(3, Box::new(RandomLookAroundGoal::default()));
 
             target_selector.add_goal(
                 1,

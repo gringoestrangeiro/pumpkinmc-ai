@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -19,24 +20,68 @@ use crate::entity::{
     ageable::AgeableMob,
     ai::behavior::neutral::apply_targets,
     ai::goal::{
-        active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, beg::BegGoal,
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_owner::FollowOwnerGoal,
-        follow_parent::FollowParentGoal, leap_at_target::LeapAtTargetGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        melee_attack::MeleeAttackGoal, owner_hurt_by_target::OwnerHurtByTargetGoal,
-        owner_hurt_target::OwnerHurtTargetGoal, revenge::RevengeGoal,
-        sit_when_ordered_to::SitWhenOrderedToGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
+        avoid_entity::AvoidEntityGoal,
+        beg::BegGoal,
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_owner::FollowOwnerGoal,
+        leap_at_target::LeapAtTargetGoal,
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal,
+        owner_hurt_by_target::OwnerHurtByTargetGoal,
+        owner_hurt_target::OwnerHurtTargetGoal,
+        revenge::RevengeGoal,
+        sit_when_ordered_to::SitWhenOrderedToGoal,
+        swim::SwimGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
+    living::LivingEntity,
     mob::{
         Mob, MobEntity,
         neutral::{NeutralData, NeutralMob},
+        spawn,
     },
     passive::{
         animal::Animal,
+        llama::LlamaEntity,
         tamable::{TamableAnimal, TamableData},
+        turtle::baby_on_land_selector,
     },
     player::Player,
 };
+use crate::world::World;
+
+/// Vanilla `Wolf#applyTamingSideEffects` max health of a tamed wolf.
+const TAME_MAX_HEALTH: f32 = 40.0;
+/// Vanilla `Wolf#registerGoals` llama avoid distance.
+const LLAMA_AVOID_DISTANCE: f64 = 24.0;
+/// Vanilla `Wolf$WolfAvoidEntityGoal#avoidLlama` bound: `strength >= random.nextInt(5)`.
+const LLAMA_STRENGTH_ROLL: i32 = 5;
+
+/// Vanilla `Wolf.PREY_SELECTOR`.
+fn is_prey(target: &LivingEntity, _world: &World) -> bool {
+    let entity_type = target.entity.entity_type;
+    entity_type == &EntityType::SHEEP
+        || entity_type == &EntityType::RABBIT
+        || entity_type == &EntityType::FOX
+}
+
+/// The subclasses of vanilla `AbstractSkeleton`.
+fn is_abstract_skeleton(target: &LivingEntity, _world: &World) -> bool {
+    let entity_type = target.entity.entity_type;
+    entity_type == &EntityType::SKELETON
+        || entity_type == &EntityType::STRAY
+        || entity_type == &EntityType::WITHER_SKELETON
+        || entity_type == &EntityType::BOGGED
+        || entity_type == &EntityType::PARCHED
+}
+
+/// `NonTameRandomTargetGoal#canUse`: only an untamed wolf hunts.
+fn is_untamed(mob: &dyn Mob) -> bool {
+    !mob.as_tamable().is_some_and(TamableAnimal::is_tame)
+}
 
 pub struct WolfEntity {
     pub mob_entity: MobEntity,
@@ -61,6 +106,7 @@ impl WolfEntity {
             neutral_data: NeutralData::default(),
         };
         let mob_arc = Arc::new(wolf);
+        let wolf_weak = Arc::downgrade(&mob_arc);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
@@ -77,13 +123,29 @@ impl WolfEntity {
             // 1: SwimGoal (FloatGoal)
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             // 1: EscapeDangerGoal (TamableAnimalPanicGoal)
-            goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
+            goal_selector.add_goal(
+                1,
+                EscapeDangerGoal::with_panic_causes(
+                    1.5,
+                    &tag::DamageType::MINECRAFT_PANIC_ENVIRONMENTAL_CAUSES,
+                ),
+            );
             // 2: SitWhenOrderedToGoal
             goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
-            // 3: Avoid Llama
+            // 3: WolfAvoidEntityGoal (Llama), only while untamed
             goal_selector.add_goal(
                 3,
-                Box::new(AvoidEntityGoal::new(&EntityType::LLAMA, 24.0, 1.5, 1.5)),
+                Box::new(AvoidEntityGoal::with_target_gate(
+                    &EntityType::LLAMA,
+                    LLAMA_AVOID_DISTANCE,
+                    1.5,
+                    1.5,
+                    move |llama| {
+                        wolf_weak
+                            .upgrade()
+                            .is_some_and(|wolf| !wolf.is_tame() && wolf.avoid_llama(llama))
+                    },
+                )),
             );
             // 4: LeapAtTargetGoal
             goal_selector.add_goal(4, Box::new(LeapAtTargetGoal::new(0.4)));
@@ -93,9 +155,8 @@ impl WolfEntity {
             goal_selector.add_goal(6, FollowOwnerGoal::new(1.0, 10.0, 2.0));
             // 7: BreedGoal
             goal_selector.add_goal(7, BreedGoal::new(1.0));
-            // 8: FollowParentGoal & WanderAroundGoal
-            goal_selector.add_goal(8, Box::new(FollowParentGoal::new(1.1)));
-            goal_selector.add_goal(8, Box::new(WanderAroundGoal::new(1.0)));
+            // 8: WaterAvoidingRandomStrollGoal
+            goal_selector.add_goal(8, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             // 9: BegGoal
             goal_selector.add_goal(9, BegGoal::new(8.0));
             // 10: LookAtPlayer & RandomLookAround
@@ -122,27 +183,60 @@ impl WolfEntity {
             target_selector.add_goal(3, Box::new(RevengeGoal::new(true).alerting_others()));
             // 4: NearestAttackableTarget (Player, angry only), 8: ResetUniversalAnger
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 4, 8, true);
-            // 5: NonTameRandomTarget (Sheep, Rabbit, Fox)
+            // 5: NonTameRandomTargetGoal (Animal, PREY_SELECTOR)
             target_selector.add_goal(
                 5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::SHEEP, false),
+                ActiveTargetGoal::predicated(
+                    &mob_arc.mob_entity,
+                    DEFAULT_RANDOM_INTERVAL,
+                    false,
+                    is_prey,
+                )
+                .gated_by(is_untamed),
             );
+            // 6: NonTameRandomTargetGoal (Turtle, BABY_ON_LAND_SELECTOR)
             target_selector.add_goal(
-                5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::RABBIT, false),
+                6,
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::TURTLE,
+                    DEFAULT_RANDOM_INTERVAL,
+                    false,
+                    false,
+                    Some(baby_on_land_selector),
+                ))
+                .gated_by(is_untamed),
             );
-            target_selector.add_goal(
-                5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, false),
-            );
-            // 7: NearestAttackableTarget (Skeleton)
+            // 7: NearestAttackableTargetGoal (AbstractSkeleton)
             target_selector.add_goal(
                 7,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::SKELETON, false),
+                ActiveTargetGoal::predicated(
+                    &mob_arc.mob_entity,
+                    DEFAULT_RANDOM_INTERVAL,
+                    false,
+                    is_abstract_skeleton,
+                ),
             );
         };
 
         mob_arc
+    }
+
+    /// Vanilla `Wolf$WolfAvoidEntityGoal#avoidLlama`: stronger llamas scare wolves more often.
+    fn avoid_llama(&self, llama: &dyn EntityBase) -> bool {
+        llama
+            .get_mob()
+            .and_then(|mob| mob.cast_any().downcast_ref::<LlamaEntity>())
+            .is_some_and(|llama| {
+                llama.get_strength() >= self.get_random().random_range(0..LLAMA_STRENGTH_ROLL)
+            })
+    }
+
+    /// Vanilla `Wolf#applyTamingSideEffects` for a wolf that just got tamed.
+    fn apply_taming_side_effects(&self) {
+        let living = &self.mob_entity.living_entity;
+        living.set_max_health(TAME_MAX_HEALTH);
+        living.set_health(TAME_MAX_HEALTH);
     }
 
     pub fn get_tame_flags(&self) -> u8 {
@@ -185,6 +279,30 @@ impl NeutralMob for WolfEntity {
 impl Mob for WolfEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<crate::world::World>,
+        group_data: Option<spawn::SpawnGroupData>,
+    ) -> Option<spawn::SpawnGroupData> {
+        let (pack_data, variant) = match group_data {
+            Some(spawn::SpawnGroupData::WolfPack(pack_data, variant)) => (pack_data, variant),
+            // Pumpkin has no wolf variant spawn conditions yet, so a pack keeps the variant
+            // its first wolf was created with.
+            _ => (
+                spawn::AgeableMobGroupData::with_should_spawn_baby(false),
+                WolfVariant::all()
+                    .get(usize::from(self.variant.load(Ordering::Relaxed)))
+                    .copied()
+                    .unwrap_or(WolfVariant::Pale),
+            ),
+        };
+        self.set_variant(variant);
+        spawn::finalize_ageable_spawn(
+            self,
+            Some(spawn::SpawnGroupData::WolfPack(pack_data, variant)),
+        )
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {
@@ -266,6 +384,13 @@ impl Mob for WolfEntity {
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        // Vanilla keeps a tamed wolf's max health in its saved attributes, which Pumpkin does not
+        // persist, so it is restored from the tame flag instead.
+        if self.is_tame() {
+            self.mob_entity
+                .living_entity
+                .set_attribute_base(&Attributes::MAX_HEALTH, f64::from(TAME_MAX_HEALTH));
+        }
         if let Some(variant_str) = nbt.get_string("variant") {
             let variant =
                 WolfVariant::from_name(variant_str).map_or(WolfVariant::Pale.id(), |v| v.id());
@@ -369,6 +494,7 @@ impl Mob for WolfEntity {
             let mut rng = rand::rng();
             if rng.random_range(0..3) == 0 {
                 TamableAnimal::tame(self, player.gameprofile.id);
+                self.apply_taming_side_effects();
                 self.set_ordered_to_sit(true);
                 self.spawn_taming_particles(true);
             } else {

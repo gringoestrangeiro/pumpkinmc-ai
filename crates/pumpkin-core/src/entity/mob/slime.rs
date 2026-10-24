@@ -17,9 +17,14 @@ use crate::entity::r#type::SpawnLevelReader;
 use crate::entity::{
     Entity, EntityBase,
     ai::control::{Control, MoveControlTrait},
-    ai::goal::{Goal, active_target::ActiveTargetGoal},
+    ai::goal::{
+        Goal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
+    },
+    living::LivingEntity,
     mob::{Mob, MobEntity},
 };
+use crate::world::World;
 use pumpkin_util::random::RandomImpl;
 use rand::RngExt;
 
@@ -37,6 +42,10 @@ pub struct SlimeEntity {
 }
 
 impl SlimeEntity {
+    /// Vanilla `Slime.addTargetingGoals`: players more than this many blocks above or below
+    /// are ignored.
+    const MAX_TARGET_Y_DISTANCE: f64 = 4.0;
+
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let slime = Self {
@@ -73,13 +82,27 @@ impl SlimeEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(1, Box::new(SlimeFloatGoal::new(mob_arc.clone())));
-            goal_selector.add_goal(2, Box::new(SlimeAttackGoal::new(mob_arc.clone())));
-            goal_selector.add_goal(3, Box::new(SlimeRandomDirectionGoal::new(mob_arc.clone())));
+            goal_selector.add_goal(4, Box::new(SlimeRandomDirectionGoal::new(mob_arc.clone())));
             goal_selector.add_goal(5, Box::new(SlimeKeepOnJumpingGoal::new(mob_arc.clone())));
+            goal_selector.add_goal(2, Box::new(SlimeAttackGoal::new(mob_arc.clone())));
 
+            let slime_weak = Arc::downgrade(&mob_arc);
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.entity, &EntityType::PLAYER, true),
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.entity,
+                    &EntityType::PLAYER,
+                    DEFAULT_RANDOM_INTERVAL,
+                    true,
+                    false,
+                    Some(move |target: &LivingEntity, _world: &World| {
+                        slime_weak.upgrade().is_some_and(|slime| {
+                            let slime_y = slime.entity.living_entity.entity.pos.load().y;
+                            (target.entity.pos.load().y - slime_y).abs()
+                                <= Self::MAX_TARGET_Y_DISTANCE
+                        })
+                    }),
+                )),
             );
             target_selector.add_goal(
                 3,
@@ -147,7 +170,7 @@ impl SlimeEntity {
 
         let pos = entity.pos.load();
         let new_bb = BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &scaled_dimensions);
-        entity.bounding_box.store(new_bb);
+        entity.set_bounding_box(new_bb);
     }
 
     pub fn get_size(&self) -> i32 {

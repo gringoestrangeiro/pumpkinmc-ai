@@ -1,5 +1,6 @@
+use std::f64::consts::TAU;
 use std::sync::{
-    Arc,
+    Arc, Weak,
     atomic::{AtomicI32, AtomicU8, Ordering},
 };
 
@@ -27,32 +28,48 @@ use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
-    ageable::{AgeableData, AgeableMob},
+    ageable::{AgeableData, AgeableMob, BABY_START_AGE},
     ai::goal::{
         Controls, Goal, ParentHandle,
-        active_target::ActiveTargetGoal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
+        avoid_entity::AvoidEntityGoal,
         breed::BreedGoal,
         climb_on_top_of_powder_snow::ClimbOnTopOfPowderSnowGoal,
         escape_danger::EscapeDangerGoal,
         follow_parent::FollowParentGoal,
         leap_at_target::LeapAtTargetGoal,
-        look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal,
         melee_attack::MeleeAttackGoal,
         move_to_target_pos::{MoveToTargetPos, MoveToTargetPosGoal},
         swim::SwimGoal,
-        tempt::TemptGoal,
         to_goal_ticks,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
     ai::pathfinder::node::PathType,
-    mob::{Mob, MobEntity, equipment::RegionalDifficulty, spawn::SpawnGroupData},
-    passive::animal::Animal,
+    mob::{
+        Mob, MobEntity,
+        equipment::RegionalDifficulty,
+        spawn::{AgeableMobGroupData, SpawnGroupData, finalize_ageable_spawn},
+    },
+    passive::{animal::Animal, tamable::TamableAnimal, turtle::baby_on_land_selector},
     player::Player,
 };
 use crate::world::World;
 
 pub const FOX_FOOD: &[&Item] = &[&Item::SWEET_BERRIES, &Item::GLOW_BERRIES];
+
+/// Vanilla `Fox#registerGoals` avoid distances and speed modifiers. The sprint modifier is
+/// lower than the walk one in vanilla too.
+const AVOID_PLAYER_DISTANCE: f64 = 16.0;
+const AVOID_DISTANCE: f64 = 8.0;
+const AVOID_WALK_SPEED_MOD: f64 = 1.6;
+const AVOID_SPRINT_SPEED_MOD: f64 = 1.4;
+/// Vanilla `Fox#fishTargetGoal`'s `randomInterval`.
+const FISH_TARGET_RANDOM_INTERVAL: i32 = 20;
+/// Vanilla `Fox.PerchAndSearchGoal#canUse` per-tick start chance.
+const PERCH_CHANCE: f32 = 0.02;
+/// Vanilla `LivingEntity#baseTick` clears `lastHurtByMob` once it is older than this.
+const LAST_HURT_BY_MOB_MEMORY_TICKS: i64 = 100;
 
 const MIN_TICKS_BEFORE_EAT: i32 = 600;
 const MAX_CROUCH_AMOUNT: f32 = 5.0;
@@ -147,7 +164,46 @@ impl FoxEntity {
             goal_selector.add_goal(1, Box::new(FaceplantGoal::new()));
             goal_selector.add_goal(2, EscapeDangerGoal::new(2.2));
             goal_selector.add_goal(3, BreedGoal::new(1.0));
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(1.2, FOX_FOOD, false)));
+            // Vanilla also skips players the fox trusts, which Pumpkin does not track yet.
+            let fox_weak = Arc::downgrade(&mob_arc);
+            goal_selector.add_goal(
+                4,
+                Box::new(AvoidEntityGoal::with_target_gate(
+                    &EntityType::PLAYER,
+                    AVOID_PLAYER_DISTANCE,
+                    AVOID_WALK_SPEED_MOD,
+                    AVOID_SPRINT_SPEED_MOD,
+                    move |player| !player.get_entity().is_sneaking() && !is_defending(&fox_weak),
+                )),
+            );
+            let fox_weak = Arc::downgrade(&mob_arc);
+            goal_selector.add_goal(
+                4,
+                Box::new(AvoidEntityGoal::with_target_gate(
+                    &EntityType::WOLF,
+                    AVOID_DISTANCE,
+                    AVOID_WALK_SPEED_MOD,
+                    AVOID_SPRINT_SPEED_MOD,
+                    move |wolf| {
+                        !wolf
+                            .get_mob()
+                            .and_then(|mob| mob.as_tamable())
+                            .is_some_and(TamableAnimal::is_tame)
+                            && !is_defending(&fox_weak)
+                    },
+                )),
+            );
+            let fox_weak = Arc::downgrade(&mob_arc);
+            goal_selector.add_goal(
+                4,
+                Box::new(AvoidEntityGoal::with_target_gate(
+                    &EntityType::POLAR_BEAR,
+                    AVOID_DISTANCE,
+                    AVOID_WALK_SPEED_MOD,
+                    AVOID_SPRINT_SPEED_MOD,
+                    move |_bear| !is_defending(&fox_weak),
+                )),
+            );
             goal_selector.add_goal(5, Box::new(StalkPreyGoal::new()));
             goal_selector.add_goal(6, Box::new(FoxPounceGoal::new()));
             goal_selector.add_goal(
@@ -158,42 +214,64 @@ impl FoxEntity {
             goal_selector.add_goal(8, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(10, FoxEatBerriesGoal::new());
             goal_selector.add_goal(10, Box::new(LeapAtTargetGoal::new(0.4)));
-            goal_selector.add_goal(11, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(11, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
             goal_selector.add_goal(
                 12,
                 LookAtEntityGoal::with_default(weak_mob(&mob_arc), &EntityType::PLAYER, 24.0),
             );
-            goal_selector.add_goal(13, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(13, Box::new(PerchAndSearchGoal::new()));
         };
 
-        {
-            let mut target_selector = mob_arc
-                .mob_entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            target_selector.add_goal(
-                4,
-                ActiveTargetGoal::predicated(&mob_arc.mob_entity, 10, false, chicken_or_rabbit),
-            );
-            target_selector.add_goal(
-                4,
-                Box::new(ActiveTargetGoal::new(
-                    &mob_arc.mob_entity,
-                    &EntityType::TURTLE,
-                    10,
-                    false,
-                    false,
-                    Some(baby_turtle_on_land),
-                )),
-            );
-            target_selector.add_goal(
-                6,
-                ActiveTargetGoal::predicated(&mob_arc.mob_entity, 20, false, schooling_fish),
-            );
-        };
+        // The hunting target goals are added by `set_target_goals` once the variant is known,
+        // from `finalize_spawn` or the saved data, like vanilla. A bred fox gets neither and
+        // does not hunt until reloaded.
 
         mob_arc
+    }
+
+    /// Vanilla `Fox#setTargetGoals`: snow foxes favour fish over land prey, red foxes the
+    /// reverse. Re-registering replaces the previous set instead of stacking a second one.
+    fn set_target_goals(&self) {
+        let (land_priority, fish_priority) = match self.get_variant() {
+            FoxVariant::Red => (4, 6),
+            FoxVariant::Snow => (6, 4),
+        };
+        let mob: &dyn Mob = self;
+        let mut target_selector = self
+            .mob_entity
+            .target_selector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        target_selector.remove_goal::<ActiveTargetGoal>(mob);
+        target_selector.add_goal(
+            land_priority,
+            ActiveTargetGoal::predicated(
+                &self.mob_entity,
+                DEFAULT_RANDOM_INTERVAL,
+                false,
+                chicken_or_rabbit,
+            ),
+        );
+        target_selector.add_goal(
+            land_priority,
+            Box::new(ActiveTargetGoal::new(
+                &self.mob_entity,
+                &EntityType::TURTLE,
+                DEFAULT_RANDOM_INTERVAL,
+                false,
+                false,
+                Some(baby_on_land_selector),
+            )),
+        );
+        target_selector.add_goal(
+            fish_priority,
+            ActiveTargetGoal::predicated(
+                &self.mob_entity,
+                FISH_TARGET_RANDOM_INTERVAL,
+                false,
+                schooling_fish,
+            ),
+        );
     }
 
     #[must_use]
@@ -327,6 +405,11 @@ fn weak_mob(mob: &Arc<FoxEntity>) -> std::sync::Weak<dyn Mob> {
 
 fn as_fox(mob: &dyn Mob) -> Option<&FoxEntity> {
     mob.cast_any().downcast_ref::<FoxEntity>()
+}
+
+/// `Fox#isDefending` for the avoid goals' target conditions.
+fn is_defending(fox: &Weak<FoxEntity>) -> bool {
+    fox.upgrade().is_some_and(|fox| fox.is_defending())
 }
 
 fn is_path_clear(fox: &dyn EntityBase, target: &dyn EntityBase) -> bool {
@@ -833,6 +916,106 @@ impl Goal for SleepGoal {
     }
 }
 
+/// Vanilla `Fox.PerchAndSearchGoal`: the fox sits down and looks around a few times.
+struct PerchAndSearchGoal {
+    rel_x: f64,
+    rel_z: f64,
+    look_time: i32,
+    looks_remaining: i32,
+}
+
+impl PerchAndSearchGoal {
+    const fn new() -> Self {
+        Self {
+            rel_x: 0.0,
+            rel_z: 0.0,
+            look_time: 0,
+            looks_remaining: 0,
+        }
+    }
+
+    fn reset_look(&mut self, mob: &dyn Mob) {
+        let angle = TAU * mob.get_random().random::<f64>();
+        self.rel_x = angle.cos();
+        self.rel_z = angle.sin();
+        self.look_time = self.get_tick_count(80 + mob.get_random().random_range(0..20));
+    }
+}
+
+/// Vanilla `getLastHurtByMob() != null`: `LivingEntity#baseTick` forgets the attacker after
+/// `LAST_HURT_BY_MOB_MEMORY_TICKS`.
+fn was_recently_hurt_by_mob(mob: &dyn Mob) -> bool {
+    let living = &mob.get_mob_entity().living_entity;
+    let last_attacked_time = living.last_attacked_time.load(Ordering::Relaxed);
+    last_attacked_time > 0
+        && living.entity.world.load().get_world_age() - last_attacked_time
+            <= LAST_HURT_BY_MOB_MEMORY_TICKS
+}
+
+impl Goal for PerchAndSearchGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        let Some(fox) = as_fox(mob) else {
+            return false;
+        };
+        !was_recently_hurt_by_mob(mob)
+            && mob.get_random().random::<f32>() < PERCH_CHANCE
+            && !fox.is_sleeping()
+            && mob.get_mob_entity().get_target().is_none()
+            && mob.is_navigator_idle()
+            && !alertable(fox)
+            && !fox.is_pouncing()
+            && !fox.is_crouching()
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        self.looks_remaining > 0
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.reset_look(mob);
+        self.looks_remaining = 2 + mob.get_random().random_range(0..3);
+        if let Some(fox) = as_fox(mob) {
+            fox.set_sitting(true);
+        }
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stop();
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        if let Some(fox) = as_fox(mob) {
+            fox.set_sitting(false);
+        }
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.look_time -= 1;
+        if self.look_time <= 0 {
+            self.looks_remaining -= 1;
+            self.reset_look(mob);
+        }
+
+        let mob_entity = mob.get_mob_entity();
+        let pos = mob_entity.living_entity.entity.pos.load();
+        mob_entity
+            .look_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .look_at(
+                mob,
+                pos.x + self.rel_x,
+                mob_entity.living_entity.entity.get_eye_y(),
+                pos.z + self.rel_z,
+            );
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK
+    }
+}
+
 /// Vanilla `Fox.FoxEatBerriesGoal`.
 struct FoxEatBerriesGoal {
     inner: MoveToTargetPosGoal<Self>,
@@ -1020,12 +1203,6 @@ fn chicken_or_rabbit(living: &crate::entity::living::LivingEntity, _world: &Worl
         || living.entity.entity_type == &EntityType::RABBIT
 }
 
-fn baby_turtle_on_land(living: &crate::entity::living::LivingEntity, _world: &World) -> bool {
-    living.entity.entity_type == &EntityType::TURTLE
-        && living.entity.age.load(Ordering::Relaxed) < 0
-        && !living.entity.is_in_water()
-}
-
 fn schooling_fish(living: &crate::entity::living::LivingEntity, _world: &World) -> bool {
     living.entity.entity_type == &EntityType::COD
         || living.entity.entity_type == &EntityType::SALMON
@@ -1074,6 +1251,7 @@ impl Mob for FoxEntity {
         if let Some(crouching) = nbt.get_bool("Crouching") {
             self.set_crouching(crouching);
         }
+        self.set_target_goals();
     }
 
     fn get_mob_entity(&self) -> &MobEntity {
@@ -1206,19 +1384,26 @@ impl Mob for FoxEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
-        let pos = self.get_entity().block_pos.load();
-        let biome = world.get_biome(&pos);
-        self.set_variant(
-            if biome.has_tag(&tag::WorldgenBiome::MINECRAFT_SPAWNS_SNOW_FOXES) {
+        let (fox_data, variant) = if let Some(SpawnGroupData::Fox(fox_data, variant)) = group_data {
+            (fox_data, variant)
+        } else {
+            let biome = world.get_biome(&self.get_entity().block_pos.load());
+            let variant = if biome.has_tag(&tag::WorldgenBiome::MINECRAFT_SPAWNS_SNOW_FOXES) {
                 FoxVariant::Snow
             } else {
                 FoxVariant::Red
-            },
-        );
+            };
+            (AgeableMobGroupData::with_should_spawn_baby(false), variant)
+        };
+        self.set_variant(variant);
+        self.set_target_goals();
+        // The size counts the foxes before this one, so every fox from the third on is a baby.
+        if fox_data.group_size() >= 2 {
+            self.set_age(BABY_START_AGE);
+        }
         let difficulty = RegionalDifficulty::at(world, self.get_entity().pos.load());
         self.populate_default_equipment_slots(world, &difficulty);
-        group_data
+        finalize_ageable_spawn(self, Some(SpawnGroupData::Fox(fox_data, variant)))
     }
 
     fn mob_init_data_tracker(&self) {

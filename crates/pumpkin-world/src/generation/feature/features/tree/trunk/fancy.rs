@@ -217,14 +217,13 @@ impl FancyTrunkPlacer {
         }
         let f = (tree_height as f32) / 2.0f32;
         let g = f - (height as f32);
-        let h = (f * f - g * g).sqrt();
+        let mut h = (f * f - g * g).sqrt();
         if g == 0.0f32 {
-            h
+            h = f;
         } else if g.abs() >= f {
-            0.0f32
-        } else {
-            h * 0.5f32
+            return 0.0f32;
         }
+        h * 0.5f32
     }
 
     fn get_longest_side(offset: Vector3<i32>) -> i32 {

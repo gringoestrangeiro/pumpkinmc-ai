@@ -38,7 +38,7 @@ pub async fn run_parrot_taming_tests(
     let bot_pos = player.living_entity.entity.pos.load();
     let spot = prepare_spot(server, &world, &bot_pos).await;
 
-    let parrot = spawn_parrot(&world, &spot, &bot_pos)?;
+    let parrot = spawn_parrot(&world, &spot)?;
 
     // Seeds tame a parrot, but only in one of ten tries.
     give_item(&player, &Item::WHEAT_SEEDS, 64);
@@ -90,6 +90,22 @@ pub async fn run_parrot_taming_tests(
         return Err("the tamed parrot is not owned by the bot".to_string());
     }
 
+    perch_on_shoulder(server, &world, &player, &parrot).await?;
+
+    summary_lines.push(format!(
+        "[PASS] bot:bot_tames_a_parrot_with_seeds ({}ms)",
+        start.elapsed().as_millis()
+    ));
+    Ok(())
+}
+
+/// Waits out the parrot's shoulder cooldown and lets it perch on the bot.
+async fn perch_on_shoulder(
+    server: &Arc<Server>,
+    world: &Arc<pumpkin_core::world::World>,
+    player: &Arc<pumpkin_core::entity::player::Player>,
+    parrot: &Arc<dyn EntityBase>,
+) -> Result<(), String> {
     // Vanilla `ShoulderRidingEntity` refuses to perch while its ride
     // cooldown (100 ticks) is still running.
     let mut cooldown_passed = false;
@@ -122,11 +138,11 @@ pub async fn run_parrot_taming_tests(
             Vector3::new(owner_pos.x + 0.25, owner_pos.y, owner_pos.z + 0.25),
             None,
             None,
-            &world,
+            world,
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
-        if shoulder_parrot(&player).is_some() {
+        if shoulder_parrot(player).is_some() {
             landed = true;
             break;
         }
@@ -138,11 +154,6 @@ pub async fn run_parrot_taming_tests(
             player.living_entity.entity.pos.load()
         ));
     }
-
-    summary_lines.push(format!(
-        "[PASS] bot:bot_tames_a_parrot_with_seeds ({}ms)",
-        start.elapsed().as_millis()
-    ));
     Ok(())
 }
 
@@ -194,7 +205,6 @@ fn parrot_tamed(parrot: &Arc<dyn EntityBase>) -> bool {
 fn spawn_parrot(
     world: &Arc<pumpkin_core::world::World>,
     spot: &BlockPos,
-    bot_pos: &Vector3<f64>,
 ) -> Result<Arc<dyn EntityBase>, String> {
     let entity_type = EntityType::from_name("parrot")
         .ok_or_else(|| "unknown entity type 'parrot'".to_string())?;

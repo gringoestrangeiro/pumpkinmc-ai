@@ -25,21 +25,31 @@ use crate::entity::{
         look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
         ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
         run_around_like_crazy::RunAroundLikeCrazyGoal, swim::SwimGoal, tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
-    mob::{Mob, MobEntity, RangedAttackMob},
+    living::LivingEntity,
+    mob::{
+        Mob, MobEntity, RangedAttackMob,
+        spawn::{AgeableMobGroupData, SpawnGroupData},
+    },
     passive::animal::{Animal, get_carpet_color_from_item},
+    passive::trader_llama::TraderLlamaEntity,
     player::Player,
     projectile::llama_spit::LlamaSpitEntity,
 };
+use crate::world::World;
 
 use super::horse::{
-    AbstractHorse, drop_horse_inventory, open_mount_screen, read_horse_inventory,
-    write_horse_inventory,
+    AbstractHorse, drop_horse_inventory, finalize_abstract_horse_spawn, open_mount_screen,
+    read_horse_inventory, write_horse_inventory,
 };
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::HAY_BLOCK];
 const MAX_STRENGTH: i32 = 5;
+/// The `randomInterval` vanilla's `Llama.LlamaAttackWolfGoal` passes to its target search.
+const ATTACK_WOLF_RANDOM_INTERVAL: i32 = 16;
+/// Vanilla `LlamaAttackWolfGoal.getFollowDistance` uses a quarter of the follow range.
+const ATTACK_WOLF_FOLLOW_DISTANCE_SCALE: f64 = 0.25;
 
 /// Vanilla `Llama` caravan links. The links are stored as entity ids so two
 /// llamas never keep each other alive through `Arc` cycles.
@@ -119,6 +129,7 @@ pub struct LlamaEntity {
     pub caravan_head_id: AtomicI32,
     pub caravan_tail_id: AtomicI32,
     pub inventory: Arc<SimpleInventory>,
+    did_spit: AtomicBool,
 }
 
 impl LlamaEntity {
@@ -145,6 +156,7 @@ impl LlamaEntity {
             inventory: Arc::new(SimpleInventory::new(
                 MAX_STRENGTH as usize * super::horse::INVENTORY_ROWS,
             )),
+            did_spit: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(llama);
         let mob_weak: Weak<dyn Mob> = {
@@ -171,26 +183,28 @@ impl LlamaEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
             goal_selector.add_goal(2, Box::new(LlamaFollowCaravanGoal::new(2.1)));
-            goal_selector.add_goal(3, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(
                 3,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.25, 40, 20.0)),
             );
+            goal_selector.add_goal(3, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(4, BreedGoal::new(1.0));
             goal_selector.add_goal(5, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(6, Box::new(FollowParentGoal::new(1.0)));
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(7, Box::new(WaterAvoidingRandomStrollGoal::new(0.7)));
             goal_selector.add_goal(
                 8,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(9, Box::new(RandomLookAroundGoal::default()));
 
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
             target_selector.add_goal(
-                2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::WOLF, true),
+                1,
+                Box::new(
+                    RevengeGoal::new(true).continuing_while(llama_hurt_by_target_can_continue),
+                ),
             );
+            target_selector.add_goal(2, llama_attack_wolf_goal(&mob_arc.mob_entity));
         };
 
         mob_arc
@@ -444,7 +458,43 @@ impl LlamaEntity {
 
         let spit_arc: Arc<dyn EntityBase> = Arc::new(spit);
         world.spawn_entity(spit_arc);
+        self.did_spit.store(true, Ordering::Relaxed);
     }
+}
+
+/// Vanilla `Llama.LlamaHurtByTargetGoal.canContinueToUse`: a spit ends the revenge, so a hurt
+/// llama spits once and then lets the attacker go.
+pub(crate) fn llama_hurt_by_target_can_continue(mob: &dyn Mob) -> bool {
+    let any = mob.cast_any();
+    let did_spit = any
+        .downcast_ref::<LlamaEntity>()
+        .map(|llama| &llama.did_spit)
+        .or_else(|| {
+            any.downcast_ref::<TraderLlamaEntity>()
+                .map(|llama| &llama.did_spit)
+        });
+    !did_spit.is_some_and(|did_spit| did_spit.swap(false, Ordering::Relaxed))
+}
+
+/// Vanilla `Llama.LlamaAttackWolfGoal`: only untamed wolves are targeted.
+pub fn llama_attack_wolf_goal(mob_entity: &MobEntity) -> Box<ActiveTargetGoal> {
+    Box::new(ActiveTargetGoal::new(
+        mob_entity,
+        &EntityType::WOLF,
+        ATTACK_WOLF_RANDOM_INTERVAL,
+        false,
+        true,
+        Some(|target: &LivingEntity, world: &World| {
+            world
+                .get_entity_by_id(target.entity.entity_id)
+                .is_some_and(|wolf| {
+                    wolf.get_mob()
+                        .and_then(Mob::as_tamable)
+                        .is_some_and(|wolf| !wolf.is_tame())
+                })
+        }),
+    ))
+    .with_follow_distance_scale(ATTACK_WOLF_FOLLOW_DISTANCE_SCALE)
 }
 
 impl AgeableMob for LlamaEntity {
@@ -456,17 +506,28 @@ impl AgeableMob for LlamaEntity {
 impl Animal for LlamaEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_LLAMA_FOOD)
-            || item_stack
-                .item
-                .has_tag(&tag::Item::MINECRAFT_LLAMA_TEMPT_ITEMS)
-            || item_stack.item == &Item::WHEAT
-            || item_stack.item == &Item::HAY_BLOCK
     }
 }
 
 impl Mob for LlamaEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let (llama_data, variant) = match group_data {
+            Some(SpawnGroupData::Llama(llama_data, variant)) => (llama_data, variant),
+            _ => (
+                AgeableMobGroupData::with_should_spawn_baby(true),
+                LlamaVariant::random_variant(),
+            ),
+        };
+        self.set_variant(variant);
+        finalize_abstract_horse_spawn(self, Some(SpawnGroupData::Llama(llama_data, variant)))
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {

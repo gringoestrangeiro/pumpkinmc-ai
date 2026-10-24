@@ -9,12 +9,19 @@ use pumpkin_util::Difficulty;
 use crate::entity::{
     Entity,
     ai::goal::{
-        active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, bow_attack::BowAttackGoal,
-        flee_sun::FleeSunGoal, look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        melee_attack::MeleeAttackGoal, restrict_sun::RestrictSunGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::{ActiveTargetGoal, DEFAULT_RANDOM_INTERVAL},
+        avoid_entity::AvoidEntityGoal,
+        bow_attack::BowAttackGoal,
+        flee_sun::FleeSunGoal,
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal,
+        restrict_sun::RestrictSunGoal,
+        revenge::RevengeGoal,
+        water_avoiding_random_stroll::WaterAvoidingRandomStrollGoal,
     },
-    mob::{Mob, MobEntity, equipment::RegionalDifficulty},
+    mob::{Mob, MobEntity, equipment::RegionalDifficulty, spawn::SpawnGroupData},
+    passive::turtle::baby_on_land_selector,
 };
 use crate::world::World;
 
@@ -30,6 +37,11 @@ pub struct SkeletonEntityBase {
 }
 
 impl SkeletonEntityBase {
+    /// Vanilla `AbstractSkeleton.getHardAttackInterval`.
+    const HARD_ATTACK_INTERVAL: i32 = 20;
+    /// Vanilla `AbstractSkeleton.getAttackInterval`.
+    const ATTACK_INTERVAL: i32 = 40;
+
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let mob = Self { mob_entity };
@@ -50,7 +62,6 @@ impl SkeletonEntityBase {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(2, Box::new(RestrictSunGoal::new()));
             goal_selector.add_goal(3, Box::new(FleeSunGoal::new(1.0)));
             goal_selector.add_goal(
@@ -64,22 +75,70 @@ impl SkeletonEntityBase {
                         .gated_by(|mob| !BowAttackGoal::is_holding_bow(mob)),
                 ),
             );
-            goal_selector.add_goal(4, Box::new(BowAttackGoal::new(1.0, 20, 15.0)));
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
-                8,
+                4,
+                Box::new(BowAttackGoal::new(1.0, Self::HARD_ATTACK_INTERVAL, 15.0)),
+            );
+            goal_selector.add_goal(5, Box::new(WaterAvoidingRandomStrollGoal::new(1.0)));
+            goal_selector.add_goal(
+                6,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
             );
-            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(6, Box::new(RandomLookAroundGoal::default()));
 
             target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
             target_selector.add_goal(
                 2,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
             );
+            target_selector.add_goal(
+                3,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::IRON_GOLEM, true),
+            );
+            target_selector.add_goal(
+                3,
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::TURTLE,
+                    DEFAULT_RANDOM_INTERVAL,
+                    true,
+                    false,
+                    Some(baby_on_land_selector),
+                )),
+            );
         };
 
         mob_arc
+    }
+
+    /// The bow interval vanilla `AbstractSkeleton.reassessWeaponGoal` picks: the hard one only
+    /// on Hard difficulty.
+    #[must_use]
+    pub fn min_attack_interval(&self) -> i32 {
+        if self
+            .mob_entity
+            .living_entity
+            .entity
+            .world
+            .load()
+            .get_difficulty()
+            == Difficulty::Hard
+        {
+            Self::HARD_ATTACK_INTERVAL
+        } else {
+            Self::ATTACK_INTERVAL
+        }
+    }
+
+    /// Vanilla `AbstractSkeleton.finalizeSpawn`. Equipment and `canPickUpLoot` come from the
+    /// spawn equipment registry instead.
+    pub fn finalize_skeleton_spawn(
+        &self,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.mob_entity.finalize_spawn_base();
+        self.mob_entity.maybe_wear_halloween_head();
+        group_data
     }
 }
 
