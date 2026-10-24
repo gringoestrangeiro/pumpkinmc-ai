@@ -45,8 +45,10 @@ pub async fn run_sniffer_dig_tests(
     let sniffer = spawn_sniffer(&world, &center)?;
     let dig_area = BoundingBox::from_block(&center).expand(24.0, 8.0, 24.0);
 
+    // At vanilla walking speed (0.1 * 1.25 sniffing speed, squared by `Mob.setSpeed`) a
+    // sniffer needs about 530 ticks to reach a spot 18 blocks away, then digs for 120.
     let mut dug = false;
-    for _ in 0..600 {
+    for _ in 0..1800 {
         tokio::time::sleep(Duration::from_millis(5)).await;
         server.tick();
         let dropped = world
